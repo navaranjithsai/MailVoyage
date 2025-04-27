@@ -2,19 +2,35 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
-
-// --- Basic In-Memory Store (Replace with DB later) ---
-type User = {
-    id: string;
-    username: string;
-    email: string;
-    passwordHash: string; // In a real app, NEVER store plain passwords
-}
-const users: User[] = [];
-// ------------------------------------------------------
+import { Pool } from 'pg';
+import bcrypt from 'bcrypt';
 
 // Load environment variables from .env file
 dotenv.config();
+
+// Initialize PostgreSQL pool
+const pool = new Pool({
+  host: process.env.PG_HOST,
+  port: parseInt(process.env.PG_PORT || '5432'),
+  user: process.env.PG_USER,
+  password: process.env.PG_PASSWORD,
+  database: process.env.PG_DATABASE,
+});
+
+// Create tables if they don't exist
+pool.query(`
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(255) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMP NOT NULL
+);
+`);
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -77,73 +93,105 @@ app.get('/api', (req: Request, res: Response) => {
   res.json({ message: 'MailVoyage API is running! (TypeScript)' });
 });
 
-// Registration
-app.post('/api/auth/register', (req: Request, res: Response) => {
-    const { username, email, password } = req.body;
-    console.log('Register attempt:', { username, email }); // Log received data
-
-    if (!username || !email || !password) {
-        return res.status(400).json({ message: 'Username, email, and password are required.' });
+// Registration with PostgreSQL and bcrypt
+app.post('/api/auth/register', async (req: Request, res: Response) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: 'Username, email, and password are required.' });
+  }
+  const client = await pool.connect();
+  try {
+    // Check existing username/email
+    const userRes = await client.query('SELECT username, email FROM users WHERE username=$1 OR email=$2', [username, email]);
+    const errors: Record<string,string> = {};
+    for (const row of userRes.rows) {
+      if (row.username === username) errors.username = 'Username is already taken';
+      if (row.email === email) errors.email = 'Email is already registered';
     }
-
-    // Check if user already exists
-    if (users.some(u => u.email === email)) {
-        return res.status(409).json({ message: 'Email already registered.' }); // Conflict
+    if (Object.keys(errors).length) {
+      return res.status(409).json({ message: 'Validation failed', errors });
     }
-
-    // **IMPORTANT**: Hash the password before storing!
-    // Use a library like bcrypt in a real application.
-    const passwordHash = `hashed_${password}`; // Placeholder
-    const newUser: User = {
-        id: Date.now().toString(), // Simple unique ID
-        username,
-        email,
-        passwordHash
-    };
-    users.push(newUser);
-    console.log('User registered:', { id: newUser.id, username, email });
-    console.log('Current users:', users.map(u => u.email)); // Log current users for debugging
-
-    res.status(201).json({ message: 'Registration successful.' });
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+    // Insert user
+    const insertRes = await client.query(
+      'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email',
+      [username, email, passwordHash]
+    );
+    const newUser = insertRes.rows[0];
+    res.status(201).json({ message: 'Registration successful', user: newUser });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal server error during registration.' });
+  } finally {
+    client.release();
+  }
 });
 
-// Login
-app.post('/api/auth/login', (req: Request, res: Response) => {
-    const { email, password } = req.body;
-    console.log('Login attempt:', { email }); // Log received data
-
-    if (!email || !password) {
-        return res.status(400).json({ message: 'Email and password are required.' });
+// Login with PostgreSQL, bcrypt, and token issuance with refresh rotation
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required.' });
+  }
+  const client = await pool.connect();
+  try {
+    // Fetch user
+    const userRes = await client.query('SELECT id, username, email, password_hash FROM users WHERE email=$1', [email]);
+    if (!userRes.rowCount) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
     }
-
-    const user = users.find(u => u.email === email);
-
-    // **IMPORTANT**: Compare hashed passwords!
-    // Use bcrypt.compareSync(password, user.passwordHash) in a real app.
-    const isPasswordCorrect = user && `hashed_${password}` === user.passwordHash; // Placeholder comparison
-
-    if (!user || !isPasswordCorrect) {
-        return res.status(401).json({ message: 'Invalid email or password.' });
+    const user = userRes.rows[0];
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
     }
+    // Generate access token
+    const accessToken = jwt.sign({ userId: user.id }, jwtSecret!, { expiresIn: jwtExpiresIn });
+    // Generate refresh token
+    const refreshToken = jwt.sign({ userId: user.id }, jwtSecret!, { expiresIn: '7d' });
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Store refresh token
+    await client.query(
+      'INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)',
+      [refreshToken, user.id, expiresAt]
+    );
+    res.json({ message: 'Login successful', token: accessToken, refreshToken, user: { username: user.username, email: user.email } });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal server error during login.' });
+  } finally {
+    client.release();
+  }
+});
 
-    // Generate JWT
-    const payload = { userId: user.id, email: user.email, username: user.username };
-    try {
-        // Correctly pass expiresIn within the options object
-        if (!jwtSecret) {
-            throw new Error('JWT secret is not defined.');
-        }
-        const token = jwt.sign(payload, jwtSecret!, { expiresIn: jwtExpiresIn } as jwt.SignOptions);
-        console.log('Login successful for:', email);
-        res.json({
-            message: 'Login successful',
-            token,
-            user: { username: user.username, email: user.email }
-        });
-    } catch (error) {
-        console.error('Error signing JWT:', error);
-        res.status(500).json({ message: 'Internal server error during login.' });
+// Refresh token rotation
+app.post('/api/auth/refresh', async (req: Request, res: Response) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ message: 'Refresh token is required' });
+  const client = await pool.connect();
+  try {
+    // Validate stored token
+    const rtRes = await client.query('SELECT user_id, expires_at FROM refresh_tokens WHERE token=$1', [refreshToken]);
+    if (!rtRes.rowCount) return res.status(401).json({ message: 'Invalid refresh token' });
+    const { user_id, expires_at } = rtRes.rows[0];
+    if (new Date(expires_at) < new Date()) {
+      await client.query('DELETE FROM refresh_tokens WHERE token=$1', [refreshToken]);
+      return res.status(401).json({ message: 'Refresh token expired' });
     }
+    // Rotate token
+    await client.query('DELETE FROM refresh_tokens WHERE token=$1', [refreshToken]);
+    const newRefreshToken = jwt.sign({ userId: user_id }, jwtSecret!, { expiresIn: '7d' });
+    const newExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await client.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [newRefreshToken, user_id, newExpires]);
+    const newAccessToken = jwt.sign({ userId: user_id }, jwtSecret!, { expiresIn: jwtExpiresIn });
+    res.json({ token: newAccessToken, refreshToken: newRefreshToken });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal server error during token refresh.' });
+  } finally {
+    client.release();
+  }
 });
 
 // Example protected route

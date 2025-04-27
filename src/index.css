@@ -1,11 +1,12 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: light dark;
-  /* Removed default color and background-color */
   /* color: rgba(255, 255, 255, 0.87); */
   /* background-color: #242424; */
   font-synthesis: none;
@@ -16,7 +17,7 @@
 
 a {
   font-weight: 500;
-  color: #646cff; /* Consider using Tailwind color utilities if possible */
+  color: #646cff;
   text-decoration: inherit;
 }
 a:hover {
@@ -31,41 +32,8 @@ body {
   /* @apply bg-background text-foreground; Removed problematic apply */
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-/* Remove global button defaults so Tailwind classes take precedence */
-/*
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  button {
-    background-color: #f9f9f9;
-  }
-}
-*/
-
-/* Apply gradient border effect specifically to buttons with the 'login-button-gradient-border' class */
-.login-button-gradient-border {
+/* Apply gradient border effect specifically to buttons with the 'submit-button-gradient-border' class */
+.submit-button-gradient-border {
   cursor: pointer;
   position: relative;
   z-index: 0;
@@ -74,7 +42,7 @@ button:focus-visible {
   transition: border-color 0.2s; /* Optional: transition for the base border if needed */
 }
 
-.login-button-gradient-border::before {
+.submit-button-gradient-border::before {
   content: "";
   position: absolute;
   inset: -2px; /* Position the pseudo-element outside the button bounds by the border width */
@@ -94,9 +62,9 @@ button:focus-visible {
 }
 
 /* Show and run animation on hover/focus for the specific class */
-.login-button-gradient-border:hover::before,
-.login-button-gradient-border:focus::before,
-.login-button-gradient-border:focus-visible::before {
+.submit-button-gradient-border:hover::before,
+.submit-button-gradient-border:focus::before,
+.submit-button-gradient-border:focus-visible::before {
   opacity: 1;
   animation-play-state: running;
 }
@@ -113,28 +81,9 @@ button:focus-visible {
 
 /* --- Dark Mode Gradient --- */
 
-/* Method 1: Using Tailwind's 'class' strategy (if html gets class="dark") */
-html.dark .login-button-gradient-border::before {
+/* Using Tailwind's 'class' strategy (if html gets class="dark") */
+html.dark .submit-button-gradient-border::before {
   /* Define the dark mode gradient */
-  background-image: linear-gradient(to left, #9acff3, #6dd5fa, #ffffff);
+  background-image: linear-gradient(to left, #f7cdcd,#f0d4d9,#ccd9dd,#b3a1a1,#dbdbc3,#bbcbda);
   background-size: 300% 100%; /* Ensure size is set */
 }
-
-/* Method 2: Using CSS media query (if Tailwind uses 'media' strategy or for OS preference) */
-
-/* @media (prefers-color-scheme: dark) {
-  .login-button-gradient-border::before {
-    background-image: linear-gradient(to left, #abbaab, #ffffff);
-    background-size: 300% 100%;
-  }
-} */
-
-/* @media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-} */

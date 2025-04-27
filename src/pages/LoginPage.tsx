@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/apiFetch';
 import { ThemeSwitcherCapsule as ThemeSwitcher } from '@/components/common/ThemeSwitcherCapsule';
+import { emailValidation } from '@/lib/validators';
 
 interface LoginForm {
   email: string;
@@ -67,7 +68,7 @@ const LoginPage: React.FC = () => {
                 type="email"
                 id="email"
                 autoComplete="email"
-                {...register('email', { required: 'Email is required' })}
+                {...register('email', emailValidation)}
                 className={`pl-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'}`}
               />
@@ -122,7 +123,7 @@ const LoginPage: React.FC = () => {
           <Button
             type="submit"
             disabled={isSubmitting}
-            className="login-button-gradient-border w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 h-[44px]
+            className="submit-button-gradient-border w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 h-[44px]
               bg-blue-500 text-white hover:bg-blue-600 dark:bg-white dark:text-black dark:hover:bg-gray-100 
               dark:border dark:border-gray-300 transition-colors"
           >

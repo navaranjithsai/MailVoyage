@@ -1,5 +1,3 @@
-// Helper function to handle API requests
-
 /**
  * Performs a fetch request to the API, automatically handling JSON parsing,
  * error handling, and adding the Authorization header if a token exists.
@@ -13,14 +11,22 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
   const token = localStorage.getItem('authToken');
   const defaultHeaders: HeadersInit = {
     'Content-Type': 'application/json',
-    // Add :authority: header - browsers usually handle this, but useful for some tools/tests
-    // ':authority:': window.location.host, // Or your specific backend host if needed
-    // Add :method: header - usually handled by browser/fetch
-    // ':method:': options.method || 'GET',
+    // Ensure authority header for middleware check
+    ':authority:': window.location.host,
+    // Include HTTP method header
+    ':method:': options.method || 'GET',
   };
 
   if (token) {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
+    // Include username header if available
+    const userData = localStorage.getItem('authUser');
+    if (userData) {
+      try {
+        const { username } = JSON.parse(userData);
+        if (username) defaultHeaders['username'] = username;
+      } catch {};
+    }
   }
 
   const config: RequestInit = {
