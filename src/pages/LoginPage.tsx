@@ -70,7 +70,7 @@ const LoginPage: React.FC = () => {
                 autoComplete="email"
                 {...register('email', emailValidation)}
                 className={`pl-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
-                  ${errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  ${errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
               />
             </div>
             {errors.email && (
@@ -102,7 +102,7 @@ const LoginPage: React.FC = () => {
                 autoComplete="current-password"
                 {...register('password', { required: 'Password is required' })}
                 className={`pl-10 pr-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
-                  ${errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'}`}
+                  ${errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
               />
               <button
                 type="button"
