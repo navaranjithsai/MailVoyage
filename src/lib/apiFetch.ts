@@ -51,7 +51,10 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
     if (!response.ok) {
       // Throw an error with the message from the API response or a default one
-      throw new Error(responseData.message || `HTTP error! status: ${response.status}`);
+      const err: any = new Error(responseData.message || `HTTP error! status: ${response.status}`);
+      // Attach errors object (e.g., { field: 'message' }) if provided by backend
+      if (responseData.errors) err.errors = responseData.errors;
+      throw err;
     }
 
     return responseData;

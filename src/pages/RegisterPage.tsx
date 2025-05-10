@@ -21,7 +21,7 @@ interface RegisterForm {
 }
 
 const RegisterPage: React.FC = () => {
-  const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setFocus } = useForm<RegisterForm>();
+  const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setFocus, setError } = useForm<RegisterForm>();
   const [showPassword, setShowPassword] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const navigate = useNavigate();
@@ -38,8 +38,18 @@ const RegisterPage: React.FC = () => {
       });
       toast.success('Registration successful! Please log in.');
       navigate('/login');
-    } catch (error: any) {
-      toast.error(error.message || 'Registration failed. Please try again.');
+    } catch (error: unknown) {
+      const err = error as any;
+      if (err.errors && typeof err.errors === 'object') {
+        Object.entries(err.errors as Record<string, string>).forEach(([field, msg]) => {
+          const message = String(msg);
+          setError(field as keyof RegisterForm, { type: 'server', message });
+          toast.error(message);
+        });
+      } else {
+        const message = typeof err.message === 'string' ? err.message : 'Registration failed. Please try again.';
+        toast.error(message);
+      }
     }
   };
 
