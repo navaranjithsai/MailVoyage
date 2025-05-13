@@ -29,10 +29,17 @@ const LoginPage: React.FC = () => {
         method: 'POST',
         body: JSON.stringify(data),
       });
-      const { token, user } = response;
-      login(user, token);
-      toast.success('Login successful!');
-      navigate('/dashboard');
+      // The backend now sets an HttpOnly cookie for the token.
+      // The response body directly contains the user object.
+      const { user } = response; 
+      if (user) {
+        login(user); // Pass only user data to the login function
+        toast.success('Login successful!');
+        navigate('/dashboard');
+      } else {
+        // Handle cases where user might not be in response, though API should ensure it
+        toast.error('Login failed: No user data received.');
+      }
     } catch (error: any) {
       toast.error(error.message || 'Login failed. Please check your credentials.');
     }

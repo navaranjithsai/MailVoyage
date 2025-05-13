@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { json } from 'express';
+import cookieParser from 'cookie-parser';
 import { hostCheck } from './middlewares/hostCheck.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import apiRouter from './routes/index.js'; // Import the main API router
@@ -11,8 +12,9 @@ import morgan from 'morgan'; // HTTP request logger middleware
 const app = express();
 
 // Middleware
-app.use(cors({ origin: config.corsOrigin }));
+app.use(cors({ origin: config.corsOrigin, credentials: true })); // Add credentials: true for CORS
 app.use(json());
+app.use(cookieParser()); // Use cookie-parser middleware
 
 // Request logging (using morgan)
 // Use 'combined' format for production, 'dev' for development

@@ -64,19 +64,25 @@ export const loginUser = async (email: string, password: string) => {
       throw new AppError('Unauthorized', 401, true, { general: 'Invalid email or password.' });
     }
 
-    // Generate tokens
-    const accessToken = tokenService.generateAccessToken({ userId: user.id });
+    // Generate tokens with username and email in the payload
+    const accessToken = tokenService.generateAccessToken({
+      // userId: user.id, // Removed userId from token payload
+      username: user.username,
+      email: user.email
+    });
     // const refreshToken = tokenService.generateRefreshToken({ userId: user.id }); // If using refresh tokens
 
     logger.info(`User logged in: ${user.email}`);
-    // Return token(s) and user info (excluding password)
+    // Return token (for cookie setting by controller) and user info (excluding password)
+    // User ID is still returned in the user object for frontend use, just not in the JWT payload.
     return {
       token: accessToken,
       // refreshToken: refreshToken, // If using refresh tokens
       user: { id: user.id, username: user.username, email: user.email }
     };
-  } catch (err: any) {
+  } catch (err: any) { // Catch specific errors if possible
     logger.error('Error during login:', err);
+    // Re-throw specific AppErrors or a generic one
     if (err instanceof AppError) throw err;
     throw new AppError('Internal Server Error', 500, false, { general: 'Could not log in user.' });
   } finally {

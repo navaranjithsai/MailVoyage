@@ -6,6 +6,7 @@ import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import DashboardPage from '@/pages/DashboardPage';
 import { useAuth } from '@/contexts/AuthContext';
+import LoadingSpinner from '@/components/common/LoadingSpinner';
 
 // Placeholder for a component that requires authentication
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -14,7 +15,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
   if (isLoading) {
     // Optional: Show a loading indicator while checking auth
-    return <div>Loading Auth...</div>;
+    return <LoadingSpinner message="Checking authentication..." />;
   }
 
   if (!isAuthenticated) {
@@ -30,7 +31,7 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     if (isLoading) {
       // Optional: Show a loading indicator while checking auth
-      return <div>Loading Auth...</div>;
+      return <LoadingSpinner message="Loading Authentication..." />;
     }
 
     if (isAuthenticated) {
@@ -47,7 +48,7 @@ const AppRouter: React.FC = () => {
   // Optional: Prevent route rendering until auth check is complete
   // This avoids potential flashes of content or incorrect redirects
   if (isLoading) {
-      return <div>Initializing Application...</div>; // Or a global spinner
+      return <LoadingSpinner message="Initializing Application..." />; // Or a global spinner
   }
 
   return (
@@ -99,7 +100,7 @@ const NavigateToCorrectRoute = () => {
     const { isAuthenticated, isLoading } = useAuth();
 
     if (isLoading) {
-        return <div>Checking authentication...</div>; // Or null, or a spinner
+        return <LoadingSpinner message="Checking authentication..." />; // Or null, or a spinner
     }
 
     return <Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />;

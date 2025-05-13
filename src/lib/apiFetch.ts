@@ -8,27 +8,29 @@
  * @throws Error if the request fails or the response is not ok
  */
 export const apiFetch = async (endpoint: string, options: RequestInit = {}): Promise<any> => {
-  const token = localStorage.getItem('authToken');
+  // Token is now handled by HttpOnly cookie, no need to get from localStorage for Authorization header.
+  // const token = localStorage.getItem('authToken'); 
   const defaultHeaders: HeadersInit = {
     'Content-Type': 'application/json',
   };
 
-  if (token) {
-    defaultHeaders['Authorization'] = `Bearer ${token}`;
-    const userData = localStorage.getItem('authUser');
-    if (userData) {
-      try {
-        const { username } = JSON.parse(userData);
-        if (username) defaultHeaders['username'] = username; // Custom header, ensure backend handles if necessary
-      } catch (e) {
-        // Ignore error if authUser data is malformed
-        console.warn('Failed to parse authUser from localStorage', e);
-      }
-    }
-  }
+  // Remove manual Authorization header and custom username header
+  // if (token) {
+  //   defaultHeaders['Authorization'] = `Bearer ${token}`;
+  // }
+  // const userData = localStorage.getItem('authUser');
+  // if (userData) {
+  //   try {
+  //     const { username } = JSON.parse(userData);
+  //     if (username) defaultHeaders['username'] = username;
+  //   } catch (e) {
+  //     console.warn('Failed to parse authUser from localStorage', e);
+  //   }
+  // }
 
   const config: RequestInit = {
     ...options,
+    credentials: 'include', // Crucial for sending cookies
     headers: {
       ...defaultHeaders,
       ...options.headers,

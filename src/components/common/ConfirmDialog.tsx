@@ -61,7 +61,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </h3>
               <button
                 onClick={onCancel}
-                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 bg-transparent p-1 rounded-full" // Added dark mode text/hover and rounded
+                className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 bg-transparent p-1 rounded-full"
                 type="button"
               >
                 <X size={20} />
@@ -69,14 +69,14 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             </div>
 
             <div className="py-4">
-              <p className="text-gray-700 dark:text-gray-300">{message}</p> {/* Added dark mode text */}
+              <p className="text-gray-700 dark:text-gray-300">{message}</p> {}
             </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700"> {/* Added dark mode border and adjusted padding */}
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700"> {}
               <Button
                 type="button"
                 onClick={onCancel}
-                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600" // Added dark mode styles
+                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600"
               >
                 {cancelLabel}
               </Button>

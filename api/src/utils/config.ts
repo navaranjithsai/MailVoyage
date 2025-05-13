@@ -33,6 +33,7 @@ const envSchema = z.object({
   HOST_ADDRESS: z.string().optional(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters long'),
   JWT_EXPIRES_IN: z.string().default('1h'),
+  JWT_COOKIE_EXPIRES_IN: z.coerce.number().int().positive().default(10 * 60 * 60 * 1000), // Default 10 hours in ms
   PG_HOST: z.string().optional(),
   PG_PORT: z.coerce.number().int().positive().optional(),
   PG_USER: z.string().optional(),
@@ -87,6 +88,7 @@ export const config = {
   corsOrigin: parsedEnv.data.CORS_ORIGIN,
   jwtSecret: parsedEnv.data.JWT_SECRET,
   jwtExpiresIn: parsedEnv.data.JWT_EXPIRES_IN,
+  jwtCookieExpiresIn: parsedEnv.data.JWT_COOKIE_EXPIRES_IN, // Add to exported config
   allowedHosts: [
     'localhost',
     parsedEnv.data.PORT ? `localhost:${parsedEnv.data.PORT}` : null,
@@ -104,5 +106,6 @@ console.log('[config.ts] DEBUG: Final config values (subset):', {
   corsOrigin: config.corsOrigin,
   jwtSecretIsSet: !!config.jwtSecret, // Just check if it's set
   jwtExpiresIn: config.jwtExpiresIn,
+  jwtCookieExpiresIn: config.jwtCookieExpiresIn, // Log the new config
   allowedHostsCount: config.allowedHosts.length,
 });

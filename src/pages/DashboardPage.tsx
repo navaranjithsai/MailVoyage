@@ -1,14 +1,18 @@
 import React from 'react';
-import { useAuth } from '@/contexts/AuthContext'; // Assuming AuthContext exists
-import { toast } from 'react-toastify'; // Assuming toast utility is set up
+import { useAuth } from '@/contexts/AuthContext';
 
 const DashboardPage: React.FC = () => {
   const { user, logout } = useAuth(); // Get user info and logout function
 
   const handleLogout = () => {
     logout();
-    toast.info('You have been logged out.');
-    // No need to navigate here, AuthProvider/Router should handle redirect
+    // toast.info('You have been logged out.'); // Toast is handled in AuthContext logout
+  };
+
+  const handleHardReload = () => {
+    console.log('Hard reload triggered. Clearing sessionLastValidatedAt...');
+    localStorage.removeItem('sessionLastValidatedAt');
+    window.location.reload(); // Standard reload, passing true for hard reload is deprecated in modern browsers
   };
 
   return (
@@ -27,6 +31,12 @@ const DashboardPage: React.FC = () => {
         className="mt-6 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
       >
         Logout
+      </button>
+      <button
+        onClick={handleHardReload}
+        className="mt-6 ml-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+      >
+        Hard Reload Page
       </button>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Settings, Sun, Moon } from 'lucide-react';
+import { Laptop, Sun, Moon } from 'lucide-react';
 import Button from '@/components/ui/Button'; // Assuming you have a basic Button component
 
 export function ThemeSwitcherCapsule() {
@@ -32,7 +32,7 @@ export function ThemeSwitcherCapsule() {
     switch (themeValue) {
       case 'light': return <Sun size={18} />;
       case 'dark': return <Moon size={18} />;
-      default: return <Settings size={18} />; // System or initial
+      default: return <Laptop size={18} />; // System or initial
     }
   };
 
@@ -72,7 +72,7 @@ export function ThemeSwitcherCapsule() {
               onClick={() => handleThemeChange('system')}
               title="System Theme"
             >
-              <Settings size={18} />
+              <Laptop size={18} />
             </Button>
             {/* Light Theme Button */}
             <Button
