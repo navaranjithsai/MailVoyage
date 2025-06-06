@@ -16,6 +16,9 @@ interface AuthContextType {
   login: (userData: User) => void;
   logout: () => Promise<void>;
   isLoading: boolean;
+  // Debug utilities for tab-based session management
+  getTabSessionInfo: () => { tabSessionId: string; isValidated: boolean; };
+  clearTabValidation: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,8 +27,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  // Generate a unique session ID for this tab
+  const generateTabSessionId = (): string => {
+    return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  };
 
-  const RECENT_VALIDATION_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+  // Get or create tab session ID
+  const getTabSessionId = (): string => {
+    let tabSessionId = getSessionItem('tabSessionId');
+    if (!tabSessionId) {
+      tabSessionId = generateTabSessionId();
+      setSessionItem('tabSessionId', tabSessionId);
+      console.log('AuthContext: Generated new tab session ID:', tabSessionId);
+    }
+    return tabSessionId;
+  };
 
   // Helper functions to safely interact with sessionStorage
   const getSessionItem = (key: string): string | null => {
@@ -57,15 +73,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  // Helper functions for tab-based session management
+  const getSessionValidationState = (tabSessionId: string): boolean => {
+    const validatedKey = `sessionValidated_${tabSessionId}`;
+    const isValidated = getSessionItem(validatedKey) === 'true';
+    console.log(`AuthContext: Tab ${tabSessionId} validation state:`, isValidated);
+    return isValidated;
+  };
+
+  const setSessionValidationState = (tabSessionId: string, isValid: boolean): void => {
+    const validatedKey = `sessionValidated_${tabSessionId}`;
+    if (isValid) {
+      setSessionItem(validatedKey, 'true');
+      console.log(`AuthContext: Marked tab ${tabSessionId} as validated`);
+    } else {
+      removeSessionItem(validatedKey);
+      console.log(`AuthContext: Cleared validation for tab ${tabSessionId}`);
+    }
+  };
+
+  // Clear all tab validation states (used on logout)
+  const clearAllTabValidations = (): void => {
+    try {
+      const keys = Object.keys(sessionStorage);
+      keys.forEach(key => {
+        if (key.startsWith('sessionValidated_')) {
+          removeSessionItem(key);
+        }
+      });
+      console.log('AuthContext: Cleared all tab validation states');
+    } catch (e) {
+      console.error('AuthContext: Error clearing tab validations:', e);
+    }
+  };
   useEffect(() => {
     const verifyAuthOnLoad = async () => {
       console.log('AuthContext: verifyAuthOnLoad triggered.');
+      const tabSessionId = getTabSessionId();
       const storedUserString = localStorage.getItem('authUser');
-      // Use sessionStorage for sessionLastValidatedAt with our safe helper
-      const lastValidatedAtString = getSessionItem('sessionLastValidatedAt');
-      const lastValidatedAt = lastValidatedAtString ? parseInt(lastValidatedAtString, 10) : 0;
-
-      console.log('AuthContext: Last validation timestamp:', lastValidatedAt, 'Current time:', Date.now(), 'Difference:', Date.now() - lastValidatedAt);
+      
+      console.log('AuthContext: Tab session ID:', tabSessionId);
 
       if (storedUserString) {
         console.log('AuthContext: Found authUser in localStorage.');
@@ -77,22 +124,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } catch (e) {
           console.warn('AuthContext: Failed to parse authUser from localStorage. Clearing it.', e);
           localStorage.removeItem('authUser');
-          removeSessionItem('sessionLastValidatedAt'); // Clear timestamp from sessionStorage
+          clearAllTabValidations(); // Clear all tab validation states
           setUser(null);
           setIsLoading(false); // Malformed user data, stop here.
           return;
         }
 
         // At this point, parsedUserForValidation is valid if no error was caught.
-        // Check if session was validated recently
-        if (Date.now() - lastValidatedAt < RECENT_VALIDATION_THRESHOLD) {
-          console.log('AuthContext: Session validated recently. Skipping /api/auth/validate-token call.');
+        // Check if this tab session was already validated
+        const isSessionValidated = getSessionValidationState(tabSessionId);
+        if (isSessionValidated) {
+          console.log('AuthContext: Tab session already validated. Skipping /api/auth/validate-token call.');
           setIsLoading(false);
           return; // Skip API call
         }
         
-        console.log('AuthContext: Session not validated recently or no timestamp. Proceeding with validation.');
-        // Proceed to validate token because storedUserString exists, is parsable, and it's not recently validated.
+        console.log('AuthContext: Tab session not validated yet. Proceeding with validation.');
+        // Proceed to validate token because storedUserString exists, is parsable, and this tab hasn't been validated yet.
         try {
           console.log('AuthContext: Calling /api/auth/validate-token');
           const response = await apiFetch('/api/auth/validate-token');
@@ -100,14 +148,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             console.log('AuthContext: /api/auth/validate-token successful. User:', response.user);
             setUser(response.user);
             localStorage.setItem('authUser', JSON.stringify(response.user));
-            // Update timestamp in sessionStorage after successful validation using our safe helper
-            const timestampSaved = setSessionItem('sessionLastValidatedAt', Date.now().toString());
-            console.log('AuthContext: Session timestamp saved successfully:', timestampSaved);
+            // Mark this tab session as validated
+            setSessionValidationState(tabSessionId, true);
           } else {
             console.warn('AuthContext: /api/auth/validate-token responded but without user data or token was invalid. Clearing session.', { response });
             setUser(null);
             localStorage.removeItem('authUser');
-            removeSessionItem('sessionLastValidatedAt'); // Clear from sessionStorage
+            clearAllTabValidations(); // Clear all tab validation states
             // Avoid toast if it was just an invalid token on load without prior optimistic user
             if (parsedUserForValidation) { // Only toast if user was expecting to be logged in
                  toast.info('Your session may have ended. Please log in again.');
@@ -117,7 +164,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           console.error('AuthContext: /api/auth/validate-token call failed. Status:', error.status, 'Message:', error.message, error);
           setUser(null);
           localStorage.removeItem('authUser');
-          removeSessionItem('sessionLastValidatedAt'); // Clear from sessionStorage
+          clearAllTabValidations(); // Clear all tab validation states
           if (error.status === 401 && parsedUserForValidation) { // Only toast if user was expecting to be logged in
             toast.warn('Your session has expired. Please log in again.');
           } else if (error.status !== 401) {
@@ -127,7 +174,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } else {
         console.log('AuthContext: No authUser in localStorage. User is not logged in.');
         setUser(null); 
-        removeSessionItem('sessionLastValidatedAt'); // Clear timestamp from sessionStorage if no user
+        clearAllTabValidations(); // Clear all tab validation states if no user
       }
       setIsLoading(false);
       console.log('AuthContext: Initial auth verification complete. isLoading:', false);
@@ -135,15 +182,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     verifyAuthOnLoad();
   }, []); // navigate dependency removed as it's stable
-
   const login = (userData: User) => {
+    const tabSessionId = getTabSessionId();
     setUser(userData);
     localStorage.setItem('authUser', JSON.stringify(userData));
-    // On login, deliberately remove any existing validation timestamp to force a new validation
-    removeSessionItem('sessionLastValidatedAt');
-    console.log('AuthContext: User logged in, authUser stored. sessionLastValidatedAt cleared to force validation.');
+    // On login, mark this tab session as validated since we just authenticated
+    setSessionValidationState(tabSessionId, true);
+    console.log('AuthContext: User logged in, authUser stored. Tab session marked as validated.');
   };
-
   const logout = async () => {
     setIsLoading(true);
     console.log('AuthContext: Logout initiated.');
@@ -156,11 +202,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } finally {
       setUser(null);
       localStorage.removeItem('authUser');
-      removeSessionItem('sessionLastValidatedAt'); // Clear timestamp from sessionStorage on logout
+      clearAllTabValidations(); // Clear all tab validation states on logout
       setIsLoading(false);
       navigate('/login');
-      console.log('AuthContext: User logged out, authUser and sessionLastValidatedAt cleared.');
+      console.log('AuthContext: User logged out, authUser cleared and all tab validations cleared.');
     }
+  };
+  // Debug utilities for tab-based session management
+  const getTabSessionInfo = () => {
+    const tabSessionId = getTabSessionId();
+    const isValidated = getSessionValidationState(tabSessionId);
+    return { tabSessionId, isValidated };
+  };
+
+  const clearTabValidation = () => {
+    const tabSessionId = getTabSessionId();
+    setSessionValidationState(tabSessionId, false);
+    console.log('AuthContext: Manually cleared tab validation for current tab');
   };
 
   if (isLoading) {
@@ -172,7 +230,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated: !!user, user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ 
+      isAuthenticated: !!user, 
+      user, 
+      login, 
+      logout, 
+      isLoading,
+      getTabSessionInfo,
+      clearTabValidation
+    }}>
       {children}
     </AuthContext.Provider>
   );

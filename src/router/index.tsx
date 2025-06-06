@@ -5,6 +5,8 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import DashboardPage from '@/pages/DashboardPage';
+import SearchPage from '@/pages/SearchPage';
+import EmailPage from '@/pages/EmailPage';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 
@@ -56,14 +58,30 @@ const AppRouter: React.FC = () => {
     <Routes>
       {/* Public routes (Login, Register) */}
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-      <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-
-      {/* Protected routes (Dashboard, Settings, etc.) */}
+      <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />      {/* Protected routes (Dashboard, Settings, etc.) */}
       <Route
         path="/dashboard"
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/search"
+        element={
+          <ProtectedRoute>
+            <SearchPage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/email/:id"
+        element={
+          <ProtectedRoute>
+            <EmailPage />
           </ProtectedRoute>
         }
       />
