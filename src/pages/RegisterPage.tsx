@@ -21,7 +21,7 @@ interface RegisterForm {
 }
 
 const RegisterPage: React.FC = () => {
-  const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setFocus, setError } = useForm<RegisterForm>();
+  const { register, handleSubmit, formState: { errors, isSubmitting }, watch, setError } = useForm<RegisterForm>();
   const [showPassword, setShowPassword] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const navigate = useNavigate();

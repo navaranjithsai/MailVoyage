@@ -4,6 +4,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 // ... other imports ...
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
+import ForgotPasswordPage from '@/pages/ForgotPasswordPage';
 import DashboardPage from '@/pages/DashboardPage';
 import SearchPage from '@/pages/SearchPage';
 import EmailPage from '@/pages/EmailPage';
@@ -55,10 +56,10 @@ const AppRouter: React.FC = () => {
 
   return (
     // Remove BrowserRouter from here
-    <Routes>
-      {/* Public routes (Login, Register) */}
+    <Routes>      {/* Public routes (Login, Register) */}
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-      <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />      {/* Protected routes (Dashboard, Settings, etc.) */}
+      <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+      <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />{/* Protected routes (Dashboard, Settings, etc.) */}
       <Route
         path="/dashboard"
         element={

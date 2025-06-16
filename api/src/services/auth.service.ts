@@ -3,6 +3,7 @@ import * as tokenService from './token.service.js';
 import pool from '../db/index.js'; // Adjusted path and extension
 import { AppError } from '../utils/errors.js'; // Custom error class
 import { logger } from '../utils/logger.js';
+import { generateOTP, hashOTP, sendOTPEmail } from './email.service.js';
 
 // Placeholder for user type/interface (ideally from models)
 interface User {
@@ -90,22 +91,94 @@ export const loginUser = async (email: string, password: string) => {
   }
 };
 
-// Placeholder: Request password reset
-export const requestPasswordReset = async (email: string) => {
-  logger.info(`Placeholder: Password reset requested for ${email}`);
-  // 1. Find user by email
-  // 2. Generate a unique, time-limited reset token
-  // 3. Store the token hash associated with the user ID
-  // 4. Send an email with the reset link (containing the token)
-  // Use a dedicated mail service for sending emails
+/**
+ * Verify username and email belong to the same user and send OTP
+ */
+export const requestPasswordReset = async (username: string, email: string) => {
+  const client = await pool.connect();
+  try {
+    // Find user by both username and email to ensure they belong to the same user
+    const userRes = await client.query(
+      'SELECT id, username, email FROM users WHERE username = $1 AND email = $2',
+      [username, email]
+    );
+
+    if (userRes.rows.length === 0) {
+      throw new AppError('User not found', 404, true, { 
+        general: 'Username and email do not match any user account.' 
+      });
+    }
+
+    const user = userRes.rows[0];
+    
+    // Generate 6-character alphanumeric OTP
+    const otp = generateOTP();
+    
+    // Hash OTP with username
+    const hashedOTP = hashOTP(otp, username);
+    
+    // Send OTP email
+    await sendOTPEmail(email, username, otp);
+    
+    logger.info(`Password reset OTP sent to ${email} for user ${username}`);
+    
+    return {
+      message: 'OTP sent to your email address',
+      hashedOTP, // Send hashed OTP back to client for verification
+      username: user.username // Send username back for frontend state
+    };
+  } catch (err: any) {
+    logger.error('Error during password reset request:', err);
+    if (err instanceof AppError) throw err;
+    throw new AppError('Internal Server Error', 500, false, { 
+      general: 'Could not process password reset request.' 
+    });
+  } finally {
+    client.release();
+  }
 };
 
-// Placeholder: Reset password using token
-export const resetPasswordWithToken = async (token: string, newPassword: string) => {
-  logger.info(`Placeholder: Password reset attempted with token ${token}`);
-  // 1. Verify the token (check existence, expiry, format)
-  // 2. Find the associated user ID
-  // 3. Hash the new password
-  // 4. Update the user's password hash in the database
-  // 5. Invalidate/delete the used reset token
+/**
+ * Update password
+ */
+export const resetPasswordWithToken = async (username: string, newPassword: string) => {
+  const client = await pool.connect();
+  try {
+    // Find user by username
+    const userRes = await client.query(
+      'SELECT id, username, email FROM users WHERE username = $1',
+      [username]
+    );
+
+    if (userRes.rows.length === 0) {
+      throw new AppError('User not found', 404, true, { 
+        general: 'User not found.' 
+      });
+    }
+
+    const user = userRes.rows[0];
+    
+    // Hash the new password
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    
+    // Update user's password
+    await client.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, user.id]
+    );
+    
+    logger.info(`Password reset completed for user ${username}`);
+    
+    return {
+      message: 'Password updated successfully'
+    };
+  } catch (err: any) {
+    logger.error('Error during password reset:', err);
+    if (err instanceof AppError) throw err;
+    throw new AppError('Internal Server Error', 500, false, { 
+      general: 'Could not reset password.' 
+    });
+  } finally {
+    client.release();
+  }
 };

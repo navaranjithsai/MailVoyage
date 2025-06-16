@@ -7,7 +7,8 @@ import {
   logout, // Import logout
   forgotPassword,
   resetPassword,
-  validateToken
+  validateToken,
+  testSMTP // Add testSMTP import
 } from '../controllers/auth.controller.js';
 import { validateRequest } from '../middlewares/validateRequest.js';
 import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from '../utils/validationSchemas.js';
@@ -31,5 +32,10 @@ router.post('/logout', logout); // Logout does not require authenticateToken mid
 router.post('/forgot-password', validateRequest({ body: forgotPasswordSchema }), forgotPassword);
 router.post('/reset-password', validateRequest({ body: resetPasswordSchema }), resetPassword);
 router.get('/validate-token', authenticateToken, validateToken); // Requires auth
+
+// Development/testing endpoints
+if (process.env.NODE_ENV === 'development') {
+  router.get('/test-smtp', testSMTP); // Test SMTP connection
+}
 
 export default router;

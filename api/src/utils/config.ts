@@ -39,6 +39,14 @@ const envSchema = z.object({
   PG_USER: z.string().optional(),
   PG_PASSWORD: z.string().optional(),
   PG_DATABASE: z.string().optional(),
+  // SMTP Configuration
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().optional(),
+  SMTP_SECURE: z.string().transform(val => val === 'true').optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM_NAME: z.string().optional(),
+  SMTP_FROM_EMAIL: z.string().email().optional(),
 }).superRefine((data, ctx) => {
   if (!data.DATABASE_URL) { // If DATABASE_URL is not provided
     // Check if all individual PG params are present
@@ -95,6 +103,16 @@ export const config = {
     parsedEnv.data.HOST_ADDRESS,
     process.env.VERCEL_URL, // Vercel system environment variable
   ].filter(Boolean).map(host => String(host).split(':')[0]) as string[], // Ensure map input is string and filter nulls
+  // SMTP Configuration
+  smtp: {
+    host: parsedEnv.data.SMTP_HOST,
+    port: parsedEnv.data.SMTP_PORT,
+    secure: parsedEnv.data.SMTP_SECURE,
+    user: parsedEnv.data.SMTP_USER,
+    pass: parsedEnv.data.SMTP_PASS,
+    fromName: parsedEnv.data.SMTP_FROM_NAME || 'MailVoyage',
+    fromEmail: parsedEnv.data.SMTP_FROM_EMAIL || parsedEnv.data.SMTP_USER,
+  },
 };
 
 console.log('[config.ts] DEBUG: Config object constructed successfully. Exporting config.');

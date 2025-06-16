@@ -91,9 +91,8 @@ const LoginPage: React.FC = () => {
             <div className="flex justify-between">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="password">
                 Password
-              </label>
-              <Link
-                to="/auth/forgot-password"
+              </label>              <Link
+                to="/forgot-password"
                 className="text-sm text-blue-600 hover:text-blue-700 transition-colors"
               >
                 Forgot Password?

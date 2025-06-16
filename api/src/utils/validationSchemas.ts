@@ -13,11 +13,12 @@ export const loginSchema = z.object({
 });
 
 export const forgotPasswordSchema = z.object({
+  username: z.string().min(3, 'Username must be at least 3 characters'),
   email: z.string().email('Invalid email address'),
 });
 
 export const resetPasswordSchema = z.object({
-  token: z.string().min(1, 'Reset token is required'),
+  username: z.string().min(3, 'Username must be at least 3 characters'),
   newPassword: z.string().min(8, 'New password must be at least 8 characters'),
 });
 

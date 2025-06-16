@@ -4,6 +4,7 @@ import * as userService from '../services/user.service.js'; // Import userServic
 import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 import { AppError } from '../utils/errors.js';
+import { testSMTPConnection } from '../services/email.service.js';
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -60,9 +61,9 @@ export const logout = async (req: Request, res: Response, next: NextFunction) =>
 
 export const forgotPassword = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { email } = req.body;
-    await authService.requestPasswordReset(email);
-    res.status(200).json({ message: 'Password reset email sent if user exists.' });
+    const { username, email } = req.body;
+    const result = await authService.requestPasswordReset(username, email);
+    res.status(200).json(result);
   } catch (error) {
     logger.error('Forgot password error:', error);
     next(error);
@@ -71,9 +72,9 @@ export const forgotPassword = async (req: Request, res: Response, next: NextFunc
 
 export const resetPassword = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token, newPassword } = req.body;
-    await authService.resetPasswordWithToken(token, newPassword);
-    res.status(200).json({ message: 'Password has been reset successfully.' });
+    const { username, newPassword } = req.body;
+    const result = await authService.resetPasswordWithToken(username, newPassword);
+    res.status(200).json(result);
   } catch (error) {
     logger.error('Reset password error:', error);
     next(error);
@@ -165,5 +166,21 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
         path: '/',
       });
     return next(new AppError('Unauthorized: Invalid session', 401));
+  }
+};
+
+export const testSMTP = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    logger.info('Testing SMTP connection via endpoint');
+    const isConnected = await testSMTPConnection();
+    
+    res.status(200).json({
+      success: isConnected,
+      message: isConnected ? 'SMTP connection successful' : 'SMTP connection failed',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('SMTP test endpoint error:', error);
+    next(error);
   }
 };
