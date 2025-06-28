@@ -6,10 +6,14 @@ import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import ForgotPasswordPage from '@/pages/ForgotPasswordPage';
 import DashboardPage from '@/pages/DashboardPage';
+import ComposePage from '@/pages/ComposePage';
+import InboxPage from '@/pages/InboxPage';
+import SettingsPage from '@/pages/SettingsPage';
 import SearchPage from '@/pages/SearchPage';
 import EmailPage from '@/pages/EmailPage';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
+import Layout from '@/components/layout/Layout';
 
 // Placeholder for a component that requires authentication
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -25,7 +29,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  return <>{children}</>;
+  return (
+    <Layout>
+      {children}
+    </Layout>
+  );
 };
 
 // Placeholder for a component that should only be accessed when not logged in
@@ -59,12 +67,39 @@ const AppRouter: React.FC = () => {
     <Routes>      {/* Public routes (Login, Register) */}
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-      <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />{/* Protected routes (Dashboard, Settings, etc.) */}
+      <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />      {/* Protected routes (Dashboard, Settings, etc.) */}
       <Route
         path="/dashboard"
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/compose"
+        element={
+          <ProtectedRoute>
+            <ComposePage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/inbox"
+        element={
+          <ProtectedRoute>
+            <InboxPage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/settings"
+        element={
+          <ProtectedRoute>
+            <SettingsPage />
           </ProtectedRoute>
         }
       />
@@ -85,20 +120,7 @@ const AppRouter: React.FC = () => {
             <EmailPage />
           </ProtectedRoute>
         }
-      />
-       {/* Add other protected routes here */}
-       {/* Example:
-       <Route
-        path="/settings"
-        element={
-          <ProtectedRoute>
-            <SettingsPage /> // Assuming SettingsPage exists
-          </ProtectedRoute>
-        }
-      /> */}
-
-      {/* Redirect root path */}
-      {/* Logic moved inside the element prop for clarity */}
+      />       {/* Redirect root path */}
       <Route
           path="/"
           element={

@@ -20,10 +20,12 @@ import {
   Star,
   Trash2,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Zap
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useEmail } from '@/contexts/EmailContext';
 import Button from '@/components/ui/Button';
 import EmailList from '@/components/email/EmailList';
 import SearchBar from '@/components/email/SearchBar';
@@ -61,13 +63,14 @@ interface RecentActivity {
 const DashboardPage: React.FC = () => {
   const { user, logout, getTabSessionInfo, clearTabValidation } = useAuth();
   const { theme, resolvedTheme } = useTheme();
+  const { emails, unreadCount, refreshEmails, pingNewEmail } = useEmail();
   const navigate = useNavigate();
   
   const [emailStats, setEmailStats] = useState<EmailStats>({
-    unread: 0,
-    total: 0,
-    sent: 0,
-    drafts: 0
+    unread: unreadCount,
+    total: emails.length,
+    sent: 0, // This would come from a different context/API in real app
+    drafts: 0 // This would come from a different context/API in real app
   });
   const [storageInfo, setStorageInfo] = useState<StorageInfo>({
     used: 0,
@@ -89,12 +92,12 @@ const DashboardPage: React.FC = () => {
         // Simulate API calls to fetch email statistics
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Mock data - replace with actual API calls
+        // Update with real email data
         setEmailStats({
-          unread: 12,
-          total: 156,
-          sent: 43,
-          drafts: 5
+          unread: unreadCount,
+          total: emails.length,
+          sent: 43, // Mock data - would come from API
+          drafts: 5 // Mock data - would come from API
         });
 
         setStorageInfo({
@@ -160,7 +163,7 @@ const DashboardPage: React.FC = () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [unreadCount, emails.length]); // Re-run when email data changes
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -229,6 +232,10 @@ const DashboardPage: React.FC = () => {
       console.error('Error clearing tab validation states:', e);
     }
     window.location.reload();
+  };
+
+  const handlePingMail = () => {
+    pingNewEmail();
   };
 
   const statCards = [
@@ -652,6 +659,15 @@ const DashboardPage: React.FC = () => {
                 🛠️ Development Tools
               </h3>
               <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={handlePingMail}
+                  variant="outline"
+                  size="small"
+                  className="border-yellow-300 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300"
+                >
+                  <Bell className="w-4 h-4 mr-2" />
+                  Ping Mail
+                </Button>
                 <Button
                   onClick={handleDebugTabSession}
                   variant="outline"

@@ -4,7 +4,7 @@ import path from 'path'; // Import path module
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()], // Removed tailwindcss plugin, using PostCSS for Tailwind
+  plugins: [react()],
   server: {
     open: false, // Prevent browser from opening automatically
     proxy: {

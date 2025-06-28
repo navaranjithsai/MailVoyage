@@ -3,6 +3,7 @@ import { BrowserRouter } from 'react-router-dom'; // Import BrowserRouter
 import AppRouter from './router';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { EmailProvider } from './contexts/EmailContext';
 import { ToastContainer } from 'react-toastify';
 import { defaultToastOptions } from './lib/toast';
 
@@ -13,8 +14,10 @@ function App() {
       <BrowserRouter>
         <ThemeProvider>
           <AuthProvider>
-            <AppRouter />
-            <ToastContainer {...defaultToastOptions} />
+            <EmailProvider>
+              <AppRouter />
+              <ToastContainer {...defaultToastOptions} />
+            </EmailProvider>
           </AuthProvider>
         </ThemeProvider>
       </BrowserRouter>
