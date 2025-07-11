@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Flowbar from './Flowbar';
+import { STORAGE_KEYS, isDesktopWidth } from '@/lib/navigation';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -10,7 +11,18 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isFlowbarEnabled, setIsFlowbarEnabled] = useState(false);
   const [canUseFlowbar, setCanUseFlowbar] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    // Initialize sidebar state from localStorage or default based on screen size
+    if (typeof window !== 'undefined') {
+      const isDesktopScreen = isDesktopWidth();
+      const savedState = localStorage.getItem(STORAGE_KEYS.SIDEBAR_COLLAPSED);
+      return isDesktopScreen ? (savedState === 'true' ? true : false) : true;
+    }
+    return true;
+  });
+  const [flowbarExpanded, setFlowbarExpanded] = useState(true);
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Check if current route should show navigation
   const shouldShowNavigation = () => {
@@ -21,9 +33,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Check screen width for flowbar compatibility
   useEffect(() => {
     const checkScreenWidth = () => {
-      const width = window.innerWidth;
-      const isTabletOrDesktop = width >= 1024;
-      setCanUseFlowbar(isTabletOrDesktop);
+      setCanUseFlowbar(isDesktopWidth());
     };
 
     checkScreenWidth();
@@ -35,32 +45,73 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Load user preference from localStorage on mount
   useEffect(() => {
     if (canUseFlowbar) {
-      const savedPreference = localStorage.getItem('mailVoyage_useFlowbar');
+      const savedPreference = localStorage.getItem(STORAGE_KEYS.FLOWBAR_ENABLED);
       if (savedPreference === 'true') {
         setIsFlowbarEnabled(true);
       }
     }
   }, [canUseFlowbar]);
 
+  // Save sidebar state to localStorage
+  useEffect(() => {
+    if (isDesktopWidth()) {
+      localStorage.setItem(STORAGE_KEYS.SIDEBAR_COLLAPSED, sidebarCollapsed.toString());
+    }
+  }, [sidebarCollapsed]);
+
   // Disable flowbar if screen becomes too small
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 1024 && isFlowbarEnabled) {
+    if (!isDesktopWidth() && isFlowbarEnabled) {
       setIsFlowbarEnabled(false);
     }
   }, [isFlowbarEnabled]);
+
+  // Centralized keyboard shortcuts: alt+c toggles collapse/expand, alt+s opens search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && e.code === 'KeyC') {
+        e.preventDefault(); // Prevent any default browser behavior
+        
+        if (isFlowbarEnabled && canUseFlowbar && isDesktopWidth()) {
+          // If flowbar is active, toggle flowbar expansion
+          setFlowbarExpanded(prev => !prev);
+        } else {
+          // Otherwise, toggle sidebar collapse
+          setSidebarCollapsed(prev => !prev);
+        }
+      } else if (e.altKey && e.code === 'KeyS') {
+        e.preventDefault(); // Prevent any default browser behavior
+        
+        // Navigate to search page
+        navigate('/search');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFlowbarEnabled, canUseFlowbar, navigate]);
+
+  // Centralized toggle functions
+  const toggleSidebar = () => {
+    setSidebarCollapsed(prev => !prev);
+  };
+
+  const toggleFlowbarExpansion = () => {
+    setFlowbarExpanded(prev => !prev);
+  };
 
   const toggleFlowbar = () => {
     if (canUseFlowbar) {
       const newState = !isFlowbarEnabled;
       setIsFlowbarEnabled(newState);
       // Save preference to localStorage
-      localStorage.setItem('mailVoyage_useFlowbar', newState.toString());
+      localStorage.setItem(STORAGE_KEYS.FLOWBAR_ENABLED, newState.toString());
     }
   };
 
   const disableFlowbar = () => {
     setIsFlowbarEnabled(false);
-    localStorage.setItem('mailVoyage_useFlowbar', 'false');
+    localStorage.setItem(STORAGE_KEYS.FLOWBAR_ENABLED, 'false');
   };
 
   if (!shouldShowNavigation()) {
@@ -74,6 +125,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         isFlowbarEnabled={isFlowbarEnabled} 
         onToggleFlowbar={toggleFlowbar}
         canUseFlowbar={canUseFlowbar}
+        isCollapsed={sidebarCollapsed}
+        onToggleSidebar={toggleSidebar}
       />
 
       {/* Main Content Area */}
@@ -86,8 +139,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       {/* Flowbar - Only on desktop (1024px+) when enabled */}
-      {isFlowbarEnabled && canUseFlowbar && typeof window !== 'undefined' && window.innerWidth >= 1024 && (
-        <Flowbar onDisable={disableFlowbar} />
+      {isFlowbarEnabled && canUseFlowbar && isDesktopWidth() && (
+        <Flowbar 
+          onDisable={disableFlowbar} 
+          isExpanded={flowbarExpanded}
+          onToggleExpansion={toggleFlowbarExpansion}
+        />
       )}
     </div>
   );

@@ -1,3 +1,8 @@
+# Ignoring unused files
+idea.prompt
+API_MIGRATION_GUIDE.md
+TODO.md
+
 # Logs
 logs
 *.log

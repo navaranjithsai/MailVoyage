@@ -55,14 +55,6 @@ const SettingsPage: React.FC = () => {
     confirmPassword: '',
   });
 
-  const [emailSettings, setEmailSettings] = useState({
-    signature: 'Best regards,\nJohn Doe',
-    autoReply: false,
-    autoReplyMessage: '',
-    forwardingEnabled: false,
-    forwardingAddress: '',
-  });
-
   const settingsSections: SettingsSection[] = [
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'notifications', label: 'Notifications', icon: Bell },

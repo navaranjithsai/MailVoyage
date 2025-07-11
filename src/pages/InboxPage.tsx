@@ -16,7 +16,7 @@ import Button from '@/components/ui/Button';
 import { useEmail } from '@/contexts/EmailContext';
 
 const InboxPage: React.FC = () => {
-  const { emails, deleteEmail, toggleEmailStarred, refreshEmails } = useEmail();
+  const { emails, refreshEmails } = useEmail();
   const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);

@@ -2,6 +2,7 @@ import {
   Edit, 
   Inbox, 
   LayoutDashboard, 
+  Search,
   Settings,
   Sun,
   Moon,
@@ -13,6 +14,7 @@ import { NavigationItem } from '@/contexts/EmailContext';
 export const getNavigationItems = (unreadCount: number): NavigationItem[] => [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { id: 'compose', label: 'Compose', icon: Edit, path: '/compose' },
+  { id: 'search', label: 'Search', icon: Search, path: '/search' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, path: '/inbox', badge: unreadCount > 0 ? unreadCount : undefined },
   { id: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
 ];
@@ -69,3 +71,21 @@ export const truncateText = (text: string, maxLength: number): string => {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + '...';
 };
+
+// Shared utility constants
+export const DESKTOP_BREAKPOINT = 1024;
+export const STORAGE_KEYS = {
+  FLOWBAR_ENABLED: 'useFlowbar',
+  SIDEBAR_COLLAPSED: 'sidebarCollapsed'
+} as const;
+
+// Shared utility functions for screen detection
+export const isDesktopWidth = () => typeof window !== 'undefined' && window.innerWidth >= DESKTOP_BREAKPOINT;
+export const isMobileTabletWidth = () => typeof window !== 'undefined' && window.innerWidth < DESKTOP_BREAKPOINT;
+export const isSsrSafe = () => typeof window !== 'undefined';
+
+// Keyboard shortcut constants
+export const KEYBOARD_SHORTCUTS = {
+  TOGGLE_NAVIGATION: 'alt+c',
+  OPEN_SEARCH: 'alt+s'
+} as const;

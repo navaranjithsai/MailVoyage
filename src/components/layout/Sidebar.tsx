@@ -14,8 +14,14 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useEmail } from '@/contexts/EmailContext';
-import { getNavigationItems, themeOptions } from '@/lib/navigation';
-import Button from '@/components/ui/Button';
+import { 
+  getNavigationItems, 
+  themeOptions, 
+  STORAGE_KEYS, 
+  isDesktopWidth, 
+  isMobileTabletWidth, 
+  isSsrSafe 
+} from '@/lib/navigation';
 import logoSvg from '@/assets/logo.svg';
 
 interface SidebarItem {
@@ -30,6 +36,8 @@ interface SidebarProps {
   isFlowbarEnabled: boolean;
   onToggleFlowbar: () => void;
   canUseFlowbar: boolean;
+  isCollapsed?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 // Tooltip component that renders at document root
@@ -82,16 +90,26 @@ const Tooltip: React.FC<{
   );
 };
 
-const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFlowbar, canUseFlowbar }) => {
-  const [isCollapsed, setIsCollapsed] = useState(() => {
+const SidebarComponent: React.FC<SidebarProps> = ({ 
+  isFlowbarEnabled, 
+  onToggleFlowbar, 
+  canUseFlowbar,
+  isCollapsed: externalIsCollapsed,
+  onToggleSidebar: externalOnToggleSidebar
+}) => {
+  // Use external state if provided, otherwise use internal state for backward compatibility
+  const [internalIsCollapsed, setInternalIsCollapsed] = useState(() => {
     // For devices below 1024px, collapsed by default. For 1024px+, expanded by default
-    if (typeof window !== 'undefined') {
-      const isDesktopScreen = window.innerWidth >= 1024;
-      const savedState = localStorage.getItem('mailVoyage_sidebarCollapsed');
+    if (isSsrSafe()) {
+      const isDesktopScreen = isDesktopWidth();
+      const savedState = localStorage.getItem(STORAGE_KEYS.SIDEBAR_COLLAPSED);
       return isDesktopScreen ? (savedState === 'true' ? true : false) : true;
     }
     return true;
   });
+
+  const isCollapsed = externalIsCollapsed !== undefined ? externalIsCollapsed : internalIsCollapsed;
+  const toggleSidebar = externalOnToggleSidebar || (() => setInternalIsCollapsed(!internalIsCollapsed));
   const [showThemeSection, setShowThemeSection] = useState(false);
   const [logoLoaded, setLogoLoaded] = useState(false);
   const [hoveredTooltip, setHoveredTooltip] = useState<string | null>(null);
@@ -100,6 +118,8 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
   const themeButtonRef = useRef<HTMLButtonElement | null>(null);
   const flowbarButtonRef = useRef<HTMLButtonElement | null>(null);
   const logoutButtonRef = useRef<HTMLButtonElement | null>(null);
+  const collapseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const expandButtonRef = useRef<HTMLButtonElement | null>(null);
   const navItemRefs = useRef<{ [key: string]: HTMLAnchorElement | null }>({});
   
   const location = useLocation();
@@ -110,35 +130,33 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
   
   const sidebarItems: SidebarItem[] = getNavigationItems(unreadCount);
 
-  // Save collapsed state to localStorage
+  // Save collapsed state to localStorage (only for internal state)
   useEffect(() => {
-    const isDesktop = window.innerWidth >= 1024;
-    if (isDesktop) {
-      localStorage.setItem('mailVoyage_sidebarCollapsed', isCollapsed.toString());
+    if (externalIsCollapsed === undefined && isDesktopWidth()) {
+      localStorage.setItem(STORAGE_KEYS.SIDEBAR_COLLAPSED, internalIsCollapsed.toString());
     }
-  }, [isCollapsed]);
+  }, [internalIsCollapsed, externalIsCollapsed]);
 
-  // Handle screen size changes
+  // Handle screen size changes (only for internal state management)
   useEffect(() => {
-    const handleResize = () => {
-      const isDesktop = window.innerWidth >= 1024;
-      if (!isDesktop && !isCollapsed) {
-        // On small screens, if sidebar is expanded, keep it as overlay
-        return;
-      }
-      // Update collapsed state based on screen size if no user preference
-      if (!localStorage.getItem('mailVoyage_sidebarCollapsed')) {
-        setIsCollapsed(!isDesktop);
-      }
-    };
+    if (externalIsCollapsed === undefined) {
+      // Only handle resize if using internal state
+      const handleResize = () => {
+        const isDesktop = isDesktopWidth();
+        if (!isDesktop && !internalIsCollapsed) {
+          // On small screens, if sidebar is expanded, keep it as overlay
+          return;
+        }
+        // Update collapsed state based on screen size if no user preference
+        if (!localStorage.getItem(STORAGE_KEYS.SIDEBAR_COLLAPSED)) {
+          setInternalIsCollapsed(!isDesktop);
+        }
+      };
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [isCollapsed]);
-
-  const toggleSidebar = () => {
-    setIsCollapsed(!isCollapsed);
-  };
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }
+  }, [internalIsCollapsed, externalIsCollapsed]);
 
   const handleLogout = async () => {
     try {
@@ -166,7 +184,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
 
   const sidebarVariants = {
     expanded: {
-      width: typeof window !== 'undefined' && window.innerWidth >= 1024 ? '20%' : '280px',
+      width: isDesktopWidth() ? '20%' : '280px',
       transition: {
         type: 'spring',
         stiffness: 400,
@@ -175,7 +193,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
       },
     },
     collapsed: {
-      width: typeof window !== 'undefined' && window.innerWidth >= 1024 ? '69px' : '65px',
+      width: isDesktopWidth() ? '69px' : '65px',
       transition: {
         type: 'spring',
         stiffness: 400,
@@ -220,7 +238,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
   };
 
   // Don't render sidebar when flowbar is enabled on desktop (1024px+)
-  if (isFlowbarEnabled && typeof window !== 'undefined' && window.innerWidth >= 1024) {
+  if (isFlowbarEnabled && isDesktopWidth()) {
     return null;
   }
 
@@ -228,7 +246,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
     <>
       {/* Mobile/Tablet Overlay */}
       <AnimatePresence>
-        {typeof window !== 'undefined' && window.innerWidth < 1024 && !isCollapsed && (
+        {isMobileTabletWidth() && !isCollapsed && (
           <motion.div
             className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
             variants={overlayVariants}
@@ -243,9 +261,9 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
       {/* Sidebar */}
       <motion.aside
         className={`
-          ${typeof window !== 'undefined' && window.innerWidth < 1024 && !isCollapsed ? 'fixed' : 'relative'} top-0 left-0 h-screen bg-white dark:bg-gray-900 
+          ${isMobileTabletWidth() && !isCollapsed ? 'fixed' : 'relative'} top-0 left-0 h-screen bg-white dark:bg-gray-900 
           border-r border-gray-200 dark:border-gray-700 z-50 
-          flex flex-col shadow-xl ${typeof window !== 'undefined' && window.innerWidth < 1024 ? '' : 'shadow-none'} 
+          flex flex-col shadow-xl ${isMobileTabletWidth() ? '' : 'shadow-none'} 
           flex-shrink-0
         `}
         variants={sidebarVariants}
@@ -256,14 +274,15 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
         <div className="flex items-center p-4 border-b border-gray-200 dark:border-gray-700">
           {isCollapsed ? (
             <div className="w-full flex justify-center">
-              <Button
-                variant="ghost"
-                size="icon"
+              <button
+                ref={expandButtonRef}
                 onClick={toggleSidebar}
-                className="flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800"
+                onMouseEnter={() => setHoveredTooltip('expand')}
+                onMouseLeave={() => setHoveredTooltip(null)}
+                className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200"
               >
-                <PanelRightClose className="w-5 h-5" />
-              </Button>
+                <PanelRightClose className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              </button>
             </div>
           ) : (
             <>
@@ -299,14 +318,15 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
                 <span className="font-semibold text-gray-900 dark:text-white">MailVoyage</span>
               </motion.div>
               
-              <Button
-                variant="ghost"
-                size="icon"
+              <button
+                ref={collapseButtonRef}
                 onClick={toggleSidebar}
-                className="flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800 ml-auto"
+                onMouseEnter={() => setHoveredTooltip('collapse')}
+                onMouseLeave={() => setHoveredTooltip(null)}
+                className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-200 ml-auto"
               >
-                <PanelRightOpen className="w-5 h-5" />
-              </Button>
+                <PanelRightOpen className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+              </button>
             </>
           )}
         </div>
@@ -435,7 +455,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
         </div>
 
         {/* Flowbar Toggle Section - Only show on desktop (1024px+) */}
-        {typeof window !== 'undefined' && window.innerWidth >= 1024 && (
+        {isDesktopWidth() && (
           <div className="border-t border-gray-200 dark:border-gray-700">
             {isCollapsed ? (
               <div className="p-2">
@@ -516,44 +536,90 @@ const SidebarComponent: React.FC<SidebarProps> = ({ isFlowbarEnabled, onToggleFl
       </motion.aside>
 
       {/* Portal tooltips rendered at document root for proper overlay positioning */}
-      {isCollapsed && typeof document !== 'undefined' && createPortal(
+      {typeof document !== 'undefined' && createPortal(
         <>
-          {/* Navigation item tooltips */}
-          {sidebarItems.map((item) => (
-            <Tooltip
-              key={`${item.id}-tooltip`}
-              isVisible={hoveredTooltip === item.id}
-              targetRef={{ current: navItemRefs.current[item.id] as HTMLElement | null }}
-            >
-              {item.label}
-            </Tooltip>
-          ))}
+          {/* Collapsed sidebar tooltips */}
+          {isCollapsed && (
+            <>
+              {/* Navigation item tooltips */}
+              {sidebarItems.map((item) => (
+                <Tooltip
+                  key={`${item.id}-tooltip`}
+                  isVisible={hoveredTooltip === item.id}
+                  targetRef={{ current: navItemRefs.current[item.id] as HTMLElement | null }}
+                >
+                  <div>
+                    {item.label}
+                    {item.id === 'search' && (
+                      <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+s</div>
+                    )}
+                  </div>
+                </Tooltip>
+              ))}
 
-          {/* Theme button tooltip */}
-          <Tooltip
-            isVisible={hoveredTooltip === 'theme'}
-            targetRef={themeButtonRef as React.RefObject<HTMLElement | null>}
-          >
-            Theme
-          </Tooltip>
+              {/* Theme button tooltip */}
+              <Tooltip
+                isVisible={hoveredTooltip === 'theme'}
+                targetRef={themeButtonRef as React.RefObject<HTMLElement | null>}
+              >
+                Theme
+              </Tooltip>
 
-          {/* Flowbar button tooltip */}
-          {typeof window !== 'undefined' && window.innerWidth >= 1024 && (
-            <Tooltip
-              isVisible={hoveredTooltip === 'flowbar'}
-              targetRef={flowbarButtonRef as React.RefObject<HTMLElement | null>}
-            >
-              {canUseFlowbar ? 'Enable Flowbar' : 'Flowbar requires desktop'}
-            </Tooltip>
+              {/* Flowbar button tooltip */}
+              {isDesktopWidth() && (
+                <Tooltip
+                  isVisible={hoveredTooltip === 'flowbar'}
+                  targetRef={flowbarButtonRef as React.RefObject<HTMLElement | null>}
+                >
+                  {canUseFlowbar ? 'Enable Flowbar' : 'Flowbar requires desktop'}
+                </Tooltip>
+              )}
+
+              {/* Logout button tooltip */}
+              <Tooltip
+                isVisible={hoveredTooltip === 'logout'}
+                targetRef={logoutButtonRef as React.RefObject<HTMLElement | null>}
+              >
+                Logout
+              </Tooltip>
+
+              {/* Expand button tooltip */}
+              {hoveredTooltip === 'expand' && (
+                <div
+                  className="fixed pointer-events-none z-[9999] transition-opacity duration-200"
+                  style={{
+                    top: expandButtonRef.current?.getBoundingClientRect().top! + expandButtonRef.current?.getBoundingClientRect().height! / 2,
+                    left: expandButtonRef.current?.getBoundingClientRect().right! + 8,
+                    transform: 'translateY(-50%)',
+                  }}
+                >
+                  <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
+                    Expand
+                    <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+c</div>
+                    <div className="absolute top-1/2 -translate-y-1/2 -left-1 w-0 h-0 border-t-4 border-b-4 border-r-4 border-transparent border-r-gray-900 dark:border-r-gray-100" />
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
-          {/* Logout button tooltip */}
-          <Tooltip
-            isVisible={hoveredTooltip === 'logout'}
-            targetRef={logoutButtonRef as React.RefObject<HTMLElement | null>}
-          >
-            Logout
-          </Tooltip>
+          {/* Expanded sidebar tooltips */}
+          {!isCollapsed && hoveredTooltip === 'collapse' && (
+            <div
+              className="fixed pointer-events-none z-[9999] transition-opacity duration-200"
+              style={{
+                top: collapseButtonRef.current?.getBoundingClientRect().top! + collapseButtonRef.current?.getBoundingClientRect().height! / 2,
+                left: collapseButtonRef.current?.getBoundingClientRect().right! + 8,
+                transform: 'translateY(-50%)',
+              }}
+            >
+              <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
+                Collapse
+                <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+c</div>
+                <div className="absolute top-1/2 -translate-y-1/2 -left-1 w-0 h-0 border-t-4 border-b-4 border-r-4 border-transparent border-r-gray-900 dark:border-r-gray-100" />
+              </div>
+            </div>
+          )}
         </>,
         document.body
       )}

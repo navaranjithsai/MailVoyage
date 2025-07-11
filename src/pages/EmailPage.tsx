@@ -3,121 +3,54 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, User } from 'lucide-react';
 import Button from '@/components/ui/Button';
-
-interface EmailData {
-  id: number;
-  sender: string;
-  senderName?: string;
-  senderEmail: string;
-  recipient: string;
-  subject: string;
-  content: string;
-  timestamp: string;
-  date: Date;
-  isRead: boolean;
-  isStarred: boolean;
-  hasAttachments: boolean;
-  attachments?: Array<{
-    id: string;
-    name: string;
-    size: string;
-    type: string;
-  }>;
-  priority: 'high' | 'normal' | 'low';
-  folder: string;
-}
+import { useEmail, Email } from '@/contexts/EmailContext';
 
 const EmailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [email, setEmail] = useState<EmailData | null>(null);
+  const { emails, markAsRead, toggleEmailStarred, deleteEmail } = useEmail();
+  const [email, setEmail] = useState<Email | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showActions, setShowActions] = useState(false);
-
-  // Mock email data - replace with actual API call
-  const mockEmailData: EmailData = {
-    id: parseInt(id || '1'),
-    sender: 'notifications@github.com',
-    senderName: 'GitHub',
-    senderEmail: 'notifications@github.com',
-    recipient: 'user@example.com',
-    subject: 'New pull request on MailVoyage repository',
-    content: `Hi there,
-
-A new pull request has been opened for review on your repository "MailVoyage".
-
-**Pull Request Details:**
-- Title: Enhanced search functionality with advanced filters
-- Author: @contributor-name
-- Branch: feature/search-enhancement
-- Files changed: 12 files
-
-**Summary:**
-This pull request introduces comprehensive search functionality including:
-- Advanced filtering by sender, subject, date range, and attachments
-- Real-time search suggestions
-- URL-based search parameters for bookmarkable searches
-- Responsive search interface with dark/light theme support
-
-**Changes include:**
-- New SearchBar component with filter interface
-- Enhanced EmailList component with search integration  
-- SearchPage with URL parameter handling
-- Improved routing for search functionality
-
-You can review the changes and provide feedback directly on GitHub.
-
-Best regards,
-The GitHub Team
-
----
-This email was sent because you are watching the MailVoyage repository. You can unsubscribe from these notifications in your GitHub settings.`,
-    timestamp: '2 hours ago',
-    date: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    isRead: false,
-    isStarred: true,
-    hasAttachments: true,
-    attachments: [
-      {
-        id: '1',
-        name: 'pull-request-summary.pdf',
-        size: '245 KB',
-        type: 'application/pdf'
-      },
-      {
-        id: '2',
-        name: 'code-changes.patch',
-        size: '12 KB',
-        type: 'text/plain'
-      }
-    ],
-    priority: 'high',
-    folder: 'inbox'
-  };
 
   useEffect(() => {
     const loadEmail = async () => {
       setIsLoading(true);
       
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Find email by ID from context
+      const foundEmail = emails.find(e => e.id === id);
       
-      // In a real app, fetch email by ID from API
-      setEmail(mockEmailData);
+      if (foundEmail) {
+        setEmail(foundEmail);
+        // Mark as read when viewing
+        markAsRead(foundEmail.id);
+      } else {
+        setEmail(null);
+      }
+      
       setIsLoading(false);
     };
 
     if (id) {
       loadEmail();
     }
-  }, [id]);
+  }, [id, emails, markAsRead]);
 
   const handleGoBack = () => {
     navigate(-1);
   };
+
   const handleToggleStar = () => {
     if (email) {
+      toggleEmailStarred(email.id);
       setEmail({ ...email, isStarred: !email.isStarred });
+    }
+  };
+
+  const handleDelete = () => {
+    if (email) {
+      deleteEmail(email.id);
+      navigate('/inbox');
     }
   };
 
@@ -147,17 +80,11 @@ This email was sent because you are watching the MailVoyage repository. You can 
     navigate(-1);
   };
 
-  const handleDelete = () => {
-    // Implement delete functionality
-    console.log('Delete email:', email?.id);
-    navigate(-1);
-  };
-
   const formatSenderName = (senderName?: string, sender?: string) => {
     return senderName || sender?.split('@')[0] || 'Unknown';
   };
 
-  const getPriorityColor = (priority: string) => {
+  const getPriorityColor = (priority?: string) => {
     switch (priority) {
       case 'high':
         return 'text-red-500';
@@ -308,9 +235,9 @@ This email was sent because you are watching the MailVoyage repository. You can 
                     </div>
                     <div className="flex items-center gap-1">
                       <Clock size={14} />
-                      {email.timestamp}
+                      {email.time}
                     </div>
-                    {email.priority !== 'normal' && (
+                    {email.priority && email.priority !== 'normal' && (
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getPriorityColor(email.priority)} bg-opacity-10`}>
                         {email.priority} priority
                       </span>

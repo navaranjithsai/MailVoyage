@@ -1,23 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, MailOpen, Star, Clock, ChevronDown, Paperclip, AlertCircle } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import { useEmail } from '@/contexts/EmailContext';
 import { SearchFilters } from './SearchBar';
-
-interface Email {
-  id: number;
-  sender: string;
-  senderName?: string;
-  subject: string;
-  preview: string;
-  timestamp: string;
-  isRead: boolean;
-  isStarred?: boolean;
-  hasAttachments?: boolean;
-  priority?: 'high' | 'normal' | 'low';
-  folder?: string;
-  date?: Date;
-}
 
 interface EmailListProps {
   folder?: string;
@@ -31,79 +17,6 @@ interface EmailListProps {
   title?: string;
 }
 
-const generateMockEmails = (): Email[] => [
-  {
-    id: 1,
-    sender: 'notifications@github.com',
-    senderName: 'GitHub',
-    subject: 'New pull request on MailVoyage',
-    preview: 'A new pull request has been opened for review on your repository...',
-    timestamp: '2 hours ago',
-    date: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    isRead: false,
-    isStarred: true,
-    hasAttachments: false,
-    priority: 'high',
-    folder: 'inbox'
-  },
-  {
-    id: 2,
-    sender: 'team@mailchimp.com',
-    senderName: 'Mailchimp',
-    subject: 'Your monthly email campaign report',
-    preview: 'Here\'s how your recent email campaigns performed...',
-    timestamp: '4 hours ago',
-    date: new Date(Date.now() - 4 * 60 * 60 * 1000),
-    isRead: true,
-    isStarred: false,
-    hasAttachments: true,
-    priority: 'normal',
-    folder: 'inbox'
-  },
-  {
-    id: 3,
-    sender: 'support@stripe.com',
-    senderName: 'Stripe',
-    subject: 'Payment confirmed',
-    preview: 'Your payment of $29.99 has been successfully processed...',
-    timestamp: '1 day ago',
-    date: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    isRead: true,
-    isStarred: false,
-    hasAttachments: false,
-    priority: 'normal',
-    folder: 'inbox'
-  },
-  {
-    id: 4,
-    sender: 'newsletter@techcrunch.com',
-    senderName: 'TechCrunch',
-    subject: 'Weekly tech roundup',
-    preview: 'The latest news and trends in technology this week...',
-    timestamp: '2 days ago',
-    date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-    isRead: false,
-    isStarred: true,
-    hasAttachments: false,
-    priority: 'low',
-    folder: 'inbox'
-  },
-  {
-    id: 5,
-    sender: 'alerts@aws.amazon.com',
-    senderName: 'AWS',
-    subject: 'EC2 instance alert',
-    preview: 'High CPU usage detected on your EC2 instance...',
-    timestamp: '3 days ago',
-    date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-    isRead: false,
-    isStarred: false,
-    hasAttachments: true,
-    priority: 'high',
-    folder: 'inbox'
-  }
-];
-
 const EmailList: React.FC<EmailListProps> = ({
   folder = 'inbox',
   searchQuery = '',
@@ -112,8 +25,7 @@ const EmailList: React.FC<EmailListProps> = ({
   showPagination = false,
   onLoadMore
 }) => {
-  const [emails, setEmails] = useState<Email[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { emails, markAsRead, toggleEmailStarred } = useEmail();
   const [currentPage, setCurrentPage] = useState(1);
 
   const filteredEmails = useMemo(() => {
@@ -166,38 +78,6 @@ const EmailList: React.FC<EmailListProps> = ({
 
   const hasMore = filteredEmails.length > paginatedEmails.length;
 
-  const loadEmails = async () => {
-    setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const mockEmails = generateMockEmails();
-    setEmails(mockEmails);
-    setIsLoading(false);
-  };
-
-  useEffect(() => {
-    loadEmails();
-  }, []);
-
-  const toggleStarred = (emailId: number) => {
-    setEmails(prevEmails => 
-      prevEmails.map(email => 
-        email.id === emailId 
-          ? { ...email, isStarred: !email.isStarred }
-          : email
-      )
-    );
-  };
-
-  const markAsRead = (emailId: number) => {
-    setEmails(prevEmails => 
-      prevEmails.map(email => 
-        email.id === emailId 
-          ? { ...email, isRead: true }
-          : email
-      )
-    );
-  };
-
   const formatSenderName = (senderName?: string, sender?: string) => {
     return senderName || sender?.split('@')[0] || 'Unknown';
   };
@@ -210,23 +90,11 @@ const EmailList: React.FC<EmailListProps> = ({
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="space-y-3">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="animate-pulse">
-            <div className="flex items-center space-x-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
-              <div className="h-10 w-10 bg-gray-300 dark:bg-gray-600 rounded-full"></div>
-              <div className="flex-1 space-y-2">
-                <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-3/4"></div>
-                <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-1/2"></div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
+  const handleEmailClick = (emailId: string) => {
+    markAsRead(emailId);
+    // Navigate to email detail page (using window.location for now)
+    window.location.href = `/email/${emailId}`;
+  };
 
   if (paginatedEmails.length === 0) {
     return (
@@ -259,7 +127,7 @@ const EmailList: React.FC<EmailListProps> = ({
               }
               hover:bg-gray-50 dark:hover:bg-gray-700/50
             `}
-            onClick={() => markAsRead(email.id)}
+            onClick={() => handleEmailClick(email.id)}
           >
             <div className="flex items-start justify-between">
               <div className="flex items-start space-x-3 flex-1 min-w-0">
@@ -295,12 +163,12 @@ const EmailList: React.FC<EmailListProps> = ({
                     <div className="flex items-center space-x-2">
                       <span className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
                         <Clock size={12} className="mr-1" />
-                        {email.timestamp}
+                        {email.time}
                       </span>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleStarred(email.id);
+                          toggleEmailStarred(email.id);
                         }}
                         className={`
                           p-1 rounded transition-colors

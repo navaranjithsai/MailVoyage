@@ -1,18 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   LogOut,
   X,
-  Menu,
   Sun,
   Moon,
-  Monitor
+  Monitor,
+  ChevronLeft
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useEmail } from '@/contexts/EmailContext';
-import { getNavigationItems, tooltipVariants, itemVariants } from '@/lib/navigation';
+import { useEmail } from '@/contexts/EmailContext'; 
+import { getNavigationItems, tooltipVariants } from '@/lib/navigation';
 import logoSvg from '@/assets/logo.svg';
 
 interface FlowbarItem {
@@ -25,12 +25,22 @@ interface FlowbarItem {
 
 interface FlowbarProps {
   onDisable: () => void;
+  isExpanded?: boolean;
+  onToggleExpansion?: () => void;
 }
 
-const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+const Flowbar: React.FC<FlowbarProps> = ({ 
+  onDisable,
+  isExpanded: externalIsExpanded,
+  onToggleExpansion: externalOnToggleExpansion
+}) => {
+  // Use external state if provided, otherwise use internal state for backward compatibility
+  const [internalIsExpanded, setInternalIsExpanded] = useState(true);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [logoLoaded, setLogoLoaded] = useState(false);
+
+  const isExpanded = externalIsExpanded !== undefined ? externalIsExpanded : internalIsExpanded;
+  const toggleExpansion = externalOnToggleExpansion || (() => setInternalIsExpanded(!internalIsExpanded));
   
   const location = useLocation();
   const navigate = useNavigate();
@@ -97,7 +107,7 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
 
   return (
     <motion.div
-      className="fixed bottom-6 left-6 z-50"
+      className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50"
       initial={{ opacity: 0, y: 100 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 100 }}
@@ -128,32 +138,38 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
         }}
       >
         <div className="flex items-center space-x-2">
-          {/* Menu/Collapse Button */}
-          <motion.button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className={`
-              relative flex items-center justify-center w-12 h-12 
-              rounded-xl bg-gradient-to-br from-blue-500 to-purple-600
-              text-white shadow-lg hover:shadow-xl
-              transition-all duration-200 group overflow-hidden
-            `}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
+          {/* Menu/Collapse Button with keyboard tooltip */}
+          <motion.div
+            className="relative"
+            onMouseEnter={() => setHoveredItem('menu')}
+            onMouseLeave={() => setHoveredItem(null)}
           >
-            <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-            
-            <AnimatePresence mode="wait">
-              {isExpanded ? (
-                <motion.div
-                  key="menu"
-                  initial={{ rotate: -90, opacity: 0 }}
-                  animate={{ rotate: 0, opacity: 1 }}
-                  exit={{ rotate: 90, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <Menu className="w-5 h-5" />
-                </motion.div>
-              ) : (                  <motion.div
+            <motion.button
+              onClick={toggleExpansion}
+              className={`
+                relative flex items-center justify-center w-12 h-12 
+                rounded-xl bg-gradient-to-br from-blue-500 to-purple-600
+                text-white shadow-lg hover:shadow-xl
+                transition-all duration-300 group overflow-hidden
+              `}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+              
+              <AnimatePresence mode="wait">
+                {isExpanded ? (
+                  <motion.div
+                    key="menu"
+                    initial={{ rotate: -90, opacity: 0 }}
+                    animate={{ rotate: 0, opacity: 1 }}
+                    exit={{ rotate: 90, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </motion.div>
+                ) : (
+                  <motion.div
                     key="minimize"
                     initial={{ rotate: 90, opacity: 0 }}
                     animate={{ rotate: 0, opacity: 1 }}
@@ -182,9 +198,29 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                       </>
                     )}
                   </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.button>
+
+            {/* Shortcut Tooltip for menu */}
+            <AnimatePresence>
+              {hoveredItem === 'menu' && (
+                <motion.div
+                  className="absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 text-center"
+                  variants={tooltipVariants}
+                  initial="hidden"
+                  animate="visible"
+                  exit="hidden"
+                >
+                  <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
+                    {isExpanded ? 'Collapse' : 'Expand'}
+                    <div className="text-xs text-gray-300 mt-1">alt+c</div>
+                  </div>
+                  <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900 dark:border-t-gray-100" />
+                </motion.div>
               )}
             </AnimatePresence>
-          </motion.button>
+          </motion.div>
 
           {/* Navigation Items */}
           <AnimatePresence>
@@ -229,7 +265,7 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                         
                         <Icon className="w-5 h-5 relative z-10" />
                         
-                        {/* Badge - Red dot for unread messages with better positioning */}
+                        {/* Badge */}
                         {item.badge && item.badge > 0 && showUnreadBadge && (
                           <motion.div
                             className="absolute top-1 right-1 bg-red-500 rounded-full w-2.5 h-2.5 border border-white dark:border-gray-800"
@@ -245,7 +281,7 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                         )}
                       </Link>
 
-                      {/* Tooltip */}
+                      {/* Tooltip for navigation items */}
                       <AnimatePresence>
                         {hoveredItem === item.id && (
                           <motion.div
@@ -256,7 +292,12 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                             exit="hidden"
                           >
                             <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
-                              {item.id === 'inbox' ? 'Inbox' : item.label}
+                              <div>
+                                {item.id === 'inbox' ? 'Inbox' : item.label}
+                                {item.id === 'search' && (
+                                  <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+s</div>
+                                )}
+                              </div>
                             </div>
                             <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900 dark:border-t-gray-100" />
                           </motion.div>
@@ -279,8 +320,9 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                   className="flex items-center space-x-2"
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.25 }}                >
-                  {/* Theme Switcher - Tap to cycle */}
+                  transition={{ delay: 0.25 }}                
+                >
+                  {/* Theme Button */}
                   <motion.div
                     className="relative"
                     onMouseEnter={() => setHoveredItem('theme')}
@@ -298,7 +340,6 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                       {theme === 'dark' && <Moon className="w-5 h-5 relative z-10" />}
                     </motion.button>
 
-                    {/* Tooltip */}
                     <AnimatePresence>
                       {hoveredItem === 'theme' && (
                         <motion.div
@@ -332,7 +373,6 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                       <LogOut className="w-5 h-5 relative z-10" />
                     </motion.button>
 
-                    {/* Tooltip */}
                     <AnimatePresence>
                       {hoveredItem === 'logout' && (
                         <motion.div
@@ -367,7 +407,6 @@ const Flowbar: React.FC<FlowbarProps> = ({ onDisable }) => {
                       <X className="w-5 h-5 relative z-10" />
                     </motion.button>
 
-                    {/* Tooltip */}
                     <AnimatePresence>
                       {hoveredItem === 'exit' && (
                         <motion.div

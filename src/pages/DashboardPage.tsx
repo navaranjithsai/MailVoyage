@@ -20,8 +20,7 @@ import {
   Star,
   Trash2,
   Calendar,
-  AlertCircle,
-  Zap
+  AlertCircle
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -63,7 +62,7 @@ interface RecentActivity {
 const DashboardPage: React.FC = () => {
   const { user, logout, getTabSessionInfo, clearTabValidation } = useAuth();
   const { theme, resolvedTheme } = useTheme();
-  const { emails, unreadCount, refreshEmails, pingNewEmail } = useEmail();
+  const { emails, unreadCount, pingNewEmail } = useEmail();
   const navigate = useNavigate();
   
   const [emailStats, setEmailStats] = useState<EmailStats>({
