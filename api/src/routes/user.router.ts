@@ -10,7 +10,7 @@ const router = Router();
 router.use(authenticateToken);
 
 router.get('/profile', userController.getProfile);
-router.put('/profile', validateRequest({ body: updateUserSchema }), userController.updateProfile);
+router.put('/profileUpdate', validateRequest({ body: updateUserSchema }), userController.updateProfile);
 router.get('/preferences', userController.getPreferences);
 router.put('/preferences', validateRequest({ body: updatePreferencesSchema }), userController.updatePreferences);
 

@@ -130,8 +130,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0 w-0">
-        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-white dark:bg-gray-800">
+      <div className="flex-1 flex flex-col min-w-0 w-0">
+        <main className="flex-1 overflow-auto bg-white dark:bg-gray-800 scrollbar-thin scrollbar-thumb-transparent scrollbar-track-transparent">
           <div className="p-6 min-h-full w-full">
             {children}
           </div>

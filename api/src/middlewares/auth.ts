@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as tokenService from '../services/token.service.js';
+import * as userService from '../services/user.service.js';
 import { AppError } from '../utils/errors.js';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
@@ -8,12 +9,17 @@ import { logger } from '../utils/logger.js';
 declare global {
   namespace Express {
     interface Request {
-      user?: { username: string; email: string }; // Payload from token: username and email ONLY
+      user?: { id: string; username: string; email: string }; // Payload with id, username and email
     }
   }
 }
 
-export const authenticateToken = (req: Request, res: Response, next: NextFunction) => {
+// Type for authenticated requests
+export interface AuthenticatedRequest extends Request {
+  user: { id: string; username: string; email: string };
+}
+
+export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
   logger.info('🔒 authenticateToken middleware invoked.', { 
     path: req.path, 
     method: req.method,
@@ -61,7 +67,28 @@ export const authenticateToken = (req: Request, res: Response, next: NextFunctio
       return next(new AppError('Unauthorized: Invalid token structure', 401));
     }
 
-    req.user = { username: decoded.username, email: decoded.email };
+    // Fetch user ID from database using email
+    logger.debug('🔍 authenticateToken: Fetching user ID from database...');
+    const userProfile = await userService.getUserByEmail(decoded.email);
+    
+    if (!userProfile) {
+      logger.warn('❌ authenticateToken: User not found in database.', { email: decoded.email });
+      // Clear the cookie for non-existent user
+      res.cookie('authToken', '', {
+        httpOnly: true,
+        secure: config.nodeEnv === 'production',
+        expires: new Date(0),
+        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+        path: '/',
+      });
+      return next(new AppError('Unauthorized: User not found', 401));
+    }
+
+    req.user = { 
+      id: userProfile.id.toString(), 
+      username: decoded.username, 
+      email: decoded.email 
+    };
     logger.info('👤 authenticateToken: User set in request.', { user: req.user });
     next();
   } catch (error: any) {

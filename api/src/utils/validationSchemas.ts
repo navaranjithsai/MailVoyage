@@ -24,8 +24,9 @@ export const resetPasswordSchema = z.object({
 
 // --- User Schemas ---
 export const updateUserSchema = z.object({
-  username: z.string().min(3).optional(),
-  // Add other updatable profile fields
+  id: z.union([z.string(), z.number()]).transform(String), // Accept both string and number, convert to string
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  email: z.string().email('Invalid email address'),
 }).strict(); // Disallow extra fields
 
 export const updatePreferencesSchema = z.object({
@@ -64,4 +65,45 @@ export const sendMailSchema = z.object({
   // Add cc, bcc, attachments later
 }).refine(data => data.text || data.html, {
   message: 'Either text or html body must be provided.',
+});
+
+// --- Email Account Schemas ---
+export const emailAccountSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
+  autoconfig: z.boolean().optional(),
+  incomingType: z.enum(['IMAP', 'POP3']).default('IMAP'),
+  incomingHost: z.string().optional(),
+  incomingPort: z.number().int().min(1).max(65535, 'Invalid port number').optional(),
+  incomingUsername: z.string().optional(),
+  incomingSecurity: z.enum(['SSL', 'STARTTLS', 'NONE']).default('SSL'),
+  outgoingHost: z.string().optional(),
+  outgoingPort: z.number().int().min(1).max(65535, 'Invalid port number').optional(),
+  outgoingUsername: z.string().optional(),
+  outgoingPassword: z.string().optional(),
+  outgoingSecurity: z.enum(['SSL', 'STARTTLS', 'NONE']).default('SSL'),
+}).refine((data) => {
+  // If autoconfig is false or not provided, require manual setup fields
+  if (!data.autoconfig) {
+    return data.incomingHost && data.incomingPort && data.outgoingHost && data.outgoingPort;
+  }
+  return true;
+}, {
+  message: "Incoming and outgoing host/port are required for manual setup",
+});
+
+export const emailAccountUpdateSchema = z.object({
+  email: z.string().email('Invalid email address').optional(),
+  password: z.string().min(1, 'Password is required').optional(),
+  autoconfig: z.boolean().optional(),
+  incomingType: z.enum(['IMAP', 'POP3']).optional(),
+  incomingHost: z.string().optional(),
+  incomingPort: z.number().int().min(1).max(65535, 'Invalid port number').optional(),
+  incomingUsername: z.string().optional(),
+  incomingSecurity: z.enum(['SSL', 'STARTTLS', 'NONE']).optional(),
+  outgoingHost: z.string().optional(),
+  outgoingPort: z.number().int().min(1).max(65535, 'Invalid port number').optional(),
+  outgoingUsername: z.string().optional(),
+  outgoingPassword: z.string().optional(),
+  outgoingSecurity: z.enum(['SSL', 'STARTTLS', 'NONE']).optional(),
 });

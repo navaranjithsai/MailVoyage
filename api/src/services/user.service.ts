@@ -49,11 +49,62 @@ export const getUserProfile = async (userId: number) => {
   return { message: `Placeholder: Profile data for user ${userId}` };
 };
 
-// Placeholder: Update user profile data
-export const updateUserProfile = async (userId: number, profileData: any) => {
-  logger.info(`Placeholder: Updating profile for user ${userId}`);
-  // Update user data in DB
-  return { message: `Placeholder: Profile updated for user ${userId}` };
+// Update user profile data
+export const updateUserProfile = async (userId: number, profileData: { username: string; email: string }) => {
+  logger.info(`Updating profile for user ${userId}`, { profileData });
+  
+  const client = await pool.connect();
+  try {
+    const { username, email } = profileData;
+    
+    // Check if the new username or email already exists (excluding current user)
+    const checkQuery = `
+      SELECT id, username, email 
+      FROM users 
+      WHERE (username = $1 OR email = $2) AND id != $3
+    `;
+    const checkResult = await client.query(checkQuery, [username, email, userId]);
+    
+    if (checkResult.rows.length > 0) {
+      const existingUser = checkResult.rows[0];
+      if (existingUser.username === username) {
+        throw new AppError('Username is already taken', 400, true, { username: 'This username is already taken' });
+      }
+      if (existingUser.email === email) {
+        throw new AppError('Email is already registered', 400, true, { email: 'This email is already registered' });
+      }
+    }
+    
+    // Update the user profile
+    const updateQuery = `
+      UPDATE users 
+      SET username = $1, email = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3
+      RETURNING id, username, email, created_at, updated_at
+    `;
+    
+    const result = await client.query(updateQuery, [username, email, userId]);
+    
+    if (result.rows.length === 0) {
+      throw new AppError('User not found', 404);
+    }
+    
+    const updatedUser = result.rows[0];
+    logger.info(`Profile updated successfully for user ${userId}`, { updatedUser });
+    
+    return {
+      id: updatedUser.id,
+      username: updatedUser.username,
+      email: updatedUser.email,
+      updatedAt: updatedUser.updated_at
+    };
+    
+  } catch (error) {
+    logger.error(`Error updating profile for user ${userId}:`, error);
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 // Placeholder: Get user preferences
