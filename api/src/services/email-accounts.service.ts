@@ -359,14 +359,14 @@ export const updateEmailAccount = async (accountId: string, userId: string, upda
 export const deleteEmailAccount = async (accountId: string, userId: string): Promise<boolean> => {
   const client = await pool.connect();
   try {
+    // Hard delete the row to allow recreating the same email for the user again
     const query = `
-      UPDATE email_accounts 
-      SET is_active = false, updated_at = $1
-      WHERE id = $2 AND user_id = $3
+      DELETE FROM email_accounts
+      WHERE id = $1 AND user_id = $2
     `;
-    
-    const result = await client.query(query, [new Date(), accountId, userId]);
-    return result.rowCount !== null && result.rowCount > 0;
+
+    const result = await client.query(query, [accountId, userId]);
+    return (result.rowCount ?? 0) > 0;
   } catch (error) {
     logger.error('Error deleting email account:', error);
     throw error;
