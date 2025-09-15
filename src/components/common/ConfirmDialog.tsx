@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, X, ChevronDown } from 'lucide-react';
 import Button from '../ui/Button';
 
 interface ConfirmDialogProps {
@@ -12,6 +12,8 @@ interface ConfirmDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
   variant?: 'danger' | 'warning' | 'info';
+  previousTitle?: string; // Optional collapsible title e.g., "Previous Test"
+  previousContent?: string; // Collapsible content; shown only if truthy and not empty
 }
 
 const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
@@ -22,8 +24,11 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   cancelLabel = 'Cancel',
   onConfirm,
   onCancel,
-  variant = 'danger'
+  variant = 'danger',
+  previousTitle,
+  previousContent,
 }) => {
+  const [expanded, setExpanded] = useState(false);
   const variantStyles = {
     danger: {
       icon: <AlertTriangle className="h-6 w-6 text-red-600" />,
@@ -68,8 +73,33 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
               </button>
             </div>
 
-            <div className="py-4">
-              <p className="text-gray-700 dark:text-gray-300">{message}</p> {}
+            <div className="py-4 space-y-3">
+              <p className="text-gray-700 dark:text-gray-300">{message}</p>
+
+              {previousContent && previousContent.trim().length > 0 && (
+                <div className="border border-gray-200 dark:border-gray-700 rounded-md">
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((v) => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-left text-sm font-medium text-gray-900 dark:text-gray-100"
+                  >
+                    <span>{previousTitle || 'Previous Test'}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {expanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="px-3 pb-3 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap"
+                      >
+                        {previousContent}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700"> {}

@@ -29,6 +29,28 @@ export const getEmailAccounts = async (req: Request, res: Response) => {
   }
 };
 
+// Get single email account by ID
+export const getEmailAccount = async (req: Request, res: Response) => {
+  try {
+    const user = getAuthenticatedUser(req);
+    const accountId = req.params.id;
+    
+    const account = await emailAccountsService.getEmailAccountById(accountId, user.id);
+    
+    if (!account) {
+      return res.status(404).json({ message: 'Email account not found' });
+    }
+    
+    // Don't return passwords in the response
+    const { password, outgoingPassword, ...sanitizedAccount } = account;
+    
+    res.json(sanitizedAccount);
+  } catch (error) {
+    logger.error('Error fetching email account:', error);
+    res.status(500).json({ message: 'Failed to fetch email account' });
+  }
+};
+
 // Add a new email account
 export const addEmailAccount = async (req: Request, res: Response) => {
   try {
@@ -109,7 +131,8 @@ export const deleteEmailAccount = async (req: Request, res: Response) => {
 export const getAutoConfig = async (req: Request, res: Response) => {
   try {
     const domain = req.params.domain;
-    const config = await emailAccountsService.getAutoConfigForDomain(domain);
+    const email = req.query.email as string | undefined;
+    const config = await emailAccountsService.getAutoConfigForDomain(domain, email);
     
     if (!config) {
       return res.status(404).json({ message: 'Auto-configuration not available for this domain' });
@@ -134,5 +157,58 @@ export const testEmailAccount = async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error testing email account:', error);
     res.status(500).json({ message: 'Failed to test email account connection' });
+  }
+};
+
+// Test all email accounts for the authenticated user
+export const testAllEmailAccounts = async (req: Request, res: Response) => {
+  try {
+    const user = getAuthenticatedUser(req);
+    const { accountCodes } = req.body;
+    
+    // Get all user's email accounts
+    const accounts = await emailAccountsService.getEmailAccountsByUserId(user.id);
+    
+    // Filter accounts based on provided account codes if specified
+    const accountsToTest = accountCodes 
+      ? accounts.filter(account => accountCodes.includes(account.accountCode))
+      : accounts;
+    
+    // Test each account
+    const testResults = await Promise.allSettled(
+      accountsToTest.map(async (account) => {
+        const testResult = await emailAccountsService.testEmailAccountConnection(account.id!, user.id);
+        return {
+          accountId: account.id,
+          accountCode: account.accountCode,
+          email: account.email,
+          status: testResult.success ? 'success' : 'error',
+          message: testResult.message,
+          details: testResult
+        };
+      })
+    );
+    
+    // Process results
+    const results = testResults.map((result, index) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
+      } else {
+        const account = accountsToTest[index];
+        return {
+          accountId: account.id,
+          accountCode: account.accountCode,
+          email: account.email,
+          status: 'error',
+          message: 'Connection test failed',
+          details: result.reason
+        };
+      }
+    });
+    
+    res.json({ results });
+  } catch (error) {
+    logger.error('Error testing all email accounts:', error);
+    res.status(500).json({ message: 'Failed to test email accounts' });
   }
 };

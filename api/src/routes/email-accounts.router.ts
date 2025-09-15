@@ -12,8 +12,11 @@ router.use(authenticateToken);
 // Get all email accounts for user
 router.get('/', emailAccountsController.getEmailAccounts);
 
-// Get autoconfig for domain
+// Get autoconfig for domain (place before :id to avoid shadowing)
 router.get('/autoconfig/:domain', emailAccountsController.getAutoConfig);
+
+// Get single email account by ID
+router.get('/:id', emailAccountsController.getEmailAccount);
 
 // Add new email account
 router.post('/', validateRequest({ body: emailAccountSchema }), emailAccountsController.addEmailAccount);
@@ -26,5 +29,8 @@ router.delete('/:id', emailAccountsController.deleteEmailAccount);
 
 // Test email account connection
 router.post('/:id/test', emailAccountsController.testEmailAccount);
+
+// Test all email accounts
+router.post('/test-all', emailAccountsController.testAllEmailAccounts);
 
 export default router;

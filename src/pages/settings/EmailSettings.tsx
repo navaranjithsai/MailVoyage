@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, RefreshCw, Eye, EyeOff, Edit, Trash2, Info, X } from 'lucide-react';
+import { Plus, RefreshCw, Eye, EyeOff, Edit, Trash2, Info, X, Play, Star } from 'lucide-react';
 import Button from '../../components/ui/Button';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -11,6 +11,7 @@ interface EmailAccount {
   id: string;
   email: string;
   accountCode: string;
+  isPrimary: boolean;
   incomingType: 'IMAP' | 'POP3';
   incomingHost: string;
   incomingPort: number;
@@ -42,9 +43,36 @@ interface AddAccountForm {
   outgoingSecurity: 'SSL' | 'STARTTLS' | 'NONE';
 }
 
-interface EditAccountForm extends AddAccountForm {
+interface EditAccountForm {
   id: string;
   accountCode: string;
+  email: string;
+  password: string;
+  showPassword: boolean;
+  showManualSetup: boolean;
+  incomingType: 'IMAP' | 'POP3';
+  incomingHost: string;
+  incomingPort: string;
+  incomingUsername: string;
+  incomingSecurity: 'SSL' | 'STARTTLS' | 'NONE';
+  outgoingHost: string;
+  outgoingPort: string;
+  outgoingUsername: string;
+  outgoingPassword: string;
+  outgoingSecurity: 'SSL' | 'STARTTLS' | 'NONE';
+}
+
+interface TestStatus {
+  [accountId: string]: 'untested' | 'testing' | 'success' | 'error' | 'timeout';
+}
+
+interface TestResult {
+  accountId: string;
+  accountCode: string;
+  email: string;
+  status: 'success' | 'error' | 'timeout';
+  message: string;
+  details?: any;
 }
 
 interface EmailSettingsProps {
@@ -59,6 +87,17 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<EmailAccount | null>(null);
+  const [showTestDialog, setShowTestDialog] = useState(false);
+  const [showTestAllDialog, setShowTestAllDialog] = useState(false);
+  const [testingAccount, setTestingAccount] = useState<EmailAccount | null>(null);
+  const [testStatus, setTestStatus] = useState<TestStatus>({});
+  const [testResults, setTestResults] = useState<TestResult[]>([]);
+  const [isTesting, setIsTesting] = useState(false);
+  const [isTestingAll, setIsTestingAll] = useState(false);
+  const [testMessage, setTestMessage] = useState('');
+  // Previous test details (stored in sessionStorage) for dialogs
+  const [previousTestContent, setPreviousTestContent] = useState<string>('');
+  const [previousAllTestContent, setPreviousAllTestContent] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<{[key: string]: string}>({});
 
@@ -144,6 +183,58 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     }
   };
 
+  // Session storage helpers for last failed tests
+  const failKeyFor = (account: Pick<EmailAccount, 'id' | 'accountCode' | 'email'>) =>
+    `emailTest:last:${account.accountCode || account.id}`;
+
+  const saveLastFailure = (
+    account: Pick<EmailAccount, 'id' | 'accountCode' | 'email'>,
+    payload: { status: 'error' | 'timeout'; message: string; details?: any }
+  ) => {
+    try {
+      const entry = {
+        email: account.email,
+        at: new Date().toISOString(),
+        ...payload,
+      };
+      sessionStorage.setItem(failKeyFor(account), JSON.stringify(entry));
+    } catch (e) {
+      console.error('Failed to persist last failure', e);
+    }
+  };
+
+  const clearLastFailure = (account: Pick<EmailAccount, 'id' | 'accountCode' | 'email'>) => {
+    try {
+      sessionStorage.removeItem(failKeyFor(account));
+    } catch (e) {
+      // noop
+    }
+  };
+
+  const readLastFailure = (account: Pick<EmailAccount, 'id' | 'accountCode' | 'email'>): string => {
+    try {
+      const raw = sessionStorage.getItem(failKeyFor(account));
+      if (!raw) return '';
+      const data = JSON.parse(raw) as { email: string; at: string; status: string; message: string };
+      const when = new Date(data.at);
+      const whenStr = `${when.toLocaleDateString()} ${when.toLocaleTimeString()}`;
+      return `Email: ${data.email}\nWhen: ${whenStr}\nStatus: ${data.status}\nMessage: ${data.message}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const readAllFailuresSummary = (accounts: EmailAccount[]): string => {
+    const lines: string[] = [];
+    for (const acc of accounts) {
+      const msg = readLastFailure(acc);
+      if (msg) {
+        lines.push(`• ${acc.email}\n${msg.split('\n').slice(1).join('\n')}`);
+      }
+    }
+    return lines.join('\n\n');
+  };
+
   const resetAddForm = () => {
     setAddForm({
       email: '',
@@ -223,9 +314,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     setFormErrors({});
     
     try {
-      const requestData = {
+      const requestData: any = {
         email: editForm.email,
-        password: editForm.password,
         edit: true,
         incomingType: editForm.incomingType,
         incomingHost: editForm.incomingHost,
@@ -235,9 +325,16 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
         outgoingHost: editForm.outgoingHost,
         outgoingPort: parseInt(editForm.outgoingPort),
         outgoingUsername: editForm.outgoingUsername || editForm.email,
-        outgoingPassword: editForm.outgoingPassword || editForm.password,
         outgoingSecurity: editForm.outgoingSecurity,
       };
+
+      // Only include password fields if user provided them
+      if (editForm.password && editForm.password.trim() !== '') {
+        requestData.password = editForm.password.trim();
+      }
+      if (editForm.outgoingPassword && editForm.outgoingPassword.trim() !== '') {
+        requestData.outgoingPassword = editForm.outgoingPassword.trim();
+      }
 
       console.log('📤 Updating email account:', requestData);
       const response = await apiFetch(`/api/email-accounts/${editForm.id}`, {
@@ -289,48 +386,227 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   };
 
   const openEditModal = async (account: EmailAccount) => {
+    // Populate form from local state; avoid API fetch
     setSelectedAccount(account);
-    setIsLoading(true);
+    setIsLoading(false);
     setShowEditModal(true);
-    
-    try {
-      // Fetch complete account details
-      console.log('🔍 Fetching account details for editing:', account.id);
-      const response = await apiFetch(`/api/email-accounts/${account.id}`, {
-        method: 'GET',
-      });
-      
-      setEditForm({
-        id: account.id,
-        accountCode: account.accountCode,
-        email: response.email || 'Loading...',
-        password: response.password || 'Loading...',
-        showPassword: false,
-        showManualSetup: true,
-        incomingType: response.incomingType || 'IMAP',
-        incomingHost: response.incomingHost || 'Loading...',
-        incomingPort: response.incomingPort?.toString() || 'Loading...',
-        incomingUsername: response.incomingUsername || 'Loading...',
-        incomingSecurity: response.incomingSecurity || 'SSL',
-        outgoingHost: response.outgoingHost || 'Loading...',
-        outgoingPort: response.outgoingPort?.toString() || 'Loading...',
-        outgoingUsername: response.outgoingUsername || 'Loading...',
-        outgoingPassword: response.outgoingPassword || 'Loading...',
-        outgoingSecurity: response.outgoingSecurity || 'SSL',
-      });
-      
-    } catch (error: any) {
-      console.error('❌ Failed to fetch account details:', error);
-      toast.error('Failed to load account details');
-    } finally {
-      setIsLoading(false);
-    }
+
+    setEditForm({
+      id: account.id,
+      accountCode: account.accountCode,
+      email: account.email,
+      password: '', // leave blank; user can enter to update
+      showPassword: false,
+      showManualSetup: true,
+      incomingType: account.incomingType || 'IMAP',
+      incomingHost: account.incomingHost || '',
+      incomingPort: account.incomingPort?.toString() || '',
+      incomingUsername: account.incomingUsername || account.email,
+      incomingSecurity: account.incomingSecurity || 'SSL',
+      outgoingHost: account.outgoingHost || '',
+      outgoingPort: account.outgoingPort?.toString() || '',
+      outgoingUsername: account.outgoingUsername || account.email,
+      outgoingPassword: '', // leave blank to keep current
+      outgoingSecurity: account.outgoingSecurity || 'SSL',
+    });
   };
 
   const openDeleteDialog = (account: EmailAccount) => {
     setSelectedAccount(account);
     setShowDeleteDialog(true);
   };
+
+  // Load test status from localStorage
+  const loadTestStatus = () => {
+    try {
+      const stored = localStorage.getItem('emailTestStatus');
+      if (stored) {
+        setTestStatus(JSON.parse(stored));
+      }
+    } catch (error) {
+      console.error('Error loading test status:', error);
+    }
+  };
+
+  // Save test status to localStorage
+  const saveTestStatus = (status: TestStatus) => {
+    try {
+      localStorage.setItem('emailTestStatus', JSON.stringify(status));
+      setTestStatus(status);
+    } catch (error) {
+      console.error('Error saving test status:', error);
+    }
+  };
+
+  // Handle single account test
+  const handleTestAccount = async () => {
+    if (!testingAccount) return;
+
+    setIsTesting(true);
+    setTestMessage(`Testing connection for ${testingAccount.email}...`);
+
+    const newStatus = { ...testStatus, [testingAccount.id]: 'testing' as const };
+    saveTestStatus(newStatus);
+
+    try {
+      console.log('🧪 Testing email account:', testingAccount.accountCode);
+      const response = await apiFetch(`/api/email-accounts/${testingAccount.id}/test`, {
+        method: 'POST',
+      });
+
+      console.log('✅ Test result:', response);
+
+      const resultStatus: 'success' | 'error' = response.success ? 'success' : 'error';
+      const updatedStatus = { ...testStatus, [testingAccount.id]: resultStatus };
+      saveTestStatus(updatedStatus);
+
+      setTestMessage(response.success
+        ? `✅ Test successful for ${testingAccount.email}`
+        : `❌ Test failed for ${testingAccount.email}: ${response.message}`
+      );
+
+      // Persist previous failure or clear on success
+      if (response.success) {
+        clearLastFailure(testingAccount);
+        setPreviousTestContent('');
+      } else {
+        saveLastFailure(testingAccount, {
+          status: 'error',
+          message: response.message || 'Unknown error',
+          details: response.details,
+        });
+        setPreviousTestContent(readLastFailure(testingAccount));
+      }
+
+    } catch (error: any) {
+      console.error('❌ Test failed:', error);
+      const updatedStatus = { ...testStatus, [testingAccount.id]: 'error' as const };
+      saveTestStatus(updatedStatus);
+      setTestMessage(`❌ Test failed for ${testingAccount.email}: ${error.message || 'Unknown error'}`);
+      saveLastFailure(testingAccount, {
+        status: 'error',
+        message: error.message || 'Unknown error',
+      });
+      setPreviousTestContent(readLastFailure(testingAccount));
+    } finally {
+      setTimeout(() => {
+        setIsTesting(false);
+        setShowTestDialog(false);
+        setTestingAccount(null);
+        setTestMessage('');
+      }, 2000);
+    }
+  };
+
+  // Handle test all accounts
+  const handleTestAllAccounts = async () => {
+    setIsTestingAll(true);
+    setTestMessage('Initializing test for all accounts...');
+
+    const accountCodes = emailAccounts.map(account => account.accountCode);
+    console.log('🧪 Testing all email accounts:', accountCodes);
+
+    try {
+      const response = await apiFetch('/api/email-accounts/test-all', {
+        method: 'POST',
+        body: JSON.stringify({ accountCodes }),
+      });
+
+      console.log('✅ Test all result:', response);
+
+      // Update status for each account
+      const updatedStatus: TestStatus = { ...testStatus };
+      response.results.forEach((result: TestResult) => {
+        const status: 'untested' | 'testing' | 'success' | 'error' | 'timeout' = 
+          result.status === 'success' ? 'success' : 
+          result.status === 'error' ? 'error' : 
+          result.status === 'timeout' ? 'timeout' : 'error';
+        updatedStatus[result.accountId] = status;
+        // Persist last failure or clear on success
+        const acc = emailAccounts.find(a => a.id === result.accountId || a.accountCode === result.accountCode);
+        if (acc) {
+          if (status === 'success') {
+            clearLastFailure(acc);
+          } else {
+            saveLastFailure(acc, {
+              status: status === 'timeout' ? 'timeout' : 'error',
+              message: result.message || (status === 'timeout' ? 'Timed out' : 'Unknown error'),
+              details: result.details,
+            });
+          }
+        }
+      });
+      saveTestStatus(updatedStatus);
+
+      setTestResults(response.results);
+      setTestMessage('All tests completed!');
+
+      // Store test results in localStorage for debugging
+      try {
+        localStorage.setItem('lastTestResults', JSON.stringify(response.results));
+      } catch (error) {
+        console.error('Failed to store test results:', error);
+      }
+
+      // Log test results for debugging
+      console.log('🧪 Test results:', response.results);
+  console.log('📊 Total accounts tested:', testResults.length);
+  // Refresh summary for next open
+  setPreviousAllTestContent(readAllFailuresSummary(emailAccounts));
+
+    } catch (error: any) {
+      console.error('❌ Test all failed:', error);
+      setTestMessage(`❌ Test failed: ${error.message || 'Unknown error'}`);
+    } finally {
+      setTimeout(() => {
+        setIsTestingAll(false);
+        setShowTestAllDialog(false);
+        setTestMessage('');
+      }, 3000);
+    }
+  };
+
+  // Handle setting primary email
+  const handleSetPrimary = async (account: EmailAccount) => {
+    if (account.isPrimary) return; // Already primary
+
+    try {
+      console.log('👑 Setting primary email:', account.email);
+      const response = await apiFetch(`/api/email-accounts/${account.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ isPrimary: true }),
+      });
+
+      console.log('✅ Primary email updated:', response);
+      toast.success(`${account.email} is now your primary email`);
+      await fetchEmailAccounts(); // Refresh the list
+
+    } catch (error: any) {
+      console.error('❌ Failed to set primary email:', error);
+      toast.error(error.message || 'Failed to set primary email');
+    }
+  };
+
+  // Get test status display
+  const getTestStatusDisplay = (accountId: string) => {
+    const status = testStatus[accountId] || 'untested';
+
+    switch (status) {
+      case 'success':
+        return { text: 'Tested', color: 'bg-green-100 text-green-800 border-green-300' };
+      case 'error':
+        return { text: 'Error', color: 'bg-red-100 text-red-800 border-red-300' };
+      case 'testing':
+        return { text: 'Testing...', color: 'bg-blue-100 text-blue-800 border-blue-300' };
+      default:
+        return { text: 'Test', color: 'bg-gray-100 text-gray-800 border-gray-300' };
+    }
+  };
+
+  // Load test status on component mount
+  useEffect(() => {
+    loadTestStatus();
+  }, []);
 
   return (
     <motion.div 
@@ -344,6 +620,19 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Email Settings</h2>
         
         <div className={`flex items-center space-x-3 ${isMobile ? '' : ''}`}>
+          <Button
+            onClick={() => {
+              setPreviousAllTestContent(readAllFailuresSummary(emailAccounts));
+              setShowTestAllDialog(true);
+            }}
+            variant="outline"
+            className="flex items-center space-x-2"
+            disabled={emailAccounts.length === 0}
+          >
+            <Play className="w-4 h-4" />
+            <span>Test All</span>
+          </Button>
+          
           <Button
             onClick={() => setShowAddModal(true)}
             className="flex items-center space-x-2"
@@ -372,43 +661,85 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
             No email accounts added yet. Click "Add Account" to get started.
           </div>
         ) : (
-          emailAccounts.map((account) => (
-            <div 
-              key={account.id}
-              className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg"
-            >
-              <div className="flex-1">
-                <div className="font-medium text-gray-900 dark:text-white">
-                  {account.email}
+          emailAccounts.map((account) => {
+            const testStatus = getTestStatusDisplay(account.id);
+            return (
+              <div 
+                key={account.id}
+                className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center space-x-2">
+                    <div className="font-medium text-gray-900 dark:text-white">
+                      {account.email}
+                    </div>
+                    {account.isPrimary && (
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                        <Star className="w-3 h-3 mr-1" />
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    Account ID: {account.accountCode || account.id.substring(0, 6)}
+                  </div>
                 </div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">
-                  Account ID: {account.accountCode || account.id.substring(0, 6)}
-                </div>
-              </div>
-              
-              <div className="text-sm text-gray-600 dark:text-gray-300">
-                Primary Email
-              </div>
-              
-              <div className="flex items-center space-x-2 ml-4">
-                <Button
-                  onClick={() => openEditModal(account)}
-                  variant="ghost"
-                  className="p-2"
-                >
-                  <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                </Button>
                 
-                <Button
-                  onClick={() => openDeleteDialog(account)}
-                  variant="ghost"
-                  className="p-2"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-                </Button>
+                <div className="flex items-center space-x-3">
+                  {/* Test Status */}
+                  <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${testStatus.color}`}>
+                    {testStatus.text}
+                  </div>
+                  
+                  {/* Action Buttons */}
+                  <div className="flex items-center space-x-1">
+                    <Button
+                      onClick={() => {
+                        setTestingAccount(account);
+                        // Load any previous failure text for this account
+                        setPreviousTestContent(readLastFailure(account));
+                        setShowTestDialog(true);
+                      }}
+                      variant="ghost"
+                      className="p-2"
+                      title="Test Connection"
+                    >
+                      <Play className="w-4 h-4 text-green-600 dark:text-green-400" />
+                    </Button>
+                    
+                    {!account.isPrimary && (
+                      <Button
+                        onClick={() => handleSetPrimary(account)}
+                        variant="ghost"
+                        className="p-2"
+                        title="Set as Primary"
+                      >
+                        <Star className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                      </Button>
+                    )}
+                    
+                    <Button
+                      onClick={() => openEditModal(account)}
+                      variant="ghost"
+                      className="p-2"
+                      title="Edit Account"
+                    >
+                      <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    </Button>
+                    
+                    <Button
+                      onClick={() => openDeleteDialog(account)}
+                      variant="ghost"
+                      className="p-2"
+                      title="Delete Account"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+                    </Button>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -761,6 +1092,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         value={editForm.password}
                         onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
                         className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                        placeholder="Enter new password to update (leave blank to keep current)"
                       />
                       <button
                         type="button"
@@ -941,6 +1273,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                           value={editForm.outgoingPassword}
                           onChange={(e) => setEditForm({ ...editForm, outgoingPassword: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                          placeholder="Leave blank to keep current"
                         />
                       </div>
                     </div>
@@ -992,6 +1325,60 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
         }}
         variant="danger"
       />
+
+      {/* Test Single Account Dialog */}
+      <ConfirmDialog
+        isOpen={showTestDialog}
+        title="Test Email Connection"
+        message={`Test the connection for ${testingAccount?.email}? This will verify IMAP/POP3 and SMTP settings.`}
+        previousTitle="Previous Test"
+        previousContent={previousTestContent}
+        confirmLabel="Test Connection"
+        cancelLabel="Cancel"
+        onConfirm={handleTestAccount}
+        onCancel={() => {
+          setShowTestDialog(false);
+          setTestingAccount(null);
+          setPreviousTestContent('');
+        }}
+        variant="info"
+      />
+
+      {/* Test All Accounts Dialog */}
+      <ConfirmDialog
+        isOpen={showTestAllDialog}
+        title="Test All Email Connections"
+        message={`Test connections for all ${emailAccounts.length} email accounts? This may take a few moments.`}
+        previousTitle="Previous Failed Tests"
+        previousContent={previousAllTestContent}
+        confirmLabel="Test All"
+        cancelLabel="Cancel"
+        onConfirm={handleTestAllAccounts}
+        onCancel={() => {
+          setShowTestAllDialog(false);
+          setPreviousAllTestContent('');
+        }}
+        variant="info"
+      />
+
+      {/* Test Progress Overlay */}
+      {(isTesting || isTestingAll) && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 max-w-sm w-full mx-4">
+            <div className="flex items-center space-x-3">
+              <LoadingSpinner message="" />
+              <div>
+                <h3 className="font-medium text-gray-900 dark:text-white">
+                  {isTestingAll ? 'Testing All Accounts...' : 'Testing Connection...'}
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  {testMessage}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 };

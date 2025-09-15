@@ -34,6 +34,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters long'),
   JWT_EXPIRES_IN: z.string().default('1h'),
   JWT_COOKIE_EXPIRES_IN: z.coerce.number().int().positive().default(10 * 60 * 60 * 1000), // Default 10 hours in ms
+  PWD_SECRET: z.string().min(8, 'PWD_SECRET must be at least 8 characters long'),
   PG_HOST: z.string().optional(),
   PG_PORT: z.coerce.number().int().positive().optional(),
   PG_USER: z.string().optional(),
@@ -97,6 +98,7 @@ export const config = {
   jwtSecret: parsedEnv.data.JWT_SECRET,
   jwtExpiresIn: parsedEnv.data.JWT_EXPIRES_IN,
   jwtCookieExpiresIn: parsedEnv.data.JWT_COOKIE_EXPIRES_IN, // Add to exported config
+  pwdSecret: parsedEnv.data.PWD_SECRET,
   allowedHosts: [
     'localhost',
     parsedEnv.data.PORT ? `localhost:${parsedEnv.data.PORT}` : null,

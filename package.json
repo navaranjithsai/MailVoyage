@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json.schemastore.org/package",
   "description": "MailVoyage - A modern email client",
   "name": "mailvoyage",
   "private": true,

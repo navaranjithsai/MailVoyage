@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json.schemastore.org/package.json",
   "name": "mailvoyage-api",
   "version": "1.0.0",
   "description": "Backend API for MailVoyage",

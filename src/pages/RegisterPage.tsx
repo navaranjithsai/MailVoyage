@@ -86,6 +86,7 @@ const RegisterPage: React.FC = () => {
                 {...register('username', usernameValidation)}
                 className={`pl-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.username ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
+                autoFocus
               />
             </div>
             {errors.username && (

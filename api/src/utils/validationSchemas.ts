@@ -106,4 +106,5 @@ export const emailAccountUpdateSchema = z.object({
   outgoingUsername: z.string().optional(),
   outgoingPassword: z.string().optional(),
   outgoingSecurity: z.enum(['SSL', 'STARTTLS', 'NONE']).optional(),
+  isPrimary: z.boolean().optional(),
 });
