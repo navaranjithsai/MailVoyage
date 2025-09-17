@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Plus, RefreshCw, Eye, EyeOff, Edit, Trash2, Info, X, Play, Star } from 'lucide-react';
+import { motion, easeOut } from 'framer-motion';
+import { Plus, RefreshCw, Eye, EyeOff, Edit, Trash2, Info, X, Play, Star, Server } from 'lucide-react';
 import Button from '../../components/ui/Button';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -81,10 +81,14 @@ interface EmailSettingsProps {
 
 const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   const [emailAccounts, setEmailAccounts] = useState<EmailAccount[]>([]);
+  const [smtpAccounts, setSmtpAccounts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showAddSmtpModal, setShowAddSmtpModal] = useState(false);
+  const [showEditSmtpModal, setShowEditSmtpModal] = useState(false);
+  const [editingSmtp, setEditingSmtp] = useState<any | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<EmailAccount | null>(null);
   const [showTestDialog, setShowTestDialog] = useState(false);
@@ -100,6 +104,12 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   const [previousAllTestContent, setPreviousAllTestContent] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<{[key: string]: string}>({});
+  const [smtpForm, setSmtpForm] = useState<{ email: string; host: string; port: string; security: 'SSL'|'TLS'|'STARTTLS'|'PLAIN'|'NONE'; username: string; password: string; showPassword: boolean }>({
+    email: '', host: '', port: '', security: 'SSL', username: '', password: '', showPassword: false
+  });
+  const [smtpEditForm, setSmtpEditForm] = useState<{ email: string; host: string; port: string; security: 'SSL'|'TLS'|'STARTTLS'|'PLAIN'|'NONE'; username: string; password: string }>({
+    email: '', host: '', port: '', security: 'SSL', username: '', password: ''
+  });
 
   const [addForm, setAddForm] = useState<AddAccountForm>({
     email: '',
@@ -145,9 +155,9 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   const loadEmailAccountsFromStorage = () => {
     try {
       const storedAccounts = localStorage.getItem('emailAccounts');
-      if (storedAccounts) {
-        setEmailAccounts(JSON.parse(storedAccounts));
-      }
+      const storedSmtp = localStorage.getItem('smtpAccounts');
+      if (storedAccounts) setEmailAccounts(JSON.parse(storedAccounts));
+      if (storedSmtp) setSmtpAccounts(JSON.parse(storedSmtp));
     } catch (error) {
       console.error('Error loading email accounts from localStorage:', error);
     }
@@ -161,6 +171,14 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     }
   };
 
+  const saveSmtpAccountsToStorage = (accounts: any[]) => {
+    try {
+      localStorage.setItem('smtpAccounts', JSON.stringify(accounts));
+    } catch (error) {
+      console.error('Error saving smtp accounts to localStorage:', error);
+    }
+  };
+
   const fetchEmailAccounts = async () => {
     setIsRefreshing(true);
     setFormErrors({});
@@ -170,10 +188,13 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       const response = await apiFetch('/api/email-accounts', {
         method: 'GET',
       });
-      
-      console.log('✅ Email accounts fetched successfully:', response);
-      setEmailAccounts(response);
-      saveEmailAccountsToStorage(response);
+      console.log('✅ Accounts fetched successfully:', response);
+      const emails = Array.isArray(response) ? response : (response.emailAccounts || []);
+      const smtp = Array.isArray(response) ? [] : (response.smtpAccounts || []);
+      setEmailAccounts(emails);
+      setSmtpAccounts(smtp);
+      saveEmailAccountsToStorage(emails);
+      saveSmtpAccountsToStorage(smtp);
       
     } catch (error: any) {
       console.error('❌ Failed to fetch email accounts:', error);
@@ -612,7 +633,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     <motion.div 
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
+      transition={{ duration: 0.3, ease: easeOut }}
       className="space-y-6"
     >
       {/* Header */}
@@ -640,6 +661,14 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
           >
             <Plus className="w-4 h-4" />
             <span>Add Account</span>
+          </Button>
+          <Button
+            onClick={() => setShowAddSmtpModal(true)}
+            className="flex items-center space-x-2"
+            variant="outline"
+          >
+            <Server className="w-4 h-4" />
+            <span>Add SMTP Only</span>
           </Button>
           
           <Button
@@ -742,6 +771,84 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
           })
         )}
       </div>
+
+      {/* SMTP Only Accounts */}
+      <div className="space-y-3">
+        {smtpAccounts.length > 0 && (
+          <>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">SMTP Only</h3>
+            {smtpAccounts.map((acc: any) => (
+              <div key={acc.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                <div className="flex-1">
+                  <div className="flex items-center space-x-2">
+                    <div className="font-medium text-gray-900 dark:text-white">{acc.email}</div>
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                      SMTP Only
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">{acc.host}:{acc.port} • {acc.security}</div>
+                </div>
+                <div className="flex items-center space-x-1">
+                  <Button
+                    onClick={async () => {
+                      try {
+                        const r = await apiFetch(`/api/smtp-accounts/${acc.id}/test`, { method: 'POST' });
+                        if (r.success) toast.success('SMTP connection OK'); else toast.error(r.message || 'SMTP test failed');
+                      } catch (e: any) {
+                        toast.error(e.message || 'SMTP test failed');
+                      }
+                    }}
+                    variant="ghost"
+                    className="p-2"
+                    title="Test SMTP"
+                  >
+                    <Play className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setEditingSmtp(acc);
+                      setSmtpEditForm({
+                        email: acc.email || '',
+                        host: acc.host || '',
+                        port: String(acc.port || ''),
+                        security: acc.security || 'SSL',
+                        username: acc.username || acc.email || '',
+                        password: '',
+                      });
+                      setShowEditSmtpModal(true);
+                    }}
+                    variant="ghost"
+                    className="p-2"
+                    title="Edit"
+                  >
+                    <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      // Simple delete for now
+                      try {
+                        await apiFetch(`/api/smtp-accounts/${acc.id}`, { method: 'DELETE' });
+                        toast.success('SMTP account deleted');
+                        await fetchEmailAccounts();
+                      } catch (e: any) {
+                        toast.error(e.message || 'Delete failed');
+                      }
+                    }}
+                    variant="ghost"
+                    className="p-2"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+
+      {/* Add SMTP Only Modal (minimal) */}
+      {/* You can enhance this later with full edit support */}
 
       {/* Add Account Modal */}
       {showAddModal && (
@@ -1038,6 +1145,188 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                     className="flex-1"
                   >
                     {isSubmitting ? <LoadingSpinner message="" /> : 'Sign In'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add SMTP Only Modal */}
+      {showAddSmtpModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add SMTP Only</h3>
+                <Button onClick={() => setShowAddSmtpModal(false)} variant="ghost" className="p-2">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+                  <input type="email" value={smtpForm.email} onChange={(e)=>setSmtpForm({...smtpForm,email:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">SMTP Server</label>
+                  <input type="text" value={smtpForm.host} onChange={(e)=>setSmtpForm({...smtpForm,host:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
+                    <input type="number" value={smtpForm.port} onChange={(e)=>setSmtpForm({...smtpForm,port:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Security</label>
+                    <select value={smtpForm.security} onChange={(e)=>setSmtpForm({...smtpForm,security:e.target.value as any})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                      <option value="SSL">SSL</option>
+                      <option value="TLS">TLS</option>
+                      <option value="STARTTLS">STARTTLS</option>
+                      <option value="PLAIN">PLAIN</option>
+                      <option value="NONE">NONE</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+                  <input type="text" value={smtpForm.username} onChange={(e)=>setSmtpForm({...smtpForm,username:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" placeholder={smtpForm.email || 'your.email@example.com'} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+                  <div className="relative">
+                    <input
+                      type={smtpForm.showPassword ? 'text' : 'password'}
+                      value={smtpForm.password}
+                      onChange={(e)=>setSmtpForm({...smtpForm,password:e.target.value})}
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSmtpForm({ ...smtpForm, showPassword: !smtpForm.showPassword })}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    >
+                      {smtpForm.showPassword ? (
+                        <EyeOff className="h-4 w-4 text-gray-400" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex space-x-3 pt-2">
+                  <Button variant="outline" className="flex-1" onClick={()=>setShowAddSmtpModal(false)}>Cancel</Button>
+                  <Button
+                    className="flex-1"
+                    disabled={isSubmitting || !smtpForm.email || !smtpForm.host || !smtpForm.port || !smtpForm.password}
+                    onClick={async ()=>{
+                      setIsSubmitting(true);
+                      try {
+                        const payload = {
+                          email: smtpForm.email,
+                          host: smtpForm.host,
+                          port: parseInt(smtpForm.port, 10),
+                          username: smtpForm.username || smtpForm.email,
+                          password: smtpForm.password,
+                          security: smtpForm.security,
+                        };
+                        await apiFetch('/api/smtp-accounts', { method: 'POST', body: JSON.stringify(payload) });
+                        toast.success('SMTP account added');
+                        setShowAddSmtpModal(false);
+                        setSmtpForm({ email: '', host: '', port: '', security: 'SSL', username: '', password: '', showPassword: false });
+                        await fetchEmailAccounts();
+                      } catch (e: any) {
+                        toast.error(e.message || 'Failed to add SMTP');
+                      } finally {
+                        setIsSubmitting(false);
+                      }
+                    }}
+                  >
+                    {isSubmitting ? <LoadingSpinner message="" /> : 'Add SMTP'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit SMTP Only Modal */}
+      {showEditSmtpModal && editingSmtp && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit SMTP Account</h3>
+                <Button onClick={() => setShowEditSmtpModal(false)} variant="ghost" className="p-2">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+                  <input type="email" value={smtpEditForm.email} onChange={(e)=>setSmtpEditForm({...smtpEditForm,email:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">SMTP Server</label>
+                  <input type="text" value={smtpEditForm.host} onChange={(e)=>setSmtpEditForm({...smtpEditForm,host:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
+                    <input type="number" value={smtpEditForm.port} onChange={(e)=>setSmtpEditForm({...smtpEditForm,port:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Security</label>
+                    <select value={smtpEditForm.security} onChange={(e)=>setSmtpEditForm({...smtpEditForm,security:e.target.value as any})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                      <option value="SSL">SSL</option>
+                      <option value="TLS">TLS</option>
+                      <option value="STARTTLS">STARTTLS</option>
+                      <option value="PLAIN">PLAIN</option>
+                      <option value="NONE">NONE</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+                  <input type="text" value={smtpEditForm.username} onChange={(e)=>setSmtpEditForm({...smtpEditForm,username:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Password</label>
+                  <input type="password" value={smtpEditForm.password} onChange={(e)=>setSmtpEditForm({...smtpEditForm,password:e.target.value})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white" placeholder="Leave blank to keep current" />
+                </div>
+                <div className="flex space-x-3 pt-2">
+                  <Button variant="outline" className="flex-1" onClick={()=>setShowEditSmtpModal(false)}>Cancel</Button>
+                  <Button
+                    className="flex-1"
+                    disabled={isSubmitting || !smtpEditForm.email || !smtpEditForm.host || !smtpEditForm.port}
+                    onClick={async ()=>{
+                      setIsSubmitting(true);
+                      try {
+                        const payload: any = {
+                          email: smtpEditForm.email,
+                          host: smtpEditForm.host,
+                          port: parseInt(smtpEditForm.port, 10),
+                          username: smtpEditForm.username,
+                          security: smtpEditForm.security,
+                        };
+                        if (smtpEditForm.password && smtpEditForm.password.trim() !== '') {
+                          payload.password = smtpEditForm.password.trim();
+                        }
+                        await apiFetch(`/api/smtp-accounts/${editingSmtp.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+                        toast.success('SMTP account updated');
+                        setShowEditSmtpModal(false);
+                        setEditingSmtp(null);
+                        await fetchEmailAccounts();
+                      } catch (e: any) {
+                        toast.error(e.message || 'Failed to update SMTP');
+                      } finally {
+                        setIsSubmitting(false);
+                      }
+                    }}
+                  >
+                    {isSubmitting ? <LoadingSpinner message="" /> : 'Save'}
                   </Button>
                 </div>
               </div>

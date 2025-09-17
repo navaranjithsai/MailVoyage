@@ -108,3 +108,23 @@ export const emailAccountUpdateSchema = z.object({
   outgoingSecurity: z.enum(['SSL', 'STARTTLS', 'NONE']).optional(),
   isPrimary: z.boolean().optional(),
 });
+
+// --- SMTP Only Account Schemas ---
+export const smtpAccountSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  host: z.string().min(1, 'SMTP host is required'),
+  port: z.number().int().min(1).max(65535, 'Invalid port number'),
+  username: z.string().optional(),
+  password: z.string().min(1, 'Password is required'),
+  security: z.enum(['SSL', 'TLS', 'STARTTLS', 'PLAIN', 'NONE']).default('SSL'),
+}).strict();
+
+export const smtpAccountUpdateSchema = z.object({
+  email: z.string().email('Invalid email address').optional(),
+  host: z.string().min(1).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  security: z.enum(['SSL', 'TLS', 'STARTTLS', 'PLAIN', 'NONE']).optional(),
+  isActive: z.boolean().optional(),
+}).strict();

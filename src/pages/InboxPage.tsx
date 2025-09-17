@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, easeOut } from 'framer-motion';
 import { 
   Search, 
   Filter, 
@@ -49,7 +49,7 @@ const InboxPage: React.FC = () => {
       y: 0,
       transition: {
         duration: 0.4,
-        ease: 'easeOut'
+        ease: easeOut
       }
     },
   };
@@ -61,7 +61,7 @@ const InboxPage: React.FC = () => {
       x: 0,
       transition: {
         duration: 0.3,
-        ease: 'easeOut'
+        ease: easeOut
       }
     },
     hover: {

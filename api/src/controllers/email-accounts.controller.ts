@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as emailAccountsService from '../services/email-accounts.service.js';
+import * as smtpAccountsService from '../services/smtp-accounts.service.js';
 import { logger } from '../utils/logger.js';
 
 // Type assertion function to check if request has authenticated user
@@ -14,15 +15,23 @@ const getAuthenticatedUser = (req: Request) => {
 export const getEmailAccounts = async (req: Request, res: Response) => {
   try {
     const user = getAuthenticatedUser(req);
-    const accounts = await emailAccountsService.getEmailAccountsByUserId(user.id);
-    
+    const [accounts, smtpAccounts] = await Promise.all([
+      emailAccountsService.getEmailAccountsByUserId(user.id),
+      smtpAccountsService.getSmtpAccountsByUserId(user.id),
+    ]);
+
     // Don't return passwords in the response
     const sanitizedAccounts = accounts.map(account => {
       const { password, outgoingPassword, ...sanitized } = account;
       return sanitized;
     });
-    
-    res.json(sanitizedAccounts);
+
+    const sanitizedSmtp = smtpAccounts.map(acc => {
+      const { password, ...rest } = acc as any;
+      return { ...rest, smtpOnly: true };
+    });
+
+    res.json({ emailAccounts: sanitizedAccounts, smtpAccounts: sanitizedSmtp });
   } catch (error) {
     logger.error('Error fetching email accounts:', error);
     res.status(500).json({ message: 'Failed to fetch email accounts' });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, easeOut } from 'framer-motion';
 import { 
   ChevronDown,
   User, 
@@ -219,7 +219,7 @@ const SettingsPage: React.FC = () => {
       y: 0,
       transition: {
         duration: 0.4,
-        ease: 'easeOut'
+        ease: easeOut
       }
     },
   };
@@ -231,7 +231,7 @@ const SettingsPage: React.FC = () => {
       x: 0,
       transition: {
         duration: 0.3,
-        ease: 'easeOut'
+        ease: easeOut
       }
     },
   };

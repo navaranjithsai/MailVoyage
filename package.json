@@ -16,7 +16,10 @@
     "install": "npm install && npm run install:api"
   },
   "dependencies": {
+    "@ckeditor/ckeditor5-react": "^11.0.0",
     "@tailwindcss/vite": "^4.0.0",
+    "ckeditor5": "^46.1.1",
+    "dompurify": "^3.2.7",
     "framer-motion": "^12.9.2",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^0.503.0",
@@ -30,6 +33,7 @@
   "devDependencies": {
     "@eslint/js": "^9.22.0",
     "@tailwindcss/postcss": "^4.1.4",
+    "@types/dompurify": "^3.0.5",
     "@types/imapflow": "^1.0.21",
     "@types/node": "^22.15.2",
     "@types/react": "^19.0.10",
