@@ -62,15 +62,20 @@ MailVoyage is optimized for serverless environments. To deploy on Vercel:
 - `POST /auth/register`: Register a new user.
 - `POST /auth/login`: Log in to the application.
 - `POST /auth/forgot-password`: Request a password reset.
+- More API Request like email-accounts, smtp-accounts, which embedded in mailvoyage
 
 ### Email Management
 - `POST /mail/send`: Send an email.
 - `GET /mail/fetch`: Fetch emails from a mailbox.
 - `POST /mail/config`: Configure mail server settings.
+## Development Focus
 
-### User Management
-- `GET /users/me`: Fetch user profile.
-- `PUT /users/me`: Update user profile.
+We are currently prioritizing the implementation and refinement of key features to enhance the MailVoyage experience. Our main areas of focus include:
+
+- **Dashboard Stats**: Fixing and improving the accuracy, display, and real-time updates of email statistics on the dashboard.
+- **Entire Dashboard Actions**: Refining user interactions, such as email management, folder operations, and overall dashboard responsiveness.
+
+If you are a developer interested in contributing to these ongoing efforts or have suggestions for other features, please refer to the Contributing section below or start a discussion in the repository.
 
 ## Contributing
 We welcome contributions to MailVoyage! To get started:

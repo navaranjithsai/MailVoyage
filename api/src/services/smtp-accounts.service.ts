@@ -2,6 +2,7 @@ import pool from '../db/index.js';
 import { logger } from '../utils/logger.js';
 import { encrypt as encPwd, tryDecrypt, isEncrypted } from '../utils/crypto.js';
 import nodemailer from 'nodemailer';
+import { generateAccountCode } from './email-accounts.service.js';
 
 export interface SmtpAccount {
   id?: string;
@@ -12,6 +13,7 @@ export interface SmtpAccount {
   username?: string;
   password: string;
   security: 'SSL' | 'TLS' | 'STARTTLS' | 'PLAIN' | 'NONE';
+  accountCode?: string;
   isActive?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -26,6 +28,7 @@ const mapFromDb = (row: any): SmtpAccount => ({
   username: row.username,
   password: row.password,
   security: row.security,
+  accountCode: row.account_code,
   isActive: row.is_active,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -35,7 +38,7 @@ export const getSmtpAccountsByUserId = async (userId: string): Promise<SmtpAccou
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, user_id, email, host, port, username, password, security, is_active, created_at, updated_at
+      `SELECT id, user_id, email, host, port, username, password, security, account_code, is_active, created_at, updated_at
        FROM smtp_accounts WHERE user_id = $1 AND is_active = true ORDER BY created_at DESC`,
       [userId]
     );
@@ -52,7 +55,7 @@ export const getSmtpAccountById = async (id: string, userId: string): Promise<Sm
   const client = await pool.connect();
   try {
     const result = await client.query(
-      `SELECT id, user_id, email, host, port, username, password, security, is_active, created_at, updated_at
+      `SELECT id, user_id, email, host, port, username, password, security, account_code, is_active, created_at, updated_at
        FROM smtp_accounts WHERE id = $1 AND user_id = $2 AND is_active = true`,
       [id, userId]
     );
@@ -71,11 +74,32 @@ export const createSmtpAccount = async (data: SmtpAccount): Promise<SmtpAccount>
   try {
     const now = new Date();
     const enc = encPwd(data.password);
+    
+    // Generate unique account code
+    let accountCode: string;
+    let isUnique = false;
+    let attempts = 0;
+    const maxAttempts = 100;
+    
+    while (!isUnique && attempts < maxAttempts) {
+      accountCode = generateAccountCode();
+      const check = await client.query(
+        'SELECT 1 FROM smtp_accounts WHERE account_code = $1',
+        [accountCode]
+      );
+      isUnique = check.rows.length === 0;
+      attempts++;
+    }
+    
+    if (!isUnique) {
+      throw new Error('Failed to generate unique account code');
+    }
+    
     const result = await client.query(
-      `INSERT INTO smtp_accounts (user_id, email, host, port, username, password, security, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9)
-       RETURNING id, user_id, email, host, port, username, password, security, is_active, created_at, updated_at`,
-      [data.userId, data.email, data.host, data.port, data.username || data.email, enc, data.security, now, now]
+      `INSERT INTO smtp_accounts (user_id, email, host, port, username, password, security, account_code, is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)
+       RETURNING id, user_id, email, host, port, username, password, security, account_code, is_active, created_at, updated_at`,
+      [data.userId, data.email, data.host, data.port, data.username || data.email, enc, data.security, accountCode!, now, now]
     );
     return mapFromDb(result.rows[0]);
   } catch (err) {
@@ -113,7 +137,7 @@ export const updateSmtpAccount = async (id: string, userId: string, update: Part
 
     const result = await client.query(
       `UPDATE smtp_accounts SET ${fields.join(', ')} WHERE id = $${i++} AND user_id = $${i++}
-       RETURNING id, user_id, email, host, port, username, password, security, is_active, created_at, updated_at`,
+       RETURNING id, user_id, email, host, port, username, password, security, account_code, is_active, created_at, updated_at`,
       values
     );
 

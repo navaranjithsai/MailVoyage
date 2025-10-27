@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, easeOut } from 'framer-motion';
-import { Send, Paperclip, X, Save, Eye } from 'lucide-react';
+import { Send, Paperclip, X, Save, Eye, ChevronDown } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { toast } from '@/lib/toast';
 import DOMPurify from 'dompurify';
+import { apiFetch } from '@/lib/apiFetch';
+import { useNavigate } from 'react-router-dom';
 
 // CKEditor 5
 import 'ckeditor5/ckeditor5.css';
@@ -31,9 +33,21 @@ interface Attachment {
   type: string;
 }
 
+interface EmailAccount {
+  id: string;
+  email: string;
+  accountCode: string;
+  isPrimary?: boolean;
+  type: 'email' | 'smtp';
+}
+
 const EDITOR_MIN_HEIGHT_PX = 480;
 
 const ComposePage: React.FC = () => {
+  const navigate = useNavigate();
+  const [fromAccount, setFromAccount] = useState<EmailAccount | null>(null);
+  const [availableAccounts, setAvailableAccounts] = useState<EmailAccount[]>([]);
+  const [showFromDropdown, setShowFromDropdown] = useState(false);
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -57,6 +71,52 @@ const ComposePage: React.FC = () => {
       style.id = id;
       style.textContent = `.ck-editor__editable[role="textbox"]{min-height:${EDITOR_MIN_HEIGHT_PX}px;}`;
       document.head.appendChild(style);
+    }
+  }, []);
+
+  // Load email accounts from localStorage
+  useEffect(() => {
+    try {
+      const emailAccountsStr = localStorage.getItem('emailAccounts');
+      const smtpAccountsStr = localStorage.getItem('smtpAccounts');
+      
+      const accounts: EmailAccount[] = [];
+      
+      // Load email accounts
+      if (emailAccountsStr) {
+        const emailAccounts = JSON.parse(emailAccountsStr);
+        emailAccounts.forEach((acc: any) => {
+          accounts.push({
+            id: acc.id,
+            email: acc.email,
+            accountCode: acc.accountCode,
+            isPrimary: acc.isPrimary,
+            type: 'email',
+          });
+        });
+      }
+      
+      // Load SMTP-only accounts
+      if (smtpAccountsStr) {
+        const smtpAccounts = JSON.parse(smtpAccountsStr);
+        smtpAccounts.forEach((acc: any) => {
+          accounts.push({
+            id: acc.id,
+            email: acc.email,
+            accountCode: acc.accountCode,
+            type: 'smtp',
+          });
+        });
+      }
+      
+      setAvailableAccounts(accounts);
+      
+      // Set primary account as default, or first account
+      const primaryAccount = accounts.find(acc => acc.isPrimary);
+      setFromAccount(primaryAccount || accounts[0] || null);
+      
+    } catch (error) {
+      console.error('Error loading email accounts:', error);
     }
   }, []);
 
@@ -167,20 +227,77 @@ const ComposePage: React.FC = () => {
     }) as string;
 
   const handleSend = async () => {
+    // Validation
+    if (!fromAccount) {
+      toast.error('Please select a sender account');
+      return;
+    }
+    
+    if (!to.trim()) {
+      toast.error('Please enter recipient email address');
+      return;
+    }
+    
+    if (!subject.trim()) {
+      toast.error('Please enter email subject');
+      return;
+    }
+    
     const safeHtml = sanitizeForEmail(content);
-    if (!to.trim() || !subject.trim() || !safeHtml.trim()) {
-      toast.error('Please fill in all required fields');
+    if (!safeHtml.trim()) {
+      toast.error('Please enter email content');
       return;
     }
 
     setIsSending(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      toast.success('Email sent successfully!');
-      setTo(''); setCc(''); setBcc(''); setSubject(''); setContent(''); setAttachments([]); setCharCount(0);
+      // Parse recipients
+      const toArray = to.split(',').map(e => e.trim()).filter(e => e);
+      const ccArray = cc ? cc.split(',').map(e => e.trim()).filter(e => e) : [];
+      const bccArray = bcc ? bcc.split(',').map(e => e.trim()).filter(e => e) : [];
+      
+      // Prepare payload
+      const payload = {
+        accountCode: fromAccount.accountCode,
+        to: toArray,
+        cc: ccArray.length > 0 ? ccArray : undefined,
+        bcc: bccArray.length > 0 ? bccArray : undefined,
+        subject: subject,
+        html: safeHtml,
+        text: content.replace(/<[^>]*>/g, ''), // Strip HTML for plain text version
+        attachments: attachments.length > 0 ? attachments.map(att => ({
+          filename: att.name,
+          content: att.id, // Assuming base64 encoded content stored in id
+          contentType: att.type,
+        })) : undefined,
+      };
+      
+      // Send email via API
+      const response = await apiFetch('/api/mail/send', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      
+      toast.success(response.message || 'Email sent successfully!');
+      
+      // Clear form
+      setTo(''); 
+      setCc(''); 
+      setBcc(''); 
+      setSubject(''); 
+      setContent(''); 
+      setAttachments([]); 
+      setCharCount(0);
       editorRef.current?.setData('');
-    } catch (error) {
-      toast.error('Failed to send email');
+      
+      // Navigate to sent folder or inbox
+      setTimeout(() => {
+        navigate('/inbox');
+      }, 1500);
+      
+    } catch (error: any) {
+      console.error('Error sending email:', error);
+      toast.error(error.message || 'Failed to send email');
     } finally {
       setIsSending(false);
     }
@@ -243,6 +360,17 @@ const ComposePage: React.FC = () => {
           <div className="p-6">
             <div className="space-y-4">
               <div>
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400">From:</span>
+                <div className="flex items-center space-x-2 mt-1">
+                  <p className="text-gray-900 dark:text-white">{fromAccount?.email || 'No sender selected'}</p>
+                  {fromAccount?.type === 'smtp' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                      SMTP Only
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div>
                 <span className="text-sm font-medium text-gray-500 dark:text-gray-400">To:</span>
                 <p className="text-gray-900 dark:text-white">{to || 'No recipient'}</p>
               </div>
@@ -289,6 +417,83 @@ const ComposePage: React.FC = () => {
         ) : (
           /* Compose Mode */
           <div className="p-6 space-y-4">
+            {/* From Account Selector */}
+            <div className="relative">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">From *</label>
+              {availableAccounts.length === 0 ? (
+                <div className="w-full px-3 py-2 border border-yellow-300 dark:border-yellow-600 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                    No email accounts available. Please{' '}
+                    <button
+                      onClick={() => navigate('/settings')}
+                      className="font-medium underline hover:no-underline"
+                    >
+                      add an email account
+                    </button>
+                    {' '}first.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setShowFromDropdown(!showFromDropdown)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white flex items-center justify-between"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <span>{fromAccount?.email || 'Select account'}</span>
+                      {fromAccount?.type === 'smtp' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                          SMTP Only
+                        </span>
+                      )}
+                      {fromAccount?.isPrimary && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                          Primary
+                        </span>
+                      )}
+                    </div>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showFromDropdown ? 'rotate-180' : ''}`} />
+                  </button>
+                  
+                  {showFromDropdown && (
+                    <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {availableAccounts.map((account) => (
+                        <button
+                          key={account.id}
+                          onClick={() => {
+                            setFromAccount(account);
+                            setShowFromDropdown(false);
+                          }}
+                          className={`w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between ${
+                            fromAccount?.id === account.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2">
+                            <span className="text-gray-900 dark:text-white">{account.email}</span>
+                            {account.type === 'smtp' && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                                SMTP Only
+                              </span>
+                            )}
+                            {account.isPrimary && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                                Primary
+                              </span>
+                            )}
+                          </div>
+                          {account.accountCode && (
+                            <span className="text-xs font-mono text-gray-500 dark:text-gray-400">
+                              {account.accountCode}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
             {/* Recipients */}
             <div className="space-y-3">
               <div>

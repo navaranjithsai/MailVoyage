@@ -3,6 +3,8 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser, ParsedMail, AddressObject } from 'mailparser'; // Import AddressObject
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
+import pool from '../db/index.js';
+import { tryDecrypt } from '../utils/crypto.js';
 // import crypto from 'crypto'; // For encrypting credentials
 // import pool from '../db'; // To save/retrieve credentials
 
@@ -173,4 +175,237 @@ export const createFolder = async (userId: number, folderName: string) => {
   logger.info(`Placeholder: Creating folder '${folderName}' for user ${userId}`);
   // Use ImapFlow client.mailboxCreate()
   return { message: `Placeholder: Folder '${folderName}' created` };
+};
+
+// ===== NEW: Send email using account credentials =====
+
+interface SendMailPayload {
+  accountCode: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  html: string;
+  text?: string;
+  attachments?: Array<{
+    filename: string;
+    content: string; // base64 or buffer
+    contentType?: string;
+  }>;
+}
+
+/**
+ * Send email using user's email account credentials
+ * Fetches account by accountCode from either email_accounts or smtp_accounts
+ */
+export const sendMailFromAccount = async (userId: string, payload: SendMailPayload): Promise<{ success: boolean; messageId?: string; message: string }> => {
+  const client = await pool.connect();
+  
+  try {
+    logger.info(`Attempting to send email for user ${userId} using account code ${payload.accountCode}`);
+    logger.debug(`Query parameters: userId="${userId}", accountCode="${payload.accountCode}"`);
+    
+    // Step 1: Try to find the account in email_accounts first
+    let accountResult = await client.query(
+      `SELECT id, email, outgoing_host, outgoing_port, outgoing_username, outgoing_password, outgoing_security
+       FROM email_accounts 
+       WHERE user_id = $1 AND account_code = $2 AND is_active = true`,
+      [userId, payload.accountCode]
+    );
+    
+    logger.debug(`email_accounts query result: ${accountResult.rows.length} rows`);
+    
+    let smtpConfig: any = null;
+    let fromEmail = '';
+    
+    if (accountResult.rows.length > 0) {
+      // Found in email_accounts
+      logger.info(`Found account in email_accounts table`);
+      const account = accountResult.rows[0];
+      fromEmail = account.email;
+      
+      // Decrypt password
+      const decryptedPassword = tryDecrypt(account.outgoing_password);
+      if (!decryptedPassword) {
+        throw new AppError('Failed to decrypt account password', 500, false);
+      }
+      
+      smtpConfig = {
+        host: account.outgoing_host,
+        port: account.outgoing_port,
+        username: account.outgoing_username || account.email,
+        password: decryptedPassword,
+        security: account.outgoing_security,
+      };
+    } else {
+      // Step 2: Try smtp_accounts table
+      logger.info(`Account not found in email_accounts, trying smtp_accounts`);
+      accountResult = await client.query(
+        `SELECT id, email, host, port, username, password, security
+         FROM smtp_accounts 
+         WHERE user_id = $1 AND account_code = $2 AND is_active = true`,
+        [userId, payload.accountCode]
+      );
+      
+      logger.debug(`smtp_accounts query result: ${accountResult.rows.length} rows`);
+      
+      if (accountResult.rows.length === 0) {
+        logger.error(`No account found with code ${payload.accountCode} for user ${userId}`);
+        throw new AppError('Email account not found or inactive', 404, true);
+      }
+      
+      logger.info(`Found account in smtp_accounts table`);
+      const account = accountResult.rows[0];
+      fromEmail = account.email;
+      
+      // Decrypt password
+      const decryptedPassword = tryDecrypt(account.password);
+      if (!decryptedPassword) {
+        throw new AppError('Failed to decrypt account password', 500, false);
+      }
+      
+      smtpConfig = {
+        host: account.host,
+        port: account.port,
+        username: account.username || account.email,
+        password: decryptedPassword,
+        security: account.security,
+      };
+    }
+    
+    // Step 3: Create nodemailer transporter with account credentials
+    logger.info(`Creating SMTP transporter: host=${smtpConfig.host}, port=${smtpConfig.port}, security=${smtpConfig.security}`);
+    
+    const secure = smtpConfig.security === 'SSL';
+    const requireTLS = smtpConfig.security === 'TLS' || smtpConfig.security === 'STARTTLS';
+    
+    const transportConfig: any = {
+      host: smtpConfig.host,
+      port: smtpConfig.port,
+      secure: secure, // true for SSL (port 465), false for STARTTLS/TLS
+      auth: {
+        user: smtpConfig.username,
+        pass: smtpConfig.password,
+      },
+      // Connection pool for better performance with multiple emails
+      pool: false, // Set to true if sending multiple emails in quick succession
+      maxConnections: 1,
+      maxMessages: Infinity,
+      // Timeout settings
+      connectionTimeout: 60000, // 60 seconds
+      greetingTimeout: 30000, // 30 seconds
+      socketTimeout: 60000, // 60 seconds
+    };
+    
+    // TLS configuration
+    if (requireTLS || !secure) {
+      transportConfig.tls = {
+        // Do not fail on invalid certs in development
+        rejectUnauthorized: process.env.NODE_ENV === 'production',
+        minVersion: 'TLSv1.2',
+      };
+      
+      // Explicitly require TLS upgrade for STARTTLS
+      if (requireTLS) {
+        transportConfig.requireTLS = true;
+      }
+    }
+    
+    // Debug mode in development
+    if (process.env.NODE_ENV !== 'production') {
+      transportConfig.debug = true;
+      transportConfig.logger = {
+        debug: (msg: string) => logger.debug(`[SMTP Debug] ${msg}`),
+        info: (msg: string) => logger.info(`[SMTP Info] ${msg}`),
+        warn: (msg: string) => logger.warn(`[SMTP Warn] ${msg}`),
+        error: (msg: string) => logger.error(`[SMTP Error] ${msg}`),
+      };
+    }
+    
+    const transporter = nodemailer.createTransport(transportConfig);
+    
+    // Verify SMTP connection before sending
+    try {
+      logger.info('Verifying SMTP connection...');
+      await transporter.verify();
+      logger.info('SMTP connection verified successfully');
+    } catch (verifyError: any) {
+      logger.error('SMTP connection verification failed:', verifyError);
+      throw new AppError(
+        `SMTP connection failed: ${verifyError.message}`,
+        500,
+        false,
+        { details: verifyError.message }
+      );
+    }
+    
+    // Step 4: Prepare email options
+    const mailOptions: any = {
+      from: `${fromEmail} <${fromEmail}>`,
+      to: payload.to.join(', '),
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text || undefined,
+    };
+    
+    if (payload.cc && payload.cc.length > 0) {
+      mailOptions.cc = payload.cc.join(', ');
+    }
+    
+    if (payload.bcc && payload.bcc.length > 0) {
+      mailOptions.bcc = payload.bcc.join(', ');
+    }
+    
+    if (payload.attachments && payload.attachments.length > 0) {
+      mailOptions.attachments = payload.attachments.map(att => ({
+        filename: att.filename,
+        content: Buffer.from(att.content, 'base64'),
+        contentType: att.contentType,
+      }));
+    }
+    
+    // Step 5: Send the email
+    logger.info(`Sending email from ${fromEmail} to ${payload.to.join(', ')}`);
+    logger.debug(`Email subject: "${payload.subject}"`);
+    
+    let info;
+    try {
+      info = await transporter.sendMail(mailOptions);
+      logger.info(`Email sent successfully. Message ID: ${info.messageId}`);
+    } catch (sendError: any) {
+      logger.error('Failed to send email:', sendError);
+      throw new AppError(
+        `Failed to send email: ${sendError.message}`,
+        500,
+        false,
+        { 
+          details: sendError.message,
+          response: sendError.response,
+          responseCode: sendError.responseCode,
+        }
+      );
+    }
+    
+    return {
+      success: true,
+      messageId: info.messageId,
+      message: 'Email sent successfully',
+    };
+    
+  } catch (error: any) {
+    logger.error('Error in sendMailFromAccount:', error);
+    
+    if (error instanceof AppError) {
+      throw error;
+    }
+    
+    throw new AppError(
+      error.message || 'Failed to send email',
+      500,
+      false,
+      { details: error.message, stack: error.stack }
+    );
+  } finally {
+    client.release();
+  }
 };

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as mailService from '../services/mail.service.js';
 import { logger } from '../utils/logger.js';
+import { AppError } from '../utils/errors.js';
 
 // Placeholder: Setup mail server config (SMTP/IMAP)
 export const setupMailServer = async (req: Request, res: Response, next: NextFunction) => {
@@ -27,14 +28,25 @@ export const getMailServerConfig = async (req: Request, res: Response, next: Nex
   }
 };
 
-// Placeholder: Send mail
+// Send mail using account credentials
 export const sendMail = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    // const userId = (req as any).user.userId;
-    // const mailData = req.body;
-    // await mailService.sendEmail(userId, mailData);
-    logger.info('Placeholder: Send mail called');
-    res.status(200).json({ message: 'Placeholder: Mail sent successfully' });
+    const user = (req as any).user;
+    
+    if (!user || !user.id) {
+      logger.error('User not authenticated or missing user ID');
+      return next(new AppError('User authentication failed', 401));
+    }
+    
+    const userId = user.id;
+    const mailData = req.body;
+    
+    logger.info(`Send mail request from user ${userId}`);
+    
+    // Call the new sendMailFromAccount service
+    const result = await mailService.sendMailFromAccount(userId, mailData);
+    
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

@@ -273,14 +273,14 @@ const DashboardPage: React.FC = () => {
       title: 'Compose Email',
       description: 'Create a new email',
       icon: <Plus size={20} />,
-      href: '/email/compose',
+      href: '/compose',
       color: 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600'
     },
     {
       title: 'Mail Settings',
       description: 'Configure mail servers',
       icon: <Settings size={20} />,
-      href: '/settings/mail',
+      href: '/settings/',
       color: 'bg-gray-600 hover:bg-gray-700 dark:bg-gray-500 dark:hover:bg-gray-600'
     },
     {

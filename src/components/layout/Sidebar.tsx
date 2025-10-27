@@ -186,7 +186,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
     expanded: {
       width: isDesktopWidth() ? '20%' : '280px',
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 400,
         damping: 35,
         mass: 1.2,
@@ -195,7 +195,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
     collapsed: {
       width: isDesktopWidth() ? '69px' : '65px',
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 400,
         damping: 35,
         mass: 1.2,
@@ -221,7 +221,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
       height: 'auto',
       opacity: 1,
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 300,
         damping: 30,
       },
@@ -230,7 +230,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
       height: 0,
       opacity: 0,
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 300,
         damping: 30,
       },

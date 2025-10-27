@@ -71,7 +71,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
     expanded: {
       width: 'auto',
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 400,
         damping: 35,
         mass: 1.2,
@@ -81,7 +81,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
     collapsed: {
       width: 'auto',
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 400,
         damping: 35,
         mass: 1.2,
@@ -96,7 +96,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
       scale: 1, 
       opacity: 1,
       transition: {
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 500,
         damping: 28,
         mass: 1,
@@ -112,7 +112,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 100 }}
       transition={{
-        type: 'spring',
+        type: 'spring' as const,
         stiffness: 300,
         damping: 30,
       }}
@@ -214,7 +214,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
                 >
                   <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
                     {isExpanded ? 'Collapse' : 'Expand'}
-                    <div className="text-xs text-gray-300 mt-1">alt+c</div>
+                    <div className="text-xs text-gray-500 mt-1">alt+c</div>
                   </div>
                   <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900 dark:border-t-gray-100" />
                 </motion.div>
@@ -272,7 +272,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
                             transition={{ 
-                              type: 'spring',
+                              type: 'spring' as const,
                               stiffness: 400,
                               damping: 25,
                               delay: 0.2,

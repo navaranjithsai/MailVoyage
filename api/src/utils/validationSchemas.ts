@@ -58,13 +58,18 @@ export const setupMailServerSchema = z.object({
 });
 
 export const sendMailSchema = z.object({
-  to: z.string().email().or(z.array(z.string().email()).min(1)), // Single email or array
-  subject: z.string().optional(),
+  accountCode: z.string().min(3, 'Account code is required'),
+  to: z.array(z.string().email('Invalid email address')).min(1, 'At least one recipient is required'),
+  cc: z.array(z.string().email('Invalid email address')).optional(),
+  bcc: z.array(z.string().email('Invalid email address')).optional(),
+  subject: z.string().min(1, 'Subject is required'),
+  html: z.string().min(1, 'Email body is required'),
   text: z.string().optional(),
-  html: z.string().optional(),
-  // Add cc, bcc, attachments later
-}).refine(data => data.text || data.html, {
-  message: 'Either text or html body must be provided.',
+  attachments: z.array(z.object({
+    filename: z.string(),
+    content: z.string(), // base64 encoded
+    contentType: z.string().optional(),
+  })).optional(),
 });
 
 // --- Email Account Schemas ---

@@ -74,7 +74,7 @@ const mapFromDb = (data: any): EmailAccount => ({
 });
 
 // Generate a 3-character alphanumeric account code
-const generateAccountCode = (): string => {
+export const generateAccountCode = (): string => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let result = '';
   for (let i = 0; i < 3; i++) {
