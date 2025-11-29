@@ -1,8 +1,11 @@
 # Use a minimal Alpine-based Node.js runtime to reduce vulnerabilities
-FROM node:24-alpine AS base
+FROM node:24-alpine3.19 AS base
 
 # Set the working directory in the container
 WORKDIR /app
+
+# Update Alpine packages to remove known vulnerabilities
+RUN apk update && apk upgrade --no-cache
 
 # --- Dependencies Stage ---
 FROM base AS deps

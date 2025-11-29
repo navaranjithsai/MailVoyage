@@ -8,6 +8,8 @@ import ForgotPasswordPage from '@/pages/ForgotPasswordPage';
 import DashboardPage from '@/pages/DashboardPage';
 import ComposePage from '@/pages/ComposePage';
 import InboxPage from '@/pages/InboxPage';
+import SentPage from '@/pages/SentPage';
+import DraftsPage from '@/pages/DraftsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import SearchPage from '@/pages/SearchPage';
 import EmailPage from '@/pages/EmailPage';
@@ -91,6 +93,24 @@ const AppRouter: React.FC = () => {
         element={
           <ProtectedRoute>
             <InboxPage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/sent"
+        element={
+          <ProtectedRoute>
+            <SentPage />
+          </ProtectedRoute>
+        }
+      />
+      
+      <Route
+        path="/drafts"
+        element={
+          <ProtectedRoute>
+            <DraftsPage />
           </ProtectedRoute>
         }
       />

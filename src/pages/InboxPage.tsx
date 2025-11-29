@@ -59,13 +59,14 @@ const InboxPage: React.FC = () => {
     animate: { 
       opacity: 1, 
       x: 0,
+      boxShadow: 'inset 0 0 0 999px rgba(59, 130, 246, 0)',
       transition: {
         duration: 0.3,
         ease: easeOut
       }
     },
     hover: {
-      backgroundColor: 'rgba(59, 130, 246, 0.05)',
+      boxShadow: 'inset 0 0 0 999px rgba(59, 130, 246, 0.05)',
       transition: {
         duration: 0.2
       }

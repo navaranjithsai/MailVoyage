@@ -69,6 +69,7 @@ export const sendMailSchema = z.object({
     filename: z.string(),
     content: z.string(), // base64 encoded
     contentType: z.string().optional(),
+    size: z.number().optional(), // Size in bytes
   })).optional(),
 });
 

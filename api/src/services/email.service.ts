@@ -28,7 +28,7 @@ const createTransporter = () => {
 };
 
 /**
- * Generate a 6-character alphanumeric OTP
+ * Generate a 6-character alphanumeric OTP for Forgot Password
  */
 export const generateOTP = (): string => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -48,7 +48,7 @@ export const hashOTP = (otp: string, username: string): string => {
 };
 
 /**
- * Send OTP email to user
+ * Send OTP email to user requesting password reset
  */
 export const sendOTPEmail = async (email: string, username: string, otp: string): Promise<void> => {
   try {

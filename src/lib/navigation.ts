@@ -1,8 +1,10 @@
 import { 
   Edit, 
+  FileText,
   Inbox, 
   LayoutDashboard, 
   Search,
+  Send,
   Settings,
   Sun,
   Moon,
@@ -16,6 +18,8 @@ export const getNavigationItems = (unreadCount: number): NavigationItem[] => [
   { id: 'compose', label: 'Compose', icon: Edit, path: '/compose' },
   { id: 'search', label: 'Search', icon: Search, path: '/search' },
   { id: 'inbox', label: 'Inbox', icon: Inbox, path: '/inbox', badge: unreadCount > 0 ? unreadCount : undefined },
+  { id: 'sent', label: 'Sent', icon: Send, path: '/sent' },
+  { id: 'drafts', label: 'Drafts', icon: FileText, path: '/drafts' },
   { id: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
 ];
 

@@ -13,7 +13,9 @@ const app = express();
 
 // Middleware
 app.use(cors({ origin: config.corsOrigin, credentials: true })); // Add credentials: true for CORS
-app.use(json());
+// Increase JSON body size limit to handle base64 encoded attachments and images
+app.use(json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser()); // Use cookie-parser middleware
 
 // Request logging (using morgan)

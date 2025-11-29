@@ -1,11 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, easeOut } from 'framer-motion';
-import { Send, Paperclip, X, Save, Eye, ChevronDown } from 'lucide-react';
+import { Send, Paperclip, X, Save, Eye, ChevronDown, FileEdit, Check } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { toast } from '@/lib/toast';
 import DOMPurify from 'dompurify';
 import { apiFetch } from '@/lib/apiFetch';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { injectEmailStyles, formatFileSize } from '@/lib/emailStyles';
+import {
+  saveDraft,
+  deleteDraft,
+  type EmailDraft,
+  type DraftAttachment,
+} from '@/lib/mailCache';
 
 // CKEditor 5
 import 'ckeditor5/ckeditor5.css';
@@ -29,8 +36,10 @@ import {
 interface Attachment {
   id: string;
   name: string;
-  size: string;
+  size: number; // Size in bytes for accurate calculation
+  sizeFormatted: string; // Human-readable size
   type: string;
+  content: string; // Base64 encoded file content
 }
 
 interface EmailAccount {
@@ -41,10 +50,9 @@ interface EmailAccount {
   type: 'email' | 'smtp';
 }
 
-const EDITOR_MIN_HEIGHT_PX = 480;
-
 const ComposePage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [fromAccount, setFromAccount] = useState<EmailAccount | null>(null);
   const [availableAccounts, setAvailableAccounts] = useState<EmailAccount[]>([]);
   const [showFromDropdown, setShowFromDropdown] = useState(false);
@@ -59,19 +67,21 @@ const ComposePage: React.FC = () => {
   const [showBcc, setShowBcc] = useState(false);
   const [isPreview, setIsPreview] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  
+  // Draft state
+  const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
+  const [isDraftLoaded, setIsDraftLoaded] = useState(false);
 
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<any>(null);
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSavedContentRef = useRef<string>('');
 
+  // Inject shared email styles
   useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const id = 'ck-editor-min-height';
-    if (!document.getElementById(id)) {
-      const style = document.createElement('style');
-      style.id = id;
-      style.textContent = `.ck-editor__editable[role="textbox"]{min-height:${EDITOR_MIN_HEIGHT_PX}px;}`;
-      document.head.appendChild(style);
-    }
+    injectEmailStyles();
   }, []);
 
   // Load email accounts from localStorage
@@ -120,13 +130,93 @@ const ComposePage: React.FC = () => {
     }
   }, []);
 
+  // Load draft data if navigating from drafts page
+  useEffect(() => {
+    const state = location.state as { 
+      draftId?: string; 
+      fromDraft?: boolean; 
+      draftData?: EmailDraft;
+      type?: string;
+      originalEmail?: any;
+    } | null;
+    
+    if (state?.fromDraft && state?.draftData) {
+      const draft = state.draftData;
+      setCurrentDraftId(draft.id);
+      setTo(draft.to || '');
+      setCc(draft.cc || '');
+      setBcc(draft.bcc || '');
+      setSubject(draft.subject || '');
+      setContent(draft.htmlContent || '');
+      setCharCount(draft.charCount || 0);
+      
+      // Set CC/BCC visibility based on content
+      if (draft.cc) setShowCc(true);
+      if (draft.bcc) setShowBcc(true);
+      
+      // Convert draft attachments to component format
+      if (draft.attachments && draft.attachments.length > 0) {
+        const convertedAttachments: Attachment[] = draft.attachments.map(att => ({
+          id: att.id,
+          name: att.name,
+          size: att.size,
+          sizeFormatted: att.sizeFormatted,
+          type: att.type,
+          content: att.content,
+        }));
+        setAttachments(convertedAttachments);
+      }
+      
+      // Set from account if it exists
+      if (draft.fromAccountId && availableAccounts.length > 0) {
+        const account = availableAccounts.find(acc => acc.id === draft.fromAccountId);
+        if (account) {
+          setFromAccount(account);
+        }
+      }
+      
+      setIsDraftLoaded(true);
+      lastSavedContentRef.current = draft.htmlContent || '';
+      
+      // Clear location state to prevent re-loading on refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state, availableAccounts]);
+
+  // Track unsaved changes
+  useEffect(() => {
+    const currentState = JSON.stringify({ to, cc, bcc, subject, content, attachments });
+    const savedState = lastSavedContentRef.current;
+    
+    if (currentDraftId && savedState && currentState !== savedState) {
+      setDraftSaved(false);
+    }
+  }, [to, cc, bcc, subject, content, attachments, currentDraftId]);
+
+  // Cleanup auto-save timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Sync editor content when draft is loaded
+  useEffect(() => {
+    if (isDraftLoaded && editorRef.current && content) {
+      editorRef.current.setData(content);
+      setIsDraftLoaded(false); // Reset flag after syncing
+    }
+  }, [isDraftLoaded, content]);
+
   useEffect(() => {
     const host = editorHostRef.current;
     if (!host) return;
     let cancelled = false;
     host.innerHTML = '';
 
-    const config = {
+    const config: any = {
       licenseKey: 'GPL',
       plugins: [
         Essentials, Paragraph, Autoformat, PasteFromOffice,
@@ -160,8 +250,14 @@ const ComposePage: React.FC = () => {
         addTargetToExternalLinks: true,
         defaultProtocol: 'https://'
       },
-      fontFamily: { supportAllValues: true },
-      fontSize: { options: [12, 14, 'default', 16, 18, 20], supportAllValues: true },
+      heading: {
+        options: [
+          { model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
+          { model: 'heading1', view: 'h1', title: 'Heading 1', class: 'ck-heading_heading1' },
+          { model: 'heading2', view: 'h2', title: 'Heading 2', class: 'ck-heading_heading2' },
+          { model: 'heading3', view: 'h3', title: 'Heading 3', class: 'ck-heading_heading3' }
+        ]
+      },
       image: {
         toolbar: [
           'toggleImageCaption', 'imageTextAlternative', '|',
@@ -187,6 +283,7 @@ const ComposePage: React.FC = () => {
 
         editorRef.current = editor;
 
+        // Set initial content if available (including from draft)
         if (content) editor.setData(content);
 
         editor.model.document.on('change:data', () => {
@@ -214,14 +311,16 @@ const ComposePage: React.FC = () => {
   const sanitizeForEmail = (html: string) =>
     DOMPurify.sanitize(html, {
       ALLOWED_TAGS: [
-        'p','br','strong','em','u','s','a',
+        'p','br','strong','b','em','i','u','s','a',
         'ul','ol','li','blockquote','code','pre',
-        'h1','h2','h3','img','table','thead','tbody','tr','th','td','span'
+        'h1','h2','h3','h4','img','figure','figcaption',
+        'table','thead','tbody','tr','th','td','span','div'
       ],
       ALLOWED_ATTR: [
         'href','name','target','rel', // a
         'src','alt','width','height','style', // img
-        'style' // generic styling
+        'style','class', // generic styling
+        'colspan','rowspan','scope', // table
       ],
       ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|cid|data):)/i
     }) as string;
@@ -267,8 +366,9 @@ const ComposePage: React.FC = () => {
         text: content.replace(/<[^>]*>/g, ''), // Strip HTML for plain text version
         attachments: attachments.length > 0 ? attachments.map(att => ({
           filename: att.name,
-          content: att.id, // Assuming base64 encoded content stored in id
+          content: att.content, // Base64 encoded content
           contentType: att.type,
+          size: att.size,
         })) : undefined,
       };
       
@@ -280,6 +380,17 @@ const ComposePage: React.FC = () => {
       
       toast.success(response.message || 'Email sent successfully!');
       
+      // Delete the draft if it exists (email was sent successfully)
+      if (currentDraftId) {
+        try {
+          await deleteDraft(currentDraftId);
+          setCurrentDraftId(null);
+        } catch (draftError) {
+          console.error('Error deleting draft after send:', draftError);
+          // Don't show error to user - email was sent successfully
+        }
+      }
+      
       // Clear form
       setTo(''); 
       setCc(''); 
@@ -290,9 +401,9 @@ const ComposePage: React.FC = () => {
       setCharCount(0);
       editorRef.current?.setData('');
       
-      // Navigate to sent folder or inbox
+      // Navigate to sent folder
       setTimeout(() => {
-        navigate('/inbox');
+        navigate('/sent');
       }, 1500);
       
     } catch (error: any) {
@@ -303,21 +414,93 @@ const ComposePage: React.FC = () => {
     }
   };
 
-  const handleSaveDraft = () => {
-    toast.success('Draft saved');
+  const handleSaveDraft = async () => {
+    setIsSavingDraft(true);
+    
+    try {
+      // Convert attachments to draft format
+      const draftAttachments: DraftAttachment[] = attachments.map(att => ({
+        id: att.id,
+        name: att.name,
+        size: att.size,
+        sizeFormatted: att.sizeFormatted,
+        type: att.type,
+        content: att.content,
+      }));
+      
+      const draftData = {
+        id: currentDraftId || undefined,
+        createdAt: currentDraftId ? undefined : undefined, // Will be set by saveDraft if new
+        fromAccountId: fromAccount?.id || null,
+        fromEmail: fromAccount?.email || null,
+        to,
+        cc,
+        bcc,
+        subject,
+        htmlContent: content,
+        textContent: content.replace(/<[^>]*>/g, ''), // Strip HTML
+        attachments: draftAttachments,
+        charCount,
+      };
+      
+      const savedDraft = await saveDraft(draftData);
+      setCurrentDraftId(savedDraft.id);
+      lastSavedContentRef.current = JSON.stringify({ to, cc, bcc, subject, content, attachments });
+      setDraftSaved(true);
+      
+      toast.success('Draft saved');
+      
+      // Reset the saved indicator after 3 seconds
+      setTimeout(() => {
+        setDraftSaved(false);
+      }, 3000);
+      
+    } catch (error: any) {
+      console.error('Error saving draft:', error);
+      toast.error('Failed to save draft');
+    } finally {
+      setIsSavingDraft(false);
+    }
   };
 
-  const handleAttachment = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAttachment = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files) {
-      const newAttachments: Attachment[] = Array.from(files).map(file => ({
-        id: Math.random().toString(36).substr(2, 9),
-        name: file.name,
-        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-        type: file.type
-      }));
+      const newAttachments: Attachment[] = [];
+      
+      for (const file of Array.from(files)) {
+        try {
+          // Read file as base64
+          const base64Content = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              // Remove data URL prefix (e.g., "data:image/png;base64,")
+              const base64 = result.split(',')[1] || result;
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          
+          newAttachments.push({
+            id: Math.random().toString(36).substr(2, 9),
+            name: file.name,
+            size: file.size,
+            sizeFormatted: formatFileSize(file.size),
+            type: file.type || 'application/octet-stream',
+            content: base64Content,
+          });
+        } catch (error) {
+          console.error(`Failed to read file ${file.name}:`, error);
+          toast.error(`Failed to read file: ${file.name}`);
+        }
+      }
+      
       setAttachments(prev => [...prev, ...newAttachments]);
     }
+    // Reset input value to allow re-selecting the same file
+    event.target.value = '';
   };
 
   const removeAttachment = (id: string) => {
@@ -337,7 +520,28 @@ const ComposePage: React.FC = () => {
         {/* Header */}
         <div className="border-b border-gray-200 dark:border-gray-700 p-4 sm:p-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Compose Email</h1>
+            <div className="flex items-center space-x-3">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                {currentDraftId ? 'Edit Draft' : 'Compose Email'}
+              </h1>
+              {currentDraftId && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  <FileEdit className="w-3 h-3 mr-1" />
+                  Draft
+                </span>
+              )}
+              {draftSaved && (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+                >
+                  <Check className="w-3 h-3 mr-1" />
+                  Saved
+                </motion.span>
+              )}
+            </div>
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
               <Button
                 variant="outline"
@@ -347,15 +551,34 @@ const ComposePage: React.FC = () => {
                 <Eye className="w-4 h-4" />
                 <span>{isPreview ? 'Edit' : 'Preview'}</span>
               </Button>
-              <Button variant="outline" onClick={handleSaveDraft} className="flex items-center justify-center space-x-2">
-                <Save className="w-4 h-4" />
-                <span>Save Draft</span>
+              <Button 
+                variant="outline" 
+                onClick={handleSaveDraft} 
+                disabled={isSavingDraft}
+                className="flex items-center justify-center space-x-2"
+              >
+                {isSavingDraft ? (
+                  <>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    >
+                      <Save className="w-4 h-4" />
+                    </motion.div>
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Save Draft</span>
+                  </>
+                )}
               </Button>
             </div>
           </div>
         </div>
 
-        {isPreview ? (
+        {isPreview && (
           /* Preview Mode */
           <div className="p-6">
             <div className="space-y-4">
@@ -392,7 +615,7 @@ const ComposePage: React.FC = () => {
               </div>
               <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
                 <div
-                  className="prose dark:prose-invert max-w-none"
+                  className="ck-content email-preview max-w-none text-gray-900 dark:text-gray-100"
                   dangerouslySetInnerHTML={{ __html: previewHtml }}
                 />
               </div>
@@ -406,7 +629,7 @@ const ComposePage: React.FC = () => {
                       <div key={attachment.id} className="flex items-center space-x-2 text-sm">
                         <Paperclip className="w-4 h-4 text-gray-400" />
                         <span className="text-gray-900 dark:text-white">{attachment.name}</span>
-                        <span className="text-gray-500">({attachment.size})</span>
+                        <span className="text-gray-500">({attachment.sizeFormatted})</span>
                       </div>
                     ))}
                   </div>
@@ -414,9 +637,10 @@ const ComposePage: React.FC = () => {
               )}
             </div>
           </div>
-        ) : (
-          /* Compose Mode */
-          <div className="p-6 space-y-4">
+        )}
+
+        {/* Compose Mode */}
+        <div className={`p-6 space-y-4 ${isPreview ? 'hidden' : ''}`}>
             {/* From Account Selector */}
             <div className="relative">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">From *</label>
@@ -595,7 +819,7 @@ const ComposePage: React.FC = () => {
                             {attachment.name}
                           </p>
                           <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {attachment.size}
+                            {attachment.sizeFormatted}
                           </p>
                         </div>
                       </div>
@@ -611,7 +835,6 @@ const ComposePage: React.FC = () => {
               </div>
             )}
           </div>
-        )}
 
         {/* Footer */}
         <div className="border-t border-gray-200 dark:border-gray-700 p-6">
