@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect, ReactNode } from
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiFetch } from '../lib/apiFetch';
+import { performCompleteLogout } from '../lib/storageCleanup';
 import LoadingSpinner from '../components/common/LoadingSpinner'; // Import LoadingSpinner
 
 interface User {
@@ -193,20 +194,38 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const logout = async () => {
     setIsLoading(true);
     console.log('AuthContext: Logout initiated.');
+    
     try {
+      // Call logout API first (to invalidate server-side session/cookie)
       await apiFetch('/api/auth/logout', { method: 'POST' });
-      toast.info('You have been logged out.');
+      console.log('AuthContext: Logout API call successful');
     } catch (error: any) {
       console.error('AuthContext: Logout API call failed:', error.message);
-      toast.error('Logout failed. Please try again.');
-    } finally {
-      setUser(null);
-      localStorage.removeItem('authUser');
-      clearAllTabValidations(); // Clear all tab validation states on logout
-      setIsLoading(false);
-      navigate('/login');
-      console.log('AuthContext: User logged out, authUser cleared and all tab validations cleared.');
+      // Continue with local cleanup even if API fails
     }
+    
+    try {
+      // Perform complete cleanup of all local data
+      console.log('AuthContext: Performing complete local data cleanup...');
+      await performCompleteLogout();
+      console.log('AuthContext: Complete cleanup finished');
+    } catch (cleanupError) {
+      console.error('AuthContext: Error during cleanup:', cleanupError);
+      // Fallback: at minimum clear the essential items
+      localStorage.removeItem('authUser');
+      localStorage.removeItem('emailAccounts');
+      localStorage.removeItem('smtpAccounts');
+      clearAllTabValidations();
+    }
+    
+    // Reset state
+    setUser(null);
+    setIsLoading(false);
+    
+    // Show success message and navigate
+    toast.info('You have been logged out successfully.');
+    navigate('/login');
+    console.log('AuthContext: User logged out, all data cleared.');
   };
   // Debug utilities for tab-based session management
   const getTabSessionInfo = () => {

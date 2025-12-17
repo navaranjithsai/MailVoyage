@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
@@ -10,7 +10,6 @@ import {
   Archive, 
   Settings,
   User,
-  Bell,
   RefreshCw,
   Folder,
   HardDrive,
@@ -29,6 +28,11 @@ import Button from '@/components/ui/Button';
 import EmailList from '@/components/email/EmailList';
 import SearchBar from '@/components/email/SearchBar';
 import { toast } from '@/lib/toast';
+import { fetchAll, fetchDraftsCount, type FetchProgress } from '@/lib/dataSync';
+import { SectionErrorBoundary } from '@/components/ErrorBoundary';
+import { OfflineIndicator } from '@/components/OfflineQueueManager';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/hooks/usePullToRefresh';
+// Service worker utilities available via lib/serviceWorker.ts
 
 // Mock data for email statistics - replace with actual API calls
 interface EmailStats {
@@ -59,6 +63,111 @@ interface RecentActivity {
   icon: React.ReactNode;
 }
 
+// Generate a consistent color from username
+const getAvatarColor = (username: string): string => {
+  const colors = [
+    'bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-pink-500',
+    'bg-indigo-500', 'bg-teal-500', 'bg-orange-500', 'bg-cyan-500',
+    'bg-rose-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500'
+  ];
+  
+  // Generate a hash from the username
+  let hash = 0;
+  for (let i = 0; i < username.length; i++) {
+    hash = username.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  return colors[Math.abs(hash) % colors.length];
+};
+
+// Avatar caching in localStorage
+const AVATAR_CACHE_KEY = 'mailvoyage-avatar-cache';
+const AVATAR_CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+interface CachedAvatar {
+  svg: string;
+  timestamp: number;
+  username: string;
+}
+
+const getCachedAvatar = (username: string): string | null => {
+  try {
+    const cached = localStorage.getItem(AVATAR_CACHE_KEY);
+    if (!cached) return null;
+    
+    const data: CachedAvatar = JSON.parse(cached);
+    if (data.username !== username) return null;
+    if (Date.now() - data.timestamp > AVATAR_CACHE_EXPIRY) {
+      localStorage.removeItem(AVATAR_CACHE_KEY);
+      return null;
+    }
+    
+    return data.svg;
+  } catch {
+    return null;
+  }
+};
+
+const setCachedAvatar = (username: string, svg: string): void => {
+  try {
+    const data: CachedAvatar = {
+      svg,
+      timestamp: Date.now(),
+      username
+    };
+    localStorage.setItem(AVATAR_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // Ignore storage errors
+  }
+};
+
+// Memoized Stat Card component
+interface StatCardProps {
+  title: string;
+  icon: React.ReactNode;
+  value: number;
+  bgColor: string;
+  borderColor: string;
+  isLoading: boolean;
+  index: number;
+}
+
+const StatCard = memo(function StatCard({ 
+  title, 
+  icon, 
+  value, 
+  bgColor, 
+  borderColor, 
+  isLoading,
+  index 
+}: StatCardProps) {
+  return (
+    <motion.div
+      initial={{ y: 20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ delay: index * 0.1, duration: 0.5 }}
+      className={`
+        ${bgColor} rounded-lg p-6 shadow-sm border ${borderColor}
+        hover:shadow-md transition-all duration-200 hover:scale-105
+      `}
+    >
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="text-gray-700 dark:text-gray-300 font-medium">
+          {title}
+        </h3>
+        {icon}
+      </div>
+      <div className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+        {isLoading ? (
+          <div className="h-8 w-16 bg-gray-300 dark:bg-gray-600 rounded animate-pulse"></div>
+        ) : (
+          value
+        )}
+      </div>
+    </motion.div>
+  );
+});
+
 const DashboardPage: React.FC = () => {
   const { user, logout, getTabSessionInfo, clearTabValidation } = useAuth();
   const { theme, resolvedTheme } = useTheme();
@@ -84,33 +193,105 @@ const DashboardPage: React.FC = () => {
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<string>('');
+  const [avatarLoaded, setAvatarLoaded] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
+  const [cachedAvatarSvg, setCachedAvatarSvg] = useState<string | null>(null);
+
+  // Get username for avatar
+  const username = user?.username || 'User';
+  const avatarUrl = `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(username)}`;
+  const avatarColor = getAvatarColor(username);
+  const firstLetter = username.charAt(0).toUpperCase();
+
+  // Pull-to-refresh functionality for mobile
+  const handlePullRefresh = useCallback(async () => {
+    await handleRefresh();
+  }, []);
+
+  const {
+    pullDistance,
+    isRefreshing: isPullRefreshing,
+    pullProgress,
+    containerRef
+  } = usePullToRefresh({
+    onRefresh: handlePullRefresh,
+    disabled: isRefreshing
+  });
+
+  // Load cached avatar on mount
+  useEffect(() => {
+    const cached = getCachedAvatar(username);
+    if (cached) {
+      setCachedAvatarSvg(cached);
+      setAvatarLoaded(true);
+    }
+  }, [username]);
+
+  // Fetch and cache avatar SVG
+  useEffect(() => {
+    if (cachedAvatarSvg) return; // Already have cached version
+
+    const fetchAndCacheAvatar = async () => {
+      try {
+        const response = await fetch(avatarUrl);
+        if (response.ok) {
+          const svgText = await response.text();
+          // Convert to data URL for caching
+          const dataUrl = `data:image/svg+xml;base64,${btoa(svgText)}`;
+          setCachedAvatarSvg(dataUrl);
+          setCachedAvatar(username, dataUrl);
+          setAvatarLoaded(true);
+        }
+      } catch (error) {
+        console.warn('Failed to fetch avatar:', error);
+        setAvatarError(true);
+      }
+    };
+
+    fetchAndCacheAvatar();
+  }, [username, avatarUrl, cachedAvatarSvg]);
+
   useEffect(() => {
     const loadDashboardData = async () => {
       setIsLoading(true);
       try {
-        // Simulate API calls to fetch email statistics
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Fetch real drafts count from IndexedDB
+        const draftsCount = await fetchDraftsCount();
         
         // Update with real email data
         setEmailStats({
           unread: unreadCount,
           total: emails.length,
-          sent: 43, // Mock data - would come from API
-          drafts: 5 // Mock data - would come from API
+          sent: 0, // Will be updated on manual refresh
+          drafts: draftsCount
         });
 
-        setStorageInfo({
-          used: 245,
-          total: 1000,
-          percentage: 24.5
-        });
+        // Calculate real storage usage
+        if ('storage' in navigator && 'estimate' in navigator.storage) {
+          try {
+            const estimate = await navigator.storage.estimate();
+            const usedMB = Math.round((estimate.usage || 0) / (1024 * 1024));
+            const totalMB = Math.round((estimate.quota || 0) / (1024 * 1024));
+            const percentage = totalMB > 0 ? (usedMB / totalMB) * 100 : 0;
+            
+            setStorageInfo({
+              used: usedMB,
+              total: Math.min(totalMB, 1000), // Cap display at 1GB for readability
+              percentage: Math.min(percentage, 100)
+            });
+          } catch (storageError) {
+            console.warn('Could not estimate storage:', storageError);
+          }
+        }
 
         setSyncStatus({
           isOnline: navigator.onLine,
-          lastSync: new Date().toLocaleTimeString(),
-          pendingSync: 3
+          lastSync: 'Not synced yet',
+          pendingSync: 0
         });
 
+        // TODO: Replace with real activity from API or local activity log
         setRecentActivity([
           {
             id: 1,
@@ -163,27 +344,74 @@ const DashboardPage: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, [unreadCount, emails.length]); // Re-run when email data changes
+
+  // Handle progress updates from fetchAll
+  const handleFetchProgress = useCallback((progress: FetchProgress) => {
+    setRefreshProgress(progress.message);
+    console.log('📊 Sync progress:', progress.step, progress.message);
+  }, []);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
+    setRefreshProgress('Starting sync...');
+    
     try {
-      // Simulate refresh operation
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Call the actual API sync function
+      const results = await fetchAll(handleFetchProgress, {
+        fetchAccounts: true,
+        fetchInbox: true,
+        fetchSent: true,
+        invalidateCache: true
+      });
+      
+      // Update email stats based on results
+      const newStats = { ...emailStats };
+      
+      if (results.sentMails.success && results.sentMails.data) {
+        newStats.sent = results.sentMails.data.total;
+      }
+      
+      if (results.inbox.success && results.inbox.data) {
+        newStats.total = results.inbox.data.total;
+      }
+      
+      // Update drafts count from local storage
+      newStats.drafts = results.draftsCount;
+      newStats.unread = unreadCount;
+      
+      setEmailStats(newStats);
       
       // Update sync status
       setSyncStatus(prev => ({
         ...prev,
         lastSync: new Date().toLocaleTimeString(),
-        pendingSync: Math.max(0, prev.pendingSync - 1)
+        pendingSync: 0
       }));
       
-      toast.success('Dashboard refreshed successfully');
+      // Show success/partial success message
+      const successCount = [
+        results.emailAccounts.success,
+        results.sentMails.success,
+        results.inbox.success
+      ].filter(Boolean).length;
+      
+      if (successCount === 3) {
+        toast.success('Dashboard synced successfully');
+      } else if (successCount > 0) {
+        toast.info(`Partial sync complete (${successCount}/3 succeeded)`);
+      } else {
+        toast.error('Sync failed - please try again');
+      }
+      
     } catch (error) {
       console.error('Error refreshing dashboard:', error);
       toast.error('Failed to refresh dashboard');
     } finally {
       setIsRefreshing(false);
+      setRefreshProgress('');
     }
   };
+
   const handleEmailSearch = (query: string) => {
     console.log('Searching emails for:', query);
     if (query.trim()) {
@@ -321,27 +549,42 @@ const DashboardPage: React.FC = () => {
                   onClick={handleRefresh}
                   variant="ghost"
                   size="icon"
-                  className="relative"
+                  className="relative group"
                   disabled={isRefreshing}
+                  title={isRefreshing ? refreshProgress : 'Sync all data'}
                 >
                   <RefreshCw 
                     size={20} 
                     className={`${isRefreshing ? 'animate-spin' : ''} text-gray-600 dark:text-gray-300`} 
                   />
-                </Button>
-                
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="relative"
-                >
-                  <Bell size={20} className="text-gray-600 dark:text-gray-300" />
-                  {emailStats.unread > 0 && (
-                    <span className="absolute -top-1 -right-1 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                      {emailStats.unread > 9 ? '9+' : emailStats.unread}
+                  {/* Progress tooltip */}
+                  {isRefreshing && refreshProgress && (
+                    <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs bg-gray-800 dark:bg-gray-700 text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                      {refreshProgress}
                     </span>
                   )}
                 </Button>
+                
+                {/* Profile Avatar */}
+                <div className="relative w-9 h-9 rounded-full overflow-hidden flex items-center justify-center cursor-pointer hover:ring-2 hover:ring-blue-400 transition-all">
+                  {/* Fallback: First letter with colored background */}
+                  {(!avatarLoaded || avatarError) && (
+                    <div className={`absolute inset-0 ${avatarColor} flex items-center justify-center text-white font-semibold text-sm`}>
+                      {firstLetter}
+                    </div>
+                  )}
+                  {/* Cached or Dicebear Avatar */}
+                  <img 
+                    src={cachedAvatarSvg || avatarUrl}
+                    alt={`${username}'s avatar`}
+                    className={`w-full h-full object-cover transition-opacity duration-300 ${avatarLoaded && !avatarError ? 'opacity-100' : 'opacity-0'}`}
+                    onLoad={() => setAvatarLoaded(true)}
+                    onError={() => setAvatarError(true)}
+                  />
+                </div>
+
+                {/* Offline Indicator */}
+                <OfflineIndicator className="hidden sm:flex" />
               </div>
 
               <Button
@@ -359,12 +602,25 @@ const DashboardPage: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <motion.main 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.5 }}
-        className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
+      <div 
+        ref={containerRef}
+        className="relative overflow-auto"
+        style={{ height: 'calc(100vh - 140px)' }}
       >
+        {/* Pull to Refresh Indicator */}
+        <PullToRefreshIndicator
+          pullDistance={pullDistance}
+          isRefreshing={isPullRefreshing}
+          pullProgress={pullProgress}
+        />
+
+        <motion.main 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
+          className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
+          style={{ transform: `translateY(${pullDistance}px)` }}
+        >
         {/* Quick Actions */}
         <section className="mb-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -404,41 +660,31 @@ const DashboardPage: React.FC = () => {
 
         {/* Statistics Cards */}
         <section className="mb-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {statCards.map((card, index) => (
-              <motion.div
-                key={card.title}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                transition={{ delay: index * 0.1, duration: 0.5 }}
-                className={`
-                  ${card.bgColor} rounded-lg p-6 shadow-sm border ${card.borderColor}
-                  hover:shadow-md transition-all duration-200 hover:scale-105
-                `}
-              >
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-gray-700 dark:text-gray-300 font-medium">
-                    {card.title}
-                  </h3>
-                  {card.icon}
-                </div>                <div className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-                  {isLoading ? (
-                    <div className="h-8 w-16 bg-gray-300 dark:bg-gray-600 rounded animate-pulse"></div>
-                  ) : (
-                    card.value
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
+          <SectionErrorBoundary name="Statistics">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {statCards.map((card, index) => (
+                <StatCard
+                  key={card.title}
+                  title={card.title}
+                  icon={card.icon}
+                  value={card.value}
+                  bgColor={card.bgColor}
+                  borderColor={card.borderColor}
+                  isLoading={isLoading}
+                  index={index}
+                />
+              ))}
+            </div>
+          </SectionErrorBoundary>
         </section>        {/* Recent Emails Section */}
         <section className="mb-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4, duration: 0.5 }}
-            className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border border-gray-200 dark:border-gray-700"
-          >            <div className="flex justify-between items-center mb-6">
+          <SectionErrorBoundary name="Recent Emails">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4, duration: 0.5 }}
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border border-gray-200 dark:border-gray-700"
+            >            <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold flex items-center gap-2 text-gray-900 dark:text-gray-100">
                 <Inbox size={20} className="text-blue-600 dark:text-blue-400" />
                 Recent Emails
@@ -463,8 +709,9 @@ const DashboardPage: React.FC = () => {
               />
             </div>
             
-            <EmailList />
+            <EmailList useVirtualScroll={false} />
           </motion.div>
+          </SectionErrorBoundary>
         </section>
 
         {/* Storage & Sync Status Row */}
@@ -664,7 +911,7 @@ const DashboardPage: React.FC = () => {
                   size="small"
                   className="border-yellow-300 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300"
                 >
-                  <Bell className="w-4 h-4 mr-2" />
+                  <Mail className="w-4 h-4 mr-2" />
                   Ping Mail
                 </Button>
                 <Button
@@ -699,6 +946,7 @@ const DashboardPage: React.FC = () => {
           </section>
         )}
       </motion.main>
+      </div>
     </div>
   );
 };
