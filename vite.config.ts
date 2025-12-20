@@ -6,6 +6,7 @@ import path from 'path'; // Import path module
 export default defineConfig({
   plugins: [react()],
   server: {
+    // host: true,
     open: false, // Prevent browser from opening automatically
     proxy: {
       // Proxy /api requests to the backend server

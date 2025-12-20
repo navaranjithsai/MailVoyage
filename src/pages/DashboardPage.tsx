@@ -121,6 +121,14 @@ const setCachedAvatar = (username: string, svg: string): void => {
   }
 };
 
+// UTF-8 safe base64 encoding for SVG
+const svgToDataUrl = (svgText: string): string => {
+  // Use encodeURIComponent for UTF-8 safe encoding
+  const encoded = encodeURIComponent(svgText)
+    .replace(/%([0-9A-F]{2})/g, (_, p1) => String.fromCharCode(parseInt(p1, 16)));
+  return `data:image/svg+xml;base64,${btoa(encoded)}`;
+};
+
 // Memoized Stat Card component
 interface StatCardProps {
   title: string;
@@ -196,7 +204,11 @@ const DashboardPage: React.FC = () => {
   const [refreshProgress, setRefreshProgress] = useState<string>('');
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
-  const [cachedAvatarSvg, setCachedAvatarSvg] = useState<string | null>(null);
+  const [cachedAvatarSvg, setCachedAvatarSvg] = useState<string | null>(() => {
+    // Synchronously load cached avatar on initial render
+    const cached = getCachedAvatar(user?.username || 'User');
+    return cached;
+  });
 
   // Get username for avatar
   const username = user?.username || 'User';
@@ -204,53 +216,47 @@ const DashboardPage: React.FC = () => {
   const avatarColor = getAvatarColor(username);
   const firstLetter = username.charAt(0).toUpperCase();
 
-  // Pull-to-refresh functionality for mobile
-  const handlePullRefresh = useCallback(async () => {
-    await handleRefresh();
-  }, []);
-
-  const {
-    pullDistance,
-    isRefreshing: isPullRefreshing,
-    pullProgress,
-    containerRef
-  } = usePullToRefresh({
-    onRefresh: handlePullRefresh,
-    disabled: isRefreshing
-  });
-
-  // Load cached avatar on mount
+  // Set avatarLoaded if we have cached avatar
   useEffect(() => {
-    const cached = getCachedAvatar(username);
-    if (cached) {
-      setCachedAvatarSvg(cached);
+    if (cachedAvatarSvg) {
       setAvatarLoaded(true);
     }
-  }, [username]);
+  }, [cachedAvatarSvg]);
 
-  // Fetch and cache avatar SVG
+  // Fetch and cache avatar SVG only if not cached
   useEffect(() => {
-    if (cachedAvatarSvg) return; // Already have cached version
+    // Skip if already have cached version or already loaded
+    if (cachedAvatarSvg || avatarLoaded) return;
+
+    let cancelled = false;
 
     const fetchAndCacheAvatar = async () => {
       try {
         const response = await fetch(avatarUrl);
-        if (response.ok) {
-          const svgText = await response.text();
-          // Convert to data URL for caching
-          const dataUrl = `data:image/svg+xml;base64,${btoa(svgText)}`;
-          setCachedAvatarSvg(dataUrl);
-          setCachedAvatar(username, dataUrl);
-          setAvatarLoaded(true);
-        }
+        if (!response.ok || cancelled) return;
+        
+        const svgText = await response.text();
+        if (cancelled) return;
+        
+        // Convert to data URL using UTF-8 safe encoding
+        const dataUrl = svgToDataUrl(svgText);
+        setCachedAvatarSvg(dataUrl);
+        setCachedAvatar(username, dataUrl);
+        setAvatarLoaded(true);
       } catch (error) {
-        console.warn('Failed to fetch avatar:', error);
-        setAvatarError(true);
+        if (!cancelled) {
+          console.warn('Failed to fetch avatar:', error);
+          setAvatarError(true);
+        }
       }
     };
 
     fetchAndCacheAvatar();
-  }, [username, avatarUrl, cachedAvatarSvg]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [username, avatarUrl, cachedAvatarSvg, avatarLoaded]);
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -351,7 +357,7 @@ const DashboardPage: React.FC = () => {
     console.log('📊 Sync progress:', progress.step, progress.message);
   }, []);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     setRefreshProgress('Starting sync...');
     
@@ -410,7 +416,18 @@ const DashboardPage: React.FC = () => {
       setIsRefreshing(false);
       setRefreshProgress('');
     }
-  };
+  }, [handleFetchProgress, emailStats, unreadCount]);
+
+  // Pull-to-refresh functionality for mobile
+  const {
+    pullDistance,
+    isRefreshing: isPullRefreshing,
+    pullProgress,
+    containerRef
+  } = usePullToRefresh({
+    onRefresh: handleRefresh,
+    disabled: isRefreshing
+  });
 
   const handleEmailSearch = (query: string) => {
     console.log('Searching emails for:', query);
