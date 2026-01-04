@@ -4,6 +4,7 @@ import AppRouter from './router';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { EmailProvider } from './contexts/EmailContext';
+import { SyncProvider } from './contexts/SyncContext';
 import { ToastContainer } from 'react-toastify';
 import { defaultToastOptions } from './lib/toast';
 
@@ -14,10 +15,12 @@ function App() {
       <BrowserRouter>
         <ThemeProvider>
           <AuthProvider>
-            <EmailProvider>
-              <AppRouter />
-              <ToastContainer {...defaultToastOptions} />
-            </EmailProvider>
+            <SyncProvider>
+              <EmailProvider>
+                <AppRouter />
+                <ToastContainer {...defaultToastOptions} />
+              </EmailProvider>
+            </SyncProvider>
           </AuthProvider>
         </ThemeProvider>
       </BrowserRouter>

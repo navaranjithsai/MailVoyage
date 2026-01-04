@@ -5,12 +5,7 @@ import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Papercl
 import Button from '@/components/ui/Button';
 import { useEmail, Email } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
-import {
-  smartGetSentMail,
-  cacheSentMail,
-  markThreadFetched,
-  type CachedSentMailDetail,
-} from '@/lib/mailCache';
+import { getSentMailByThreadId } from '@/lib/db';
 import { injectEmailStyles, sanitizeEmailHtml, formatFileSize } from '@/lib/emailStyles';
 import AttachmentViewer, { AttachmentData } from '@/components/common/AttachmentViewer';
 
@@ -193,24 +188,39 @@ const EmailPage: React.FC = () => {
       // Create the fetch promise
       const fetchPromise = (async () => {
         try {
-          // First, check the smart cache (session + IndexedDB)
-          const cacheResult = await smartGetSentMail(id);
+          // First, check the local Dexie database (populated by delta sync)
+          const cachedMail = await getSentMailByThreadId(id!);
           
-          if (cacheResult.data) {
-            return cacheResult.data as SentMailDetail;
+          if (cachedMail) {
+            // Map SentMailRecord to SentMailDetail
+            return {
+              id: cachedMail.id,
+              threadId: cachedMail.threadId,
+              fromEmail: cachedMail.fromEmail,
+              toEmails: cachedMail.toEmails,
+              cc: cachedMail.cc || null,
+              bcc: cachedMail.bcc || null,
+              subject: cachedMail.subject,
+              htmlBody: cachedMail.htmlBody || null,
+              textBody: cachedMail.textBody || null,
+              attachmentsMetadata: cachedMail.attachmentsMetadata?.map(a => ({
+                filename: a.filename,
+                contentType: a.contentType,
+                size: a.size,
+                content: a.content
+              })) || null,
+              messageId: cachedMail.messageId || null,
+              status: cachedMail.status,
+              sentAt: cachedMail.sentAt,
+              createdAt: cachedMail.createdAt
+            } as SentMailDetail;
           }
           
           // No cache available, fetch from API
           const response = await apiFetch(`/api/sent-mails/thread/${id}`);
           
           if (response.success && response.data) {
-            const mailData = response.data as SentMailDetail;
-            
-            // Cache in background
-            cacheSentMail(mailData as CachedSentMailDetail).catch(console.error);
-            markThreadFetched(id);
-            
-            return mailData;
+            return response.data as SentMailDetail;
           }
           
           return null;
@@ -280,7 +290,10 @@ const EmailPage: React.FC = () => {
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, [id, emailType, currentLoadId, emails, markAsRead]);
+    // Note: Only depend on id, emailType, currentLoadId - NOT on emails or markAsRead
+    // emails array reference changes frequently, and markAsRead is stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, emailType, currentLoadId]);
 
   const handleGoBack = () => {
     navigate(-1);

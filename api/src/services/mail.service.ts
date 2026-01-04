@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
 import pool from '../db/index.js';
 import { tryDecrypt } from '../utils/crypto.js';
+import { signalNewSentMail } from '../utils/signaling.js';
 
 // Generate a unique thread ID for emails
 const generateThreadId = (): string => {
@@ -430,6 +431,9 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
         ]
       );
       logger.info(`Sent email saved to database with thread ID: ${threadId}`);
+      
+      // Signal the client that sent_mails table has been updated
+      signalNewSentMail(userId, new Date().toISOString());
     } catch (dbError: any) {
       // Log error but don't fail the operation - email was sent successfully
       logger.error('Failed to save sent email to database:', dbError);

@@ -49,27 +49,29 @@ const Tooltip: React.FC<{
   const [position, setPosition] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
-    if (isVisible && targetRef.current) {
-      const updatePosition = () => {
-        const rect = targetRef.current?.getBoundingClientRect();
-        if (rect) {
-          setPosition({
-            top: rect.top + rect.height / 2,
-            left: rect.right + 8,
-          });
-        }
-      };
+    if (!isVisible || !targetRef.current) return;
+    
+    const target = targetRef.current;
+    
+    const updatePosition = () => {
+      const rect = target.getBoundingClientRect();
+      if (rect) {
+        setPosition({
+          top: rect.top + rect.height / 2,
+          left: rect.right + 8,
+        });
+      }
+    };
 
-      updatePosition();
-      window.addEventListener('resize', updatePosition);
-      window.addEventListener('scroll', updatePosition);
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition);
 
-      return () => {
-        window.removeEventListener('resize', updatePosition);
-        window.removeEventListener('scroll', updatePosition);
-      };
-    }
-  }, [isVisible, targetRef]);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition);
+    };
+  }, [isVisible, targetRef.current]); // Use targetRef.current instead of targetRef object
 
   if (!isVisible) return null;
 

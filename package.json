@@ -19,6 +19,7 @@
     "@ckeditor/ckeditor5-react": "^11.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "ckeditor5": "^46.1.1",
+    "dexie": "^4.2.1",
     "dompurify": "^3.2.7",
     "framer-motion": "^12.9.2",
     "jwt-decode": "^4.0.0",

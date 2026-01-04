@@ -22,7 +22,8 @@ interface AuthContextType {
   clearTabValidation: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+// Export context so other providers can use it directly (to avoid circular hook issues during HMR)
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);

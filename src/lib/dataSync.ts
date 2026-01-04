@@ -7,12 +7,10 @@
 
 import { apiFetch } from './apiFetch';
 import { 
-  cacheSentMailsList, 
-  invalidateSentMailsCache,
-  resetSessionCache,
-  getDraftCount,
-  type PaginatedSentMails 
-} from './mailCache';
+  getDraftsCount as getDraftCountFromDb,
+  clearSentMails,
+  addOrUpdateSentMails
+} from './db';
 
 // ============================================================================
 // Types
@@ -143,7 +141,7 @@ export async function fetchEmailAccounts(): Promise<FetchResult<EmailAccountsRes
 
 /**
  * Fetch sent mails from the API with pagination.
- * Updates the sent mails cache.
+ * Updates the sent mails cache in Dexie.
  */
 export async function fetchSentMails(
   page: number = 1, 
@@ -156,8 +154,27 @@ export async function fetchSentMails(
     if (response.success && response.data) {
       const data: SentMailsResult = response.data;
       
-      // Cache the data
-      await cacheSentMailsList(data as PaginatedSentMails);
+      // Cache the data in Dexie
+      if (data.mails && data.mails.length > 0) {
+        const sentMailRecords = data.mails.map(mail => ({
+          id: mail.id,
+          threadId: mail.threadId,
+          fromEmail: mail.fromEmail,
+          toEmails: mail.toEmails,
+          cc: null,
+          bcc: null,
+          subject: mail.subject,
+          htmlBody: null,
+          textBody: mail.textBody,
+          attachmentsMetadata: null,
+          messageId: null,
+          status: mail.status,
+          sentAt: mail.sentAt,
+          createdAt: mail.sentAt,
+          syncedAt: new Date().toISOString()
+        }));
+        await addOrUpdateSentMails(sentMailRecords);
+      }
       
       console.log('✅ Sent mails fetched successfully:', { 
         count: data.mails.length, 
@@ -233,11 +250,11 @@ export async function fetchInboxMails(
 }
 
 /**
- * Get the count of locally saved drafts from IndexedDB.
+ * Get the count of locally saved drafts from Dexie IndexedDB.
  */
 export async function fetchDraftsCount(): Promise<number> {
   try {
-    const count = await getDraftCount();
+    const count = await getDraftCountFromDb();
     return count;
   } catch (error) {
     console.error('Error getting drafts count:', error);
@@ -303,10 +320,9 @@ export async function fetchAll(
     draftsCount: 0
   };
   
-  // Invalidate caches if requested
+  // Invalidate caches if requested - clear sent mails from Dexie
   if (invalidateCache) {
-    await invalidateSentMailsCache();
-    resetSessionCache();
+    await clearSentMails();
   }
   
   try {

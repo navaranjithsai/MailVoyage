@@ -12,19 +12,8 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Button from '@/components/ui/Button';
-import { apiFetch } from '@/lib/apiFetch';
-import {
-  smartGetSentMailsList,
-  cacheSentMailsList,
-  markPageFetched,
-  setBackgroundRefreshing,
-  resetSessionCache,
-  invalidateSentMailsCache,
-  type PaginatedSentMails,
-} from '@/lib/mailCache';
-
-// Global map to track in-progress fetches - prevents duplicate API calls across mounts
-const sentPageFetchInProgress = new Map<number, Promise<PaginatedSentMails | null>>();
+import { getSentMailsPaginated } from '@/lib/db';
+import { useSync } from '@/contexts/SyncContext';
 
 interface SentMail {
   id: string;
@@ -37,16 +26,9 @@ interface SentMail {
   status: 'pending' | 'sent' | 'failed';
 }
 
-interface PaginatedResponse {
-  mails: SentMail[];
-  total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
-}
-
 const SentPage: React.FC = () => {
   const navigate = useNavigate();
+  const { triggerSync, syncState } = useSync();
   const [sentMails, setSentMails] = useState<SentMail[]>([]);
   const [selectedMails, setSelectedMails] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -57,167 +39,66 @@ const SentPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const limit = 20;
   
-  // Abort controller for cleanup
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  /**
-   * Fetch from API and update cache
-   * This is separated to allow background refresh without UI indicators
-   */
-  const fetchFromAPI = useCallback(async (
-    page: number, 
-    options: { showLoading?: boolean; isBackground?: boolean; signal?: AbortSignal } = {}
-  ): Promise<PaginatedSentMails | null> => {
-    const { showLoading = true, isBackground = false, signal } = options;
-    
-    if (isBackground) {
-      setBackgroundRefreshing(true);
-    } else if (showLoading) {
-      if (sentMails.length > 0) {
-        setIsRefreshing(true);
-      } else {
-        setIsLoading(true);
-      }
-    }
-    
-    if (!isBackground) {
-      setError(null);
-    }
-
-    try {
-      const response = await apiFetch(`/api/sent-mails?page=${page}&limit=${limit}`);
-      
-      // Check if request was aborted
-      if (signal?.aborted) return null;
-      
-      if (response.success && response.data) {
-        const data: PaginatedResponse = response.data;
-        
-        // Update state
-        setSentMails(data.mails);
-        setTotalPages(data.totalPages);
-        setTotal(data.total);
-        setCurrentPage(data.page);
-        
-        // Cache the data and mark page as fetched
-        await cacheSentMailsList(data as PaginatedSentMails);
-        markPageFetched(page);
-        
-        return data as PaginatedSentMails;
-      }
-      return null;
-    } catch (err: any) {
-      console.error('Error fetching sent mails from API:', err);
-      // Only set error if we don't have cached data and not a background refresh
-      if (!isBackground && sentMails.length === 0 && !signal?.aborted) {
-        setError(err.message || 'Failed to load sent mails');
-      }
-      return null;
-    } finally {
-      if (!signal?.aborted) {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-      if (isBackground) {
-        setBackgroundRefreshing(false);
-      }
-    }
-  }, [sentMails.length]);
-
-  /**
-   * Smart fetch with cache-first strategy and deduplication:
-   * 1. Check if fetch is already in progress (prevents duplicate calls)
-   * 2. Return cached/session data immediately if available
-   * 3. Trigger background refresh if data is stale
-   * 4. Fetch from API only when necessary
-   */
-  const fetchSentMails = useCallback(async (
-    page: number = 1, 
-    forceRefresh = false,
-    signal?: AbortSignal
-  ) => {
-    // Check if there's already a fetch in progress for this page
-    if (!forceRefresh) {
-      const existingFetch = sentPageFetchInProgress.get(page);
-      if (existingFetch) {
-        // Wait for the existing fetch and use its result
-        try {
-          const result = await existingFetch;
-          if (result && !signal?.aborted) {
-            setSentMails(result.mails as SentMail[]);
-            setTotalPages(result.totalPages);
-            setTotal(result.total);
-            setCurrentPage(result.page);
-            setIsLoading(false);
-            setError(null);
-          }
-        } catch (err) {
-          console.error('Error waiting for existing fetch:', err);
-        }
-        return;
-      }
-    }
-
-    try {
-      // Use smart caching to check cache state
-      const cacheResult = await smartGetSentMailsList(page, { 
-        forceRefresh,
-        skipSessionCheck: forceRefresh 
-      });
-      
-      if (signal?.aborted) return;
-      
-      // If we have cached data, use it immediately
-      if (cacheResult.data) {
-        setSentMails(cacheResult.data.mails as SentMail[]);
-        setTotalPages(cacheResult.data.totalPages);
-        setTotal(cacheResult.data.total);
-        setCurrentPage(cacheResult.data.page);
-        setIsLoading(false);
-        setError(null);
-        
-        // If data is stale, trigger background refresh
-        if (cacheResult.needsBackgroundRefresh) {
-          // Don't await - let it run in background
-          fetchFromAPI(page, { showLoading: false, isBackground: true, signal });
-        }
-        
-        return;
-      }
-      
-      // No cache available, fetch from API with deduplication
-      const fetchPromise = (async () => {
-        try {
-          return await fetchFromAPI(page, { showLoading: true, signal });
-        } finally {
-          sentPageFetchInProgress.delete(page);
-        }
-      })();
-      
-      sentPageFetchInProgress.set(page, fetchPromise);
-      await fetchPromise;
-      
-    } catch (err: any) {
-      console.error('Error in fetchSentMails:', err);
-      if (!signal?.aborted) {
-        setError(err.message || 'Failed to load sent mails');
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    }
-  }, [fetchFromAPI]);
-
-  // Initial load - runs once on mount
+  // Track mount state
+  const isMountedRef = useRef(true);
+  
   useEffect(() => {
-    abortControllerRef.current = new AbortController();
-    const { signal } = abortControllerRef.current;
-    
-    fetchSentMails(currentPage, false, signal);
-    
-    return () => {
-      abortControllerRef.current?.abort();
-    };
-  }, [currentPage, fetchSentMails]);
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  /**
+   * Load sent mails from local Dexie database
+   * Data is synced via delta sync in the background
+   */
+  const loadSentMails = useCallback(async (page: number = 1) => {
+    try {
+      const result = await getSentMailsPaginated(page, limit);
+      
+      if (!isMountedRef.current) return;
+      
+      // Map SentMailRecord to SentMail interface
+      const mails: SentMail[] = result.mails.map(mail => ({
+        id: mail.id,
+        threadId: mail.threadId,
+        fromEmail: mail.fromEmail,
+        toEmails: mail.toEmails,
+        subject: mail.subject,
+        textBody: mail.textBody || null,
+        sentAt: mail.sentAt,
+        status: mail.status
+      }));
+      
+      setSentMails(mails);
+      setTotalPages(result.totalPages);
+      setTotal(result.total);
+      setCurrentPage(result.page);
+      setError(null);
+    } catch (err: any) {
+      console.error('Error loading sent mails:', err);
+      if (isMountedRef.current) {
+        setError(err.message || 'Failed to load sent mails');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    }
+  }, []);
+
+  // Initial load and page change
+  useEffect(() => {
+    setIsLoading(true);
+    loadSentMails(currentPage);
+  }, [currentPage, loadSentMails]);
+  
+  // Reload when sync completes
+  useEffect(() => {
+    if (!syncState.isSyncing && syncState.lastSync) {
+      loadSentMails(currentPage);
+    }
+  }, [syncState.isSyncing, syncState.lastSync, currentPage, loadSentMails]);
 
   const handleSelectMail = (mailId: string) => {
     setSelectedMails(prev => 
@@ -235,10 +116,16 @@ const SentPage: React.FC = () => {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    // Invalidate both IndexedDB cache and session cache, then force refresh
-    await invalidateSentMailsCache();
-    resetSessionCache();
-    await fetchSentMails(currentPage, true);
+    try {
+      // Trigger delta sync which will update the local database
+      await triggerSync();
+      // Then reload from local database
+      await loadSentMails(currentPage);
+    } catch (err) {
+      console.error('Error refreshing:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleMailClick = (mail: SentMail) => {

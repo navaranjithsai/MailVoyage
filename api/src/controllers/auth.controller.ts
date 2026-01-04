@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 import { AppError } from '../utils/errors.js';
 import { testSMTPConnection } from '../services/email.service.js';
+import jwt from 'jsonwebtoken';
 
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -181,6 +182,44 @@ export const testSMTP = async (req: Request, res: Response, next: NextFunction) 
     });
   } catch (error) {
     logger.error('SMTP test endpoint error:', error);
+    next(error);
+  }
+};
+
+/**
+ * Get a short-lived WebSocket token for real-time sync.
+ * This token is used by the frontend WebSocket client to authenticate.
+ * It's separate from the main auth cookie to avoid exposing the long-lived token.
+ */
+export const getWebSocketToken = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // req.user is populated by authenticateToken middleware
+    if (!req.user || !req.user.id) {
+      logger.warn('getWebSocketToken: Called without authenticated user');
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    // Generate a short-lived token (5 minutes) specifically for WebSocket
+    const wsToken = jwt.sign(
+      { 
+        userId: req.user.id, 
+        username: req.user.username,
+        email: req.user.email,
+        purpose: 'websocket' 
+      },
+      config.jwtSecret,
+      { expiresIn: '5m' } // Short-lived for security
+    );
+
+    logger.debug(`WebSocket token generated for user ${req.user.id}`);
+
+    res.status(200).json({
+      success: true,
+      token: wsToken,
+      expiresIn: 300 // 5 minutes in seconds
+    });
+  } catch (error) {
+    logger.error('getWebSocketToken error:', error);
     next(error);
   }
 };

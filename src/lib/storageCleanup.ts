@@ -5,10 +5,11 @@
  * localStorage, sessionStorage, and IndexedDB on logout.
  */
 
-import { clearAllCache, clearAllDrafts } from './mailCache';
+import { db, clearAllData } from './db';
 
-// IndexedDB database name
-const DB_NAME = 'MailVoyageCache';
+// IndexedDB database names used by the application
+const CACHE_DB_NAME = 'MailVoyageCache'; // Legacy database (mailCache.ts) - should no longer be created
+const DEXIE_DB_NAME = 'MailVoyageDB';    // Main database (db.ts - Dexie)
 
 /**
  * Clear all localStorage data
@@ -45,36 +46,46 @@ export const clearSessionStorage = (): void => {
 };
 
 /**
- * Delete the entire IndexedDB database
+ * Delete the entire IndexedDB databases
  * This is more thorough than clearing individual stores
  */
-export const deleteIndexedDB = (): Promise<void> => {
-  return new Promise((resolve, reject) => {
+export const deleteIndexedDB = async (): Promise<void> => {
+  const databasesToDelete = [CACHE_DB_NAME, DEXIE_DB_NAME];
+  
+  // First, close any open Dexie connections
+  try {
+    db.close();
+    console.log('🔒 Closed Dexie database connection');
+  } catch (e) {
+    console.debug('Failed to close Dexie database connection during cleanup:', e);
+  }
+  
+  for (const dbName of databasesToDelete) {
     try {
-      console.log('🧹 Deleting IndexedDB database:', DB_NAME);
+      console.log(`🧹 Deleting IndexedDB database: ${dbName}`);
       
-      const request = indexedDB.deleteDatabase(DB_NAME);
-      
-      request.onsuccess = () => {
-        console.log('✅ IndexedDB database deleted successfully');
-        resolve();
-      };
-      
-      request.onerror = () => {
-        console.error('❌ Error deleting IndexedDB:', request.error);
-        reject(request.error);
-      };
-      
-      request.onblocked = () => {
-        console.warn('⚠️ IndexedDB deletion blocked - database in use');
-        // Still resolve, as this might happen if there are open connections
-        resolve();
-      };
+      await new Promise<void>((resolve) => {
+        const request = indexedDB.deleteDatabase(dbName);
+        
+        request.onsuccess = () => {
+          console.log(`✅ ${dbName} deleted successfully`);
+          resolve();
+        };
+        
+        request.onerror = () => {
+          console.warn(`⚠️ Error deleting ${dbName}:`, request.error);
+          resolve(); // Continue with other databases
+        };
+        
+        request.onblocked = () => {
+          console.warn(`⚠️ ${dbName} deletion blocked - will be deleted on page refresh`);
+          resolve();
+        };
+      });
     } catch (error) {
-      console.error('❌ Error initiating IndexedDB deletion:', error);
-      reject(error);
+      console.warn(`⚠️ Error initiating ${dbName} deletion:`, error);
     }
-  });
+  }
 };
 
 /**
@@ -85,13 +96,13 @@ export const clearIndexedDBStores = async (): Promise<void> => {
   try {
     console.log('🧹 Clearing all IndexedDB stores...');
     
-    // Clear main cache
-    await clearAllCache();
-    console.log('  ✓ Main cache cleared');
-    
-    // Clear drafts
-    await clearAllDrafts();
-    console.log('  ✓ Drafts cleared');
+    // Clear MailVoyageDB stores (Dexie - db.ts)
+    try {
+      await clearAllData();
+      console.log('  ✓ All Dexie stores cleared');
+    } catch (dexieError) {
+      console.warn('  ⚠️ Could not clear Dexie stores:', dexieError);
+    }
     
     console.log('✅ All IndexedDB stores cleared successfully');
   } catch (error) {
@@ -188,24 +199,26 @@ export const performCompleteLogout = async (): Promise<void> => {
 export const getStorageStats = async (): Promise<{
   localStorage: { count: number; keys: string[] };
   sessionStorage: { count: number; keys: string[] };
-  indexedDB: { exists: boolean };
+  indexedDB: { databases: string[] };
 }> => {
   const localStorageKeys = Object.keys(localStorage);
   const sessionStorageKeys = Object.keys(sessionStorage);
   
-  // Check if IndexedDB exists
-  let indexedDBExists = false;
+  // Check which IndexedDB databases exist
+  let existingDatabases: string[] = [];
   try {
     const databases = await indexedDB.databases();
-    indexedDBExists = databases.some(db => db.name === DB_NAME);
+    existingDatabases = databases
+      .map(db => db.name)
+      .filter((name): name is string => !!name && (name === CACHE_DB_NAME || name === DEXIE_DB_NAME));
   } catch {
     // databases() not supported in all browsers
-    indexedDBExists = true; // Assume it exists
+    existingDatabases = ['unknown'];
   }
   
   return {
     localStorage: { count: localStorageKeys.length, keys: localStorageKeys },
     sessionStorage: { count: sessionStorageKeys.length, keys: sessionStorageKeys },
-    indexedDB: { exists: indexedDBExists }
+    indexedDB: { databases: existingDatabases }
   };
 };

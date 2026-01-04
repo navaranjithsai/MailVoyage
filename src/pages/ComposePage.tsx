@@ -12,7 +12,7 @@ import {
   deleteDraft,
   type EmailDraft,
   type DraftAttachment,
-} from '@/lib/mailCache';
+} from '@/lib/db';
 
 // CKEditor 5
 import 'ckeditor5/ckeditor5.css';
@@ -430,7 +430,6 @@ const ComposePage: React.FC = () => {
       
       const draftData = {
         id: currentDraftId || undefined,
-        createdAt: currentDraftId ? undefined : undefined, // Will be set by saveDraft if new
         fromAccountId: fromAccount?.id || null,
         fromEmail: fromAccount?.email || null,
         to,

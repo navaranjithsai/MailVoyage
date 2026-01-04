@@ -21,7 +21,7 @@ import {
   deleteDraft,
   deleteDrafts,
   type EmailDraft,
-} from '@/lib/mailCache';
+} from '@/lib/db';
 import { toast } from '@/lib/toast';
 
 const DraftsPage: React.FC = () => {
