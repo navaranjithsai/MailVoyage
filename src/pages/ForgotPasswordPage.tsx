@@ -15,6 +15,7 @@ import {
   Loader2 
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import { ThemeSwitcherCapsule as ThemeSwitcher } from '@/components/common/ThemeSwitcherCapsule';
 import { apiFetch } from '@/lib/apiFetch';
 import { toast } from '@/lib/toast';
 import { emailValidation, passwordValidation } from '@/lib/validators';
@@ -234,6 +235,7 @@ const ForgotPasswordPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center p-4">
+      <ThemeSwitcher />
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}

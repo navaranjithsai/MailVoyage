@@ -1,6 +1,36 @@
+<div align="center">
+
 # MailVoyage - Modern Email Client for Developers and Users
 
+[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Made with Love](https://img.shields.io/badge/Made%20with-❤️-red.svg)](https://github.com/navaranjithsai)
+
+---
+</div>
+
 MailVoyage is a modern, developer-friendly email client designed to simplify email management and testing. It provides a unified platform for sending, receiving, and testing emails across multiple providers, all in one place. Built with React, TypeScript, and Vite, MailVoyage is optimized for performance, scalability, and ease of use. The application supports serverless deployments, making it ideal for integration with platforms like Vercel.
+
+
+## Recent Commits
+
+<div align="center">
+
+<picture>
+  <source
+    srcset="https://github-commits-card.navaranjith-sai1234.workers.dev/?theme=dark&repo=MailVoyage&u=navaranjithsai&count=3"
+    media="(prefers-color-scheme: dark)"
+  />
+  <source
+    srcset="https://github-commits-card.navaranjith-sai1234.workers.dev/?u=navaranjithsai&repo=MailVoyage&theme=light"
+    media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)"
+  />
+  <img src="https://github-commits-card.navaranjith-sai1234.workers.dev/?u=navaranjithsai&repo=MailVoyage&theme=dark" alt="GitHub Commits Card Demo" />
+</picture>
+
+<br/>
+</div>
+<br/>
 
 ## Features
 
