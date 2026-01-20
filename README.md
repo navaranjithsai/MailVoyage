@@ -120,4 +120,5 @@ MailVoyage is open-source and licensed under the MIT License.
 For questions or support, start a discussion in the Discussion tab.
 
 ---
-Tech4File - Simplifying Tech for Developers and Users
+<p style="text-align:center;"><strong>Tech4File - Simplifying Tech for Developers and Users</strong>
+</p>

@@ -1,31 +1,37 @@
 {
   "name": "mailvoyage-api",
   "version": "1.0.0",
-  "description": "Backend API for MailVoyage",
+  "description": "Backend API for MailVoyage - Email client REST API with WebSocket support",
   "main": "dist/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc && npm run migrate:latest",
+    "build:only": "tsc",
     "dev:watch": "cross-env NODE_ENV=development ts-node-dev --respawn --transpile-only --exit-child --esm src/index.ts",
     "dev": "cross-env NODE_ENV=development npm run migrate:latest && cross-env NODE_ENV=development node --loader ts-node/esm src/index.ts",
     "start:prod": "cross-env NODE_ENV=production node dist/index.js",
     "start": "cross-env NODE_ENV=production npm run migrate:latest && node dist/index.js",
+    "typecheck": "tsc --noEmit",
     "knex": "cross-env NODE_ENV=development NODE_OPTIONS=\"--loader ts-node/esm\" knex --knexfile knexfile.ts",
     "migrate:make": "npm run knex -- migrate:make -x ts",
     "migrate:latest": "npm run knex -- migrate:latest",
     "migrate:rollback": "npm run knex -- migrate:rollback",
     "seed:make": "npm run knex -- seed:make -x ts",
-    "seed:run": "npm run knex -- seed:run"
+    "seed:run": "npm run knex -- seed:run",
+    "clean": "rimraf dist"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "cross-env": "^7.0.3",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.2.3",
     "dotenv-safe": "^9.1.0",
     "express": "^4.19.2",
     "imapflow": "^1.0.198",
@@ -38,7 +44,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/bcrypt": "^5.0.2",
+    "@types/bcrypt": "^6.0.0",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",
     "@types/dotenv-safe": "^8.1.6",
@@ -47,7 +53,7 @@
     "@types/knex": "^0.15.2",
     "@types/mailparser": "^3.4.4",
     "@types/morgan": "^1.9.9",
-    "@types/node": "^20.14.10",
+    "@types/node": "^25.0.9",
     "@types/nodemailer": "^6.4.15",
     "@types/pg": "^8.11.14",
     "@types/winston": "^2.4.4",
@@ -55,6 +61,6 @@
     "knex": "^3.1.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.5.3"
+    "typescript": "^5.9.3"
   }
 }

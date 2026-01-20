@@ -682,7 +682,7 @@ async function testPop3(opts: { host: string; port: number; secure: boolean; sta
 
     const timer = setTimeout(() => fail(new Error('POP3 connection timed out')), timeoutMs);
 
-    const readLine = (data: Buffer) => data.toString('utf8');
+    const readLine = (data: Buffer | string) => typeof data === 'string' ? data : data.toString('utf8');
 
   let step: 'greet' | 'stls' | 'user' | 'pass' | 'done' = 'greet';
 

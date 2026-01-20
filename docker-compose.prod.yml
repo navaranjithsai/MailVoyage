@@ -1,0 +1,54 @@
+# MailVoyage Production Docker Compose
+# Usage: docker-compose -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # Frontend (Nginx serving static files)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mailvoyage-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    networks:
+      - mailvoyage-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: mailvoyage-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    ports:
+      - "3001:3001"
+    networks:
+      - mailvoyage-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  mailvoyage-network:
+    driver: bridge
