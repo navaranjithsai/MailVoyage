@@ -22,7 +22,7 @@ export const list = async (req: Request, res: Response) => {
 export const getOne = async (req: Request, res: Response) => {
   try {
     const user = getUser(req);
-    const item = await smtpService.getSmtpAccountById(req.params.id, user.id);
+    const item = await smtpService.getSmtpAccountById(String(req.params.id), user.id);
     if (!item) return res.status(404).json({ message: 'SMTP account not found' });
     const { password, ...sanitized } = item;
     res.json(sanitized);
@@ -47,7 +47,7 @@ export const create = async (req: Request, res: Response) => {
 export const update = async (req: Request, res: Response) => {
   try {
     const user = getUser(req);
-    const updated = await smtpService.updateSmtpAccount(req.params.id, user.id, req.body);
+    const updated = await smtpService.updateSmtpAccount(String(req.params.id), user.id, req.body);
     if (!updated) return res.status(404).json({ message: 'SMTP account not found' });
     const { password, ...sanitized } = updated;
     res.json(sanitized);
@@ -60,7 +60,7 @@ export const update = async (req: Request, res: Response) => {
 export const remove = async (req: Request, res: Response) => {
   try {
     const user = getUser(req);
-    const ok = await smtpService.deleteSmtpAccount(req.params.id, user.id);
+    const ok = await smtpService.deleteSmtpAccount(String(req.params.id), user.id);
     if (!ok) return res.status(404).json({ message: 'SMTP account not found' });
     res.json({ message: 'SMTP account deleted successfully' });
   } catch (err) {
@@ -72,7 +72,7 @@ export const remove = async (req: Request, res: Response) => {
 export const test = async (req: Request, res: Response) => {
   try {
     const user = getUser(req);
-    const result = await smtpService.testSmtpAccount(req.params.id, user.id);
+    const result = await smtpService.testSmtpAccount(String(req.params.id), user.id);
     res.json(result);
   } catch (err) {
     logger.error('Error testing SMTP account:', err);

@@ -14,6 +14,5 @@ export const hostCheck = (req: Request, res: Response, next: NextFunction) => {
     return res.status(403).json({ message: 'Forbidden: Host not allowed.' });
   }
 
-  logger.debug(`Request allowed from host: ${requestHost}`);
   next();
 };

@@ -12,11 +12,13 @@
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'auth_failed';
 
 export interface SyncSignal {
-  type: 'sync_required' | 'heartbeat' | 'pong' | 'connected' | 'error' | 'auth_failed';
+  type: 'sync_required' | 'heartbeat' | 'pong' | 'connected' | 'error' | 'auth_failed'
+      | 'inbox_sync_complete' | 'settings_updated' | 'inbox_new_mail';
   tables?: string[];
   since?: string;
   message?: string;
   timestamp: string;
+  data?: Record<string, any>;
 }
 
 export interface WebSocketConfig {
@@ -275,6 +277,13 @@ class WebSocketClient {
 
         case 'sync_required':
           console.info('[WebSocket] Sync signal received:', signal.tables);
+          this.notifySignalHandlers(signal);
+          break;
+
+        case 'inbox_sync_complete':
+        case 'inbox_new_mail':
+        case 'settings_updated':
+          console.info(`[WebSocket] ${signal.type} signal received:`, signal.message);
           this.notifySignalHandlers(signal);
           break;
 

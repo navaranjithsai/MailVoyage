@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, User, Send, Eye, Download } from 'lucide-react';
+import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, Send, Eye, Download } from 'lucide-react';
 import Button from '@/components/ui/Button';
-import { useEmail, Email } from '@/contexts/EmailContext';
+import { useEmail, Email, inboxRecordToEmail } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
-import { getSentMailByThreadId } from '@/lib/db';
+import { getSentMailByThreadId, getInboxMailById } from '@/lib/db';
 import { injectEmailStyles, sanitizeEmailHtml, formatFileSize } from '@/lib/emailStyles';
+import { toast } from '@/lib/toast';
 import AttachmentViewer, { AttachmentData } from '@/components/common/AttachmentViewer';
 
 // Global map to track in-progress fetches - prevents duplicate API calls across mounts
@@ -236,8 +237,14 @@ const EmailPage: React.FC = () => {
       return fetchPromise;
     };
     
-    const loadInboxMail = (): Email | null => {
-      return emails.find(e => e.id === id) || null;
+    const loadInboxMail = async (): Promise<Email | null> => {
+      // Try context first (already in memory)
+      const found = emails.find(e => e.id === id);
+      if (found) return found;
+      // Fall back to Dexie (handles deep-links before context loads)
+      const record = await getInboxMailById(id!);
+      if (record) return inboxRecordToEmail(record);
+      return null;
     };
     
     const loadEmail = async () => {
@@ -259,7 +266,7 @@ const EmailPage: React.FC = () => {
             setSentMail(null);
           }
         } else {
-          const foundEmail = loadInboxMail();
+          const foundEmail = await loadInboxMail();
           
           if (signal.aborted) return;
           
@@ -359,9 +366,17 @@ const EmailPage: React.FC = () => {
     }
   };
 
-  const handleArchive = () => {
-    // Implement archive functionality
-    console.log('Archive email:', email?.id || sentMail?.id);
+  const handleArchive = async () => {
+    // Archive works on local DB only — does not affect mail server
+    if (email) {
+      try {
+        const { archiveInboxMail } = await import('@/lib/db');
+        await archiveInboxMail(email.id);
+        toast.success('Email archived');
+      } catch {
+        toast.error('Failed to archive email');
+      }
+    }
     navigate(-1);
   };
 
@@ -810,12 +825,20 @@ const EmailPage: React.FC = () => {
                   <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
                     {email.subject}
                   </h1>
-                  <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                  <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
                     <div className="flex items-center gap-1">
-                      <User size={14} />
-                      <span className="font-medium">{formatSenderName(email.senderName, email.sender)}</span>
-                      <span className="text-gray-500">({email.senderEmail})</span>
+                      <span className="text-gray-500">From:</span>
+                      <span className="font-medium">{email.senderName || email.sender}</span>
+                      {email.senderEmail && (
+                        <span className="text-gray-500">&lt;{email.senderEmail}&gt;</span>
+                      )}
                     </div>
+                    {email.recipient && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-500">To:</span>
+                        <span className="font-medium">{email.recipient}</span>
+                      </div>
+                    )}
                     <div className="flex items-center gap-1">
                       <Clock size={14} />
                       {email.time}
@@ -868,11 +891,18 @@ const EmailPage: React.FC = () => {
 
           {/* Email Body */}
           <div className="p-6">
-            <div className="ck-content email-content max-w-none">
-              <pre className="whitespace-pre-wrap font-sans text-gray-900 dark:text-gray-100 leading-relaxed">
-                {email.content}
-              </pre>
-            </div>
+            {email.content && (email.content.includes('<') && email.content.includes('>')) ? (
+              <div 
+                className="ck-content email-content max-w-none"
+                dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(email.content) }}
+              />
+            ) : (
+              <div className="ck-content email-content max-w-none">
+                <pre className="whitespace-pre-wrap font-sans text-gray-900 dark:text-gray-100 leading-relaxed">
+                  {email.content || '(No content)'}
+                </pre>
+              </div>
+            )}
           </div>
 
           {/* Action Footer */}

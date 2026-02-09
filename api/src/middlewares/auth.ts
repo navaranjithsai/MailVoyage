@@ -20,42 +20,19 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
-  logger.info('🔒 authenticateToken middleware invoked.', { 
-    path: req.path, 
-    method: req.method,
-    cookieKeys: req.cookies ? Object.keys(req.cookies) : [],
-    hasAuthTokenCookie: req.cookies && 'authToken' in req.cookies
-  });
-  
   const token = req.cookies.authToken;
-  // Log the first 10 characters of the token if it exists, for debugging
-  logger.debug('Auth token from cookie:', { 
-    hasToken: !!token,
-    tokenPreview: token ? `${token.substring(0, 10)}...` : 'none', 
-    cookieHeaders: req.headers.cookie
-  });
 
   if (!token) {
-    logger.warn('⛔ authenticateToken: No token provided in cookies.');
+    logger.debug(`Auth: No token - ${req.method} ${req.path}`);
     return next(new AppError('Unauthorized: No token provided', 401));
   }
 
   try {
-    logger.debug('🔍 authenticateToken: Attempting to verify token...');
     const decoded = tokenService.verifyAccessToken(token) as { username: string; email: string; iat?: number; exp?: number };
-    logger.debug('✅ authenticateToken: Token decoded successfully.', { 
-      decodedPayload: {
-        username: decoded.username,
-        email: decoded.email,
-        iat: decoded.iat,
-        exp: decoded.exp,
-        expiresIn: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : 'unknown'
-      }
-    });
 
     // Basic check if essential properties exist after decoding
     if (!decoded || typeof decoded.username !== 'string' || typeof decoded.email !== 'string') {
-      logger.warn('❌ authenticateToken: Token verification failed - decoded token has invalid structure.', { decoded });
+      logger.warn('Auth: Invalid token structure');
       // Clear the potentially problematic cookie
       res.cookie('authToken', '', {
         httpOnly: true,
@@ -68,11 +45,10 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
     }
 
     // Fetch user ID from database using email
-    logger.debug('🔍 authenticateToken: Fetching user ID from database...');
     const userProfile = await userService.getUserByEmail(decoded.email);
     
     if (!userProfile) {
-      logger.warn('❌ authenticateToken: User not found in database.', { email: decoded.email });
+      logger.warn(`Auth: User not found - ${decoded.email}`);
       // Clear the cookie for non-existent user
       res.cookie('authToken', '', {
         httpOnly: true,
@@ -89,14 +65,9 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       username: decoded.username, 
       email: decoded.email 
     };
-    logger.info('👤 authenticateToken: User set in request.', { user: req.user });
     next();
   } catch (error: any) {
-    logger.warn('❌ authenticateToken: Token verification failed.', { 
-      errorName: error.name, 
-      errorMessage: error.message,
-      stack: error.stack
-    });
+    logger.warn(`Auth: Token verification failed - ${error.name}: ${error.message}`);
     // Clear the invalid/expired cookie
     res.cookie('authToken', '', {
       httpOnly: true,
@@ -106,11 +77,10 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       path: '/',
     });
 
-    if (error.name === 'TokenExpiredError') {
-      return next(new AppError('Unauthorized: Token expired', 401));
-    }
-    if (error.name === 'JsonWebTokenError') {
-      return next(new AppError('Unauthorized: Invalid token', 401));
+    // verifyAccessToken throws AppError with specific messages ("Token expired", "Invalid token")
+    // Propagate it directly so the client gets the precise error reason
+    if (error instanceof AppError) {
+      return next(error);
     }
     // For other unexpected errors during token verification
     return next(new AppError('Unauthorized: Token verification failed due to an unexpected error', 401));

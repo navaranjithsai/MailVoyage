@@ -3,8 +3,17 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
-  * {
-    @apply transition-colors duration-200;
+  /* Apply theme transitions only to interactive/themed elements, NOT every element */
+  body,
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [class*="bg-"],
+  [class*="text-"],
+  [class*="border-"] {
+    transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
   }
 }
 

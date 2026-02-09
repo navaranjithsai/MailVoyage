@@ -78,6 +78,10 @@ const SettingsPage: React.FC = () => {
     email: '',
   });
 
+  // Inbox cache limit setting
+  const [inboxCacheLimit, setInboxCacheLimit] = useState(15);
+  const [isSavingCacheLimit, setIsSavingCacheLimit] = useState(false);
+
   // Load user data from localStorage on component mount
   useEffect(() => {
     const loadUserData = () => {
@@ -98,6 +102,29 @@ const SettingsPage: React.FC = () => {
     };
 
     loadUserData();
+
+    // Load inbox cache limit from API (only once on mount)
+    const cachedLimit = localStorage.getItem('inbox_cache_limit');
+    if (cachedLimit) {
+      setInboxCacheLimit(parseInt(cachedLimit, 10) || 15);
+    } else {
+      apiFetch('/api/inbox/settings')
+        .then((res: any) => {
+          // Controller returns { success: true, data: { inboxCacheLimit: number } }
+          const limit = res?.data?.inboxCacheLimit || res?.inboxCacheLimit || 15;
+          setInboxCacheLimit(limit);
+          localStorage.setItem('inbox_cache_limit', String(limit));
+        })
+        .catch(() => { /* silent — use default */ });
+    }
+
+    // Listen for WebSocket settings:updated events (e.g. from another tab)
+    const handleSettingsUpdated = () => {
+      const updated = localStorage.getItem('inbox_cache_limit');
+      if (updated) setInboxCacheLimit(parseInt(updated, 10) || 15);
+    };
+    window.addEventListener('settings:updated', handleSettingsUpdated);
+    return () => window.removeEventListener('settings:updated', handleSettingsUpdated);
   }, []);
 
   const handleProfileUpdate = async () => {
@@ -206,6 +233,24 @@ const SettingsPage: React.FC = () => {
 
   const handleExportData = () => {
     toast.success('Data export started. You will receive an email when ready.');
+  };
+
+  const handleSaveCacheLimit = async () => {
+    try {
+      setIsSavingCacheLimit(true);
+      await apiFetch('/api/inbox/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inboxCacheLimit }),
+      });
+      // Cache locally to avoid re-fetching on next visit
+      localStorage.setItem('inbox_cache_limit', String(inboxCacheLimit));
+      toast.success('Inbox cache limit updated');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save setting');
+    } finally {
+      setIsSavingCacheLimit(false);
+    }
   };
 
   const handleDeleteAccount = () => {
@@ -440,6 +485,41 @@ const SettingsPage: React.FC = () => {
         
         <div className="space-y-6">
           <div className="space-y-4">
+            {/* Inbox Cache Limit */}
+            <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">Inbox Cache Limit</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Number of recent emails cached per account on the server (5–100)
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={inboxCacheLimit}
+                  onChange={e => setInboxCacheLimit(Number(e.target.value))}
+                  className="flex-1 accent-blue-600"
+                />
+                <span className="text-sm font-medium text-gray-900 dark:text-white w-10 text-center">
+                  {inboxCacheLimit}
+                </span>
+                <Button
+                  size="small"
+                  onClick={handleSaveCacheLimit}
+                  disabled={isSavingCacheLimit}
+                  className="flex items-center gap-1"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingCacheLimit ? 'Saving…' : 'Save'}</span>
+                </Button>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
               <div>
                 <p className="font-medium text-gray-900 dark:text-white">Export Data</p>

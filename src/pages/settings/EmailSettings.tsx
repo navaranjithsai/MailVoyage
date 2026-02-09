@@ -995,7 +995,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                             value={addForm.incomingHost}
                             onChange={(e) => setAddForm({ ...addForm, incomingHost: e.target.value })}
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-                            placeholder="imap.gmail.com"
+                            placeholder={addForm.incomingType === 'POP3' ? 'pop.example.com' : 'imap.example.com'}
                           />
                         </div>
 
@@ -1009,7 +1009,11 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                             value={addForm.incomingPort}
                             onChange={(e) => setAddForm({ ...addForm, incomingPort: e.target.value })}
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-                            placeholder="993"
+                            placeholder={
+                              addForm.incomingType === 'POP3'
+                                ? (addForm.incomingSecurity === 'SSL' ? '995' : '110')
+                                : (addForm.incomingSecurity === 'NONE' ? '143' : addForm.incomingSecurity === 'STARTTLS' ? '143' : '993')
+                            }
                           />
                         </div>
 
@@ -1041,8 +1045,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                           >
                             <option value="NONE">None</option>
-                            <option value="SSL">SSL</option>
-                            <option value="STARTTLS">TLS</option>
+                            <option value="SSL">SSL / TLS</option>
+                            <option value="STARTTLS">STARTTLS</option>
                           </select>
                         </div>
                       </div>
@@ -1079,8 +1083,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                             onChange={(e) => setAddForm({ ...addForm, outgoingSecurity: e.target.value as any })}
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                           >
-                            <option value="SSL">SSL</option>
-                            <option value="STARTTLS">TLS</option>
+                            <option value="SSL">SSL / TLS</option>
+                            <option value="STARTTLS">STARTTLS</option>
                             <option value="NONE">None</option>
                           </select>
                         </div>
@@ -1499,8 +1503,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                         >
                           <option value="NONE">None</option>
-                          <option value="SSL">SSL</option>
-                          <option value="STARTTLS">TLS</option>
+                          <option value="SSL">SSL / TLS</option>
+                          <option value="STARTTLS">STARTTLS</option>
                         </select>
                       </div>
                     </div>
@@ -1536,8 +1540,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                           onChange={(e) => setEditForm({ ...editForm, outgoingSecurity: e.target.value as any })}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                         >
-                          <option value="SSL">SSL</option>
-                          <option value="STARTTLS">TLS</option>
+                          <option value="SSL">SSL / TLS</option>
+                          <option value="STARTTLS">STARTTLS</option>
                           <option value="NONE">None</option>
                         </select>
                       </div>

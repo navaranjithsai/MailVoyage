@@ -9,7 +9,10 @@ import { apiFetch } from './apiFetch';
 import { 
   getDraftsCount as getDraftCountFromDb,
   clearSentMails,
-  addOrUpdateSentMails
+  addOrUpdateSentMails,
+  upsertInboxMails,
+  trimInboxToLimit,
+  type InboxMailRecord,
 } from './db';
 
 // ============================================================================
@@ -201,50 +204,93 @@ export async function fetchSentMails(
 }
 
 /**
- * Fetch inbox mails from the API.
- * Note: This uses the mail/fetch endpoint which may require mailbox parameter.
+ * Fetch inbox mails from the API using the new inbox sync endpoint.
+ * Gets cached mails from server, then saves to local encrypted Dexie.
  */
 export async function fetchInboxMails(
-  mailbox: string = 'INBOX'
+  _mailbox: string = 'INBOX'
 ): Promise<FetchResult<InboxResult>> {
   try {
-    console.log(`🔄 Fetching inbox mails (${mailbox})...`);
-    const response = await apiFetch(`/api/mail/fetch?mailbox=${encodeURIComponent(mailbox)}`);
-    
-    if (response.success && response.data) {
-      console.log('✅ Inbox mails fetched successfully:', { 
-        count: response.data.mails?.length || 0 
-      });
-      
-      return {
-        success: true,
-        data: {
-          mails: response.data.mails || [],
-          total: response.data.total || response.data.mails?.length || 0
-        }
-      };
+    console.log('🔄 Fetching cached inbox mails from server...');
+
+    // Step 1: Get the list of email accounts
+    const emailAccountsStr = localStorage.getItem('emailAccounts');
+    if (!emailAccountsStr) {
+      console.log('ℹ️ No email accounts configured, skipping inbox fetch.');
+      return { success: true, data: { mails: [], total: 0 } };
     }
-    
-    // Handle case where response itself contains mails directly
-    if (response.mails) {
-      return {
-        success: true,
-        data: {
-          mails: response.mails,
-          total: response.total || response.mails.length
+
+    const accounts: Array<{ accountCode: string }> = JSON.parse(emailAccountsStr);
+    let allMails: any[] = [];
+
+    // Step 2: For each account, get cached mails from server DB
+    for (const acc of accounts) {
+      try {
+        const res = await apiFetch(
+          `/api/inbox/cached?accountCode=${encodeURIComponent(acc.accountCode)}`
+        );
+        const mails = res?.data?.mails || res?.mails || [];
+        if (mails.length) {
+          allMails = allMails.concat(mails);
         }
-      };
+      } catch (err) {
+        console.warn(`⚠️ Failed to fetch cached mails for ${acc.accountCode}:`, err);
+      }
     }
-    
+
+    // Step 3: Save to local Dexie (encrypted)
+    if (allMails.length > 0) {
+      const records: InboxMailRecord[] = allMails.map((m: any) => ({
+        id: m.id || `${m.account_code || m.accountId}:${m.uid}`,
+        uid: m.uid,
+        accountId: m.account_code || m.accountId,
+        mailbox: m.mailbox || 'INBOX',
+        messageId: m.message_id || m.messageId,
+        fromAddress: m.from_address || m.fromAddress || '',
+        fromName: m.from_name || m.fromName || '',
+        toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
+          ? (m.to_addresses || m.toAddresses)
+          : [m.to_addresses || m.toAddresses || ''],
+        ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
+          ? (m.cc_addresses || m.ccAddresses)
+          : [],
+        bccAddresses: [],
+        subject: m.subject || '(No Subject)',
+        htmlBody: m.html_body || m.htmlBody || null,
+        textBody: m.text_body || m.textBody || null,
+        date: m.date || new Date().toISOString(),
+        isRead: m.is_read ?? m.isRead ?? false,
+        isStarred: m.is_starred ?? m.isStarred ?? false,
+        hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
+        attachmentsMetadata: m.attachments_metadata || m.attachmentsMetadata || null,
+        labels: m.labels || [],
+        syncedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
+      }));
+      await upsertInboxMails(records);
+      console.log(`✅ Saved ${records.length} cached inbox mails to Dexie.`);
+
+      // Enforce local cache limit per account
+      const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
+      const uniqueAccounts = [...new Set(records.map(r => r.accountId))];
+      for (const accId of uniqueAccounts) {
+        await trimInboxToLimit(accId, cacheLimit);
+      }
+    }
+
     return {
-      success: false,
-      error: 'Invalid response format'
+      success: true,
+      data: {
+        mails: allMails,
+        total: allMails.length,
+      },
     };
   } catch (error: any) {
     console.error('❌ Failed to fetch inbox mails:', error);
     return {
       success: false,
-      error: error.message || 'Failed to fetch inbox mails'
+      error: error.message || 'Failed to fetch inbox mails',
     };
   }
 }

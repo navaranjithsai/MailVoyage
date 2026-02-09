@@ -9,33 +9,16 @@ export interface UserProfile {
 }
 
 export const getUserByEmail = async (email: string): Promise<UserProfile | null> => {
-  logger.debug(`🔍 getUserByEmail: Looking up user by email: ${email}`);
   const client = await pool.connect();
   try {
-    const query = 'SELECT id, username, email FROM users WHERE email = $1';
-    logger.debug(`🔍 getUserByEmail: Executing query: ${query}`, { params: [email] });
+    const result = await client.query<UserProfile>(
+      'SELECT id, username, email FROM users WHERE email = $1',
+      [email]
+    );
     
-    const result = await client.query<UserProfile>(query, [email]);
-    
-    logger.debug(`🔍 getUserByEmail: Query result:`, { 
-      rowCount: result.rowCount,
-      hasResults: result.rows.length > 0,
-      firstRow: result.rows.length > 0 ? {
-        id: result.rows[0].id,
-        username: result.rows[0].username,
-        email: result.rows[0].email
-      } : null
-    });
-    
-    if (result.rows.length > 0) {
-      logger.info(`✅ getUserByEmail: User found for email: ${email}`);
-      return result.rows[0];
-    }
-    
-    logger.warn(`❌ getUserByEmail: No user found with email: ${email}`);
-    return null;
+    return result.rows.length > 0 ? result.rows[0] : null;
   } catch (error) {
-    logger.error(`❌ getUserByEmail: Error fetching user by email ${email}:`, error);
+    logger.error(`getUserByEmail failed for ${email}:`, error);
     throw new AppError('Database error while fetching user by email', 500, false, { context: 'getUserByEmail', email });
   } finally {
     client.release();

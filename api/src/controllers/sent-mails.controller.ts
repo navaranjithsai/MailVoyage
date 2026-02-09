@@ -20,11 +20,10 @@ export const getSentMails = async (
     
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100); // Max 100 per page
-    
-    logger.info(`Fetching sent mails for user ${user.id}, page ${page}, limit ${limit}`);
+    const since = req.query.since as string | undefined; // ISO timestamp for delta sync
     
     const userId = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id;
-    const result = await mailService.getSentMailsByUserId(userId, page, limit);
+    const result = await mailService.getSentMailsByUserId(userId, page, limit, since);
     
     res.json({
       success: true,
@@ -51,7 +50,7 @@ export const getSentMailByThreadId = async (
       throw new AppError('Authentication required', 401);
     }
     
-    const { threadId } = req.params;
+    const threadId = String(req.params.threadId);
     
     if (!threadId) {
       throw new AppError('Thread ID is required', 400);
@@ -91,7 +90,7 @@ export const getSentMailById = async (
       throw new AppError('Authentication required', 401);
     }
     
-    const { id } = req.params;
+    const id = String(req.params.id);
     
     if (!id) {
       throw new AppError('Mail ID is required', 400);

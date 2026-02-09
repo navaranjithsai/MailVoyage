@@ -493,11 +493,12 @@ const parseThunderbirdAutoconfig = (xmlText: string): AutoConfig | null => {
       }
     }
 
-    // Use POP3 if available, otherwise IMAP
-    if (pop3Configs.length > 0) {
-      incomingConfig = pop3Configs[0];
-    } else if (imapConfigs.length > 0) {
+    // Prefer IMAP over POP3 — IMAP supports folders, flags, server-side
+    // search, and incremental sync. POP3 is a fallback.
+    if (imapConfigs.length > 0) {
       incomingConfig = imapConfigs[0];
+    } else if (pop3Configs.length > 0) {
+      incomingConfig = pop3Configs[0];
     }
 
     // Parse outgoing servers - look for SMTP

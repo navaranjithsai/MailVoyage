@@ -126,6 +126,64 @@ export function getOnlineUserCount(): number {
   return wsService.getConnectedCount();
 }
 
+/**
+ * Signal that an inbox sync has completed (non-debounced, immediate).
+ * Tells the client to refresh its local inbox view.
+ */
+export function signalInboxSyncComplete(
+  userId: string,
+  accountCode: string,
+  fetchedCount: number
+): void {
+  wsService.sendToUser(userId, {
+    type: 'inbox_sync_complete',
+    tables: ['inbox_mails'],
+    message: `Synced ${fetchedCount} email${fetchedCount !== 1 ? 's' : ''}`,
+    data: { accountCode, fetchedCount },
+    timestamp: new Date().toISOString(),
+  });
+  logger.debug(`[Signal] Sent inbox_sync_complete to user ${userId} (${fetchedCount} mails)`);
+}
+
+/**
+ * Signal that user settings have been updated (non-debounced, immediate).
+ * Tells the client to re-read settings from localStorage / API.
+ */
+export function signalSettingsUpdated(
+  userId: string,
+  changedKeys: string[]
+): void {
+  wsService.sendToUser(userId, {
+    type: 'settings_updated',
+    message: 'Settings updated',
+    data: { changedKeys },
+    timestamp: new Date().toISOString(),
+  });
+  logger.debug(`[Signal] Sent settings_updated to user ${userId}: ${changedKeys.join(', ')}`);
+}
+
+/**
+ * Signal that new mail has arrived on the server (non-debounced, immediate).
+ * Can be used as a push notification trigger.
+ */
+export function signalNewInboxMail(
+  userId: string,
+  accountCode: string,
+  count: number,
+  subject?: string
+): void {
+  wsService.sendToUser(userId, {
+    type: 'inbox_new_mail',
+    tables: ['inbox_mails'],
+    message: count === 1
+      ? `New email: ${subject || '(No Subject)'}`
+      : `${count} new emails`,
+    data: { accountCode, count, subject },
+    timestamp: new Date().toISOString(),
+  });
+  logger.debug(`[Signal] Sent inbox_new_mail to user ${userId} (${count} mails)`);
+}
+
 export default {
   signalUserSync,
   signalNewSentMail,
@@ -134,5 +192,8 @@ export default {
   signalMultipleChanges,
   broadcastSync,
   isUserOnline,
-  getOnlineUserCount
+  getOnlineUserCount,
+  signalInboxSyncComplete,
+  signalSettingsUpdated,
+  signalNewInboxMail,
 };

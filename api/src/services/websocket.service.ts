@@ -26,11 +26,13 @@ interface AuthenticatedClient {
 }
 
 export interface SyncSignal {
-  type: 'sync_required' | 'heartbeat' | 'pong' | 'connected' | 'error';
+  type: 'sync_required' | 'heartbeat' | 'pong' | 'connected' | 'error' 
+      | 'inbox_sync_complete' | 'settings_updated' | 'inbox_new_mail';
   tables?: string[];       // Which tables have updates
   since?: string;          // Timestamp of oldest change
   message?: string;        // Optional message
   timestamp: string;       // Signal timestamp
+  data?: Record<string, any>;  // Optional payload data
 }
 
 interface PendingSignal {
@@ -330,6 +332,23 @@ class WebSocketService {
     logger.info(`[WebSocket] Sent sync signal to user ${userId} for tables: ${signal.tables?.join(', ')}`);
     
     this.pendingSignals.delete(userId);
+  }
+
+  /**
+   * Send an immediate (non-debounced) signal to a specific user.
+   * Use for one-off notifications like settings changes or sync completion.
+   */
+  sendToUser(userId: string, signal: SyncSignal): void {
+    if (!this.isInitialized) return;
+
+    const client = this.clients.get(userId);
+    if (!client || client.ws.readyState !== WebSocket.OPEN) {
+      logger.debug(`[WebSocket] User ${userId} not connected, skipping direct signal`);
+      return;
+    }
+
+    this.send(client.ws, signal);
+    logger.info(`[WebSocket] Sent ${signal.type} to user ${userId}`);
   }
 
   /**

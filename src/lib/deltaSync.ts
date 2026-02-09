@@ -14,6 +14,7 @@ import {
   updateSyncCheckpoint,
   upsertSentMails,
   upsertInboxMails,
+  trimInboxToLimit,
   getAllSentMails,
   getAllInboxMails,
   getPendingSyncCount,
@@ -362,6 +363,25 @@ class DeltaSyncManager {
       console.info(`[DeltaSync] Received sync signal for tables: ${signal.tables.join(', ')}`);
       debouncedSync(signal.tables as SyncTable[], signal.since);
     }
+
+    if (signal.type === 'inbox_sync_complete') {
+      console.info(`[DeltaSync] Inbox sync complete: ${signal.message}`);
+      // Trigger an inbox_mails sync so the client refreshes its local cache
+      debouncedSync(['inbox_mails']);
+      // Dispatch a custom event so InboxPage can refresh immediately
+      window.dispatchEvent(new CustomEvent('inbox:sync-complete', { detail: signal.data }));
+    }
+
+    if (signal.type === 'inbox_new_mail') {
+      console.info(`[DeltaSync] New mail notification: ${signal.message}`);
+      debouncedSync(['inbox_mails']);
+      window.dispatchEvent(new CustomEvent('inbox:new-mail', { detail: signal.data }));
+    }
+
+    if (signal.type === 'settings_updated') {
+      console.info(`[DeltaSync] Settings updated: ${signal.data?.changedKeys?.join(', ')}`);
+      window.dispatchEvent(new CustomEvent('settings:updated', { detail: signal.data }));
+    }
   };
 
   private handleOnline = (): void => {
@@ -585,62 +605,69 @@ async function syncSentMails(since?: string): Promise<{ updated: number; deleted
 }
 
 /**
- * Sync inbox mails with delta logic
+ * Sync inbox mails — fetches cached mails from server for each email account
+ * and upserts them into local Dexie (encrypted).
  */
-async function syncInboxMails(since?: string): Promise<{ updated: number; deleted: number }> {
-  const checkpoint = since || await getLastSyncTimestamp('inbox_mails');
-  
+async function syncInboxMails(_since?: string): Promise<{ updated: number; deleted: number }> {
   try {
-    // Build query with checkpoint
-    let url = '/api/mail/fetch?mailbox=INBOX';
-    if (checkpoint) {
-      url += `&since=${encodeURIComponent(checkpoint)}`;
+    const emailAccountsStr = localStorage.getItem('emailAccounts');
+    if (!emailAccountsStr) {
+      return { updated: 0, deleted: 0 };
     }
 
-    const response = await apiFetch(url);
-    
-    if (response.success && response.data?.mails) {
-      const mails: InboxMailRecord[] = response.data.mails.map((mail: any) => ({
-        id: mail.id || mail.uid?.toString(),
-        uid: mail.uid,
-        accountId: mail.accountId || 'default',
-        mailbox: mail.mailbox || 'INBOX',
-        messageId: mail.messageId,
-        fromAddress: mail.from || mail.fromAddress,
-        fromName: mail.fromName,
-        toAddresses: mail.to || mail.toAddresses || [],
-        ccAddresses: mail.cc || mail.ccAddresses,
-        bccAddresses: mail.bcc || mail.bccAddresses,
-        subject: mail.subject,
-        htmlBody: mail.html || mail.htmlBody,
-        textBody: mail.text || mail.textBody,
-        date: mail.date,
-        isRead: mail.isRead ?? false,
-        isStarred: mail.isStarred ?? false,
-        hasAttachments: mail.hasAttachments ?? false,
-        attachmentsMetadata: mail.attachments || mail.attachmentsMetadata,
-        labels: mail.labels,
-        createdAt: mail.createdAt || mail.date,
-        updatedAt: mail.updatedAt || mail.date
-      }));
+    const accounts: Array<{ accountCode: string }> = JSON.parse(emailAccountsStr);
+    let totalUpdated = 0;
 
-      // Upsert to IndexedDB
-      await upsertInboxMails(mails);
-      
-      // Update checkpoint
-      if (mails.length > 0) {
-        const latestTimestamp = mails.reduce((latest, mail) => {
-          return mail.updatedAt > latest ? mail.updatedAt : latest;
-        }, checkpoint || '');
-        
-        await updateSyncCheckpoint('inbox_mails', latestTimestamp);
+    for (const acc of accounts) {
+      try {
+        const res = await apiFetch(
+          `/api/inbox/cached?accountCode=${encodeURIComponent(acc.accountCode)}`
+        );
+
+        const serverMails = res?.data?.mails || res?.mails || [];
+        if (serverMails.length) {
+          const mails: InboxMailRecord[] = serverMails.map((m: any) => ({
+            id: m.id || `${m.account_code || acc.accountCode}:${m.uid}`,
+            uid: m.uid,
+            accountId: m.account_code || acc.accountCode,
+            mailbox: m.mailbox || 'INBOX',
+            messageId: m.message_id || m.messageId,
+            fromAddress: m.from_address || m.fromAddress || '',
+            fromName: m.from_name || m.fromName || '',
+            toAddresses: Array.isArray(m.to_addresses || m.toAddresses) ? (m.to_addresses || m.toAddresses) : [],
+            ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses) ? (m.cc_addresses || m.ccAddresses) : [],
+            bccAddresses: [],
+            subject: m.subject || '(No Subject)',
+            htmlBody: m.html_body || m.htmlBody || null,
+            textBody: m.text_body || m.textBody || null,
+            date: m.date || new Date().toISOString(),
+            isRead: m.is_read ?? m.isRead ?? false,
+            isStarred: m.is_starred ?? m.isStarred ?? false,
+            hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
+            attachmentsMetadata: m.attachments_metadata || m.attachmentsMetadata || null,
+            labels: m.labels || [],
+            syncedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
+          }));
+
+          await upsertInboxMails(mails);
+          totalUpdated += mails.length;
+
+          // Enforce local cache limit
+          const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
+          await trimInboxToLimit(acc.accountCode, cacheLimit);
+        }
+      } catch (err) {
+        console.warn(`[DeltaSync] Failed to sync inbox for ${acc.accountCode}:`, err);
       }
-
-      return { updated: mails.length, deleted: 0 };
     }
 
-    return { updated: 0, deleted: 0 };
+    if (totalUpdated > 0) {
+      await updateSyncCheckpoint('inbox_mails', new Date().toISOString());
+    }
 
+    return { updated: totalUpdated, deleted: 0 };
   } catch (error) {
     console.error('[DeltaSync] Failed to sync inbox mails:', error);
     throw error;

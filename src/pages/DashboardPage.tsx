@@ -182,7 +182,7 @@ const StatCard = memo(function StatCard({
 const DashboardPage: React.FC = () => {
   const { user, logout, getTabSessionInfo, clearTabValidation } = useAuth();
   const { theme, resolvedTheme } = useTheme();
-  const { emails, unreadCount, pingNewEmail } = useEmail();
+  const { emails, unreadCount, refreshEmails } = useEmail();
   const { syncState, isRealTimeActive, triggerSync, refreshConnection } = useSync();
   const navigate = useNavigate();
   
@@ -345,6 +345,31 @@ const DashboardPage: React.FC = () => {
     // No need to duplicate listeners here
   }, [unreadCount, emails.length]); // Re-run when email data changes
 
+  // Refresh emails from Dexie when the page gains focus (live update)
+  useEffect(() => {
+    // Refresh immediately on mount
+    refreshEmails();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refreshEmails();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [refreshEmails]);
+
+  // Refresh on WebSocket inbox events (new mail / sync complete)
+  useEffect(() => {
+    const handleInboxEvent = () => refreshEmails();
+    window.addEventListener('inbox:sync-complete', handleInboxEvent);
+    window.addEventListener('inbox:new-mail', handleInboxEvent);
+    return () => {
+      window.removeEventListener('inbox:sync-complete', handleInboxEvent);
+      window.removeEventListener('inbox:new-mail', handleInboxEvent);
+    };
+  }, [refreshEmails]);
+
   // Handle progress updates from fetchAll
   const handleFetchProgress = useCallback((progress: FetchProgress) => {
     setRefreshProgress(progress.message);
@@ -466,10 +491,6 @@ const DashboardPage: React.FC = () => {
       console.error('Error clearing tab validation states:', e);
     }
     window.location.reload();
-  };
-
-  const handlePingMail = () => {
-    pingNewEmail();
   };
 
   const statCards = [
@@ -698,7 +719,7 @@ const DashboardPage: React.FC = () => {
               </h2>
               <div className="flex items-center space-x-2">
                 <Link 
-                  to="/email" 
+                  to="/inbox" 
                   className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 text-sm flex items-center gap-1 transition-colors"
                 >
                   View all <Archive size={14} />
@@ -981,15 +1002,6 @@ const DashboardPage: React.FC = () => {
                 🛠️ Development Tools
               </h3>
               <div className="flex flex-wrap gap-3">
-                <Button
-                  onClick={handlePingMail}
-                  variant="outline"
-                  size="small"
-                  className="border-yellow-300 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300"
-                >
-                  <Mail className="w-4 h-4 mr-2" />
-                  Ping Mail
-                </Button>
                 <Button
                   onClick={handleDebugTabSession}
                   variant="outline"

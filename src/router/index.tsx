@@ -1,21 +1,24 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 // Remove BrowserRouter import, it's now in App.tsx
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 // ... other imports ...
-import LoginPage from '@/pages/LoginPage';
-import RegisterPage from '@/pages/RegisterPage';
-import ForgotPasswordPage from '@/pages/ForgotPasswordPage';
-import DashboardPage from '@/pages/DashboardPage';
-import ComposePage from '@/pages/ComposePage';
-import InboxPage from '@/pages/InboxPage';
-import SentPage from '@/pages/SentPage';
-import DraftsPage from '@/pages/DraftsPage';
-import SettingsPage from '@/pages/SettingsPage';
-import SearchPage from '@/pages/SearchPage';
-import EmailPage from '@/pages/EmailPage';
 import { useAuth } from '@/contexts/AuthContext';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import Layout from '@/components/layout/Layout';
+
+// Lazy-loaded page components for route-level code splitting
+// Each page becomes its own chunk, loaded on-demand
+const LoginPage = React.lazy(() => import('@/pages/LoginPage'));
+const RegisterPage = React.lazy(() => import('@/pages/RegisterPage'));
+const ForgotPasswordPage = React.lazy(() => import('@/pages/ForgotPasswordPage'));
+const DashboardPage = React.lazy(() => import('@/pages/DashboardPage'));
+const ComposePage = React.lazy(() => import('@/pages/ComposePage'));
+const InboxPage = React.lazy(() => import('@/pages/InboxPage'));
+const SentPage = React.lazy(() => import('@/pages/SentPage'));
+const DraftsPage = React.lazy(() => import('@/pages/DraftsPage'));
+const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'));
+const SearchPage = React.lazy(() => import('@/pages/SearchPage'));
+const EmailPage = React.lazy(() => import('@/pages/EmailPage'));
 
 // Placeholder for a component that requires authentication
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -66,6 +69,7 @@ const AppRouter: React.FC = () => {
 
   return (
     // Remove BrowserRouter from here
+    <Suspense fallback={<LoadingSpinner message="Loading page..." />}>
     <Routes>      {/* Public routes (Login, Register) */}
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
@@ -152,7 +156,7 @@ const AppRouter: React.FC = () => {
       {/* You might want to create a dedicated NotFoundPage component */}
       <Route path="*" element={<div>404 Not Found</div>} />
     </Routes>
-    // Remove BrowserRouter closing tag
+    </Suspense>
   );
 };
 

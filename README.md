@@ -47,16 +47,117 @@ MailVoyage is a modern, developer-friendly email client designed to simplify ema
 - **Dark Mode**: Enjoy a modern UI with light and dark theme support.
 
 ## Tech Stack
-- **Frontend**: React, TypeScript, TailwindCSS, Framer Motion
-- **Backend**: Node.js, Express, PostgreSQL
-- **Email Services**: Nodemailer, ImapFlow
-- **Validation**: Zod for schema validation
+- **Frontend**: React 19, TypeScript 5.9, TailwindCSS, Framer Motion, Dexie v4 (IndexedDB)
+- **Backend**: Node.js 20+, Express 5, PostgreSQL, Knex migrations
+- **Email Protocols**: IMAP (ImapFlow), POP3 (node-pop3), SMTP (Nodemailer)
+- **Validation**: Zod 4 for schema validation
+- **Real-time**: WebSocket (ws) for live sync
+- **Security**: AES-256-GCM client-side encryption (Web Crypto API), HttpOnly cookie JWT
 - **Deployment**: Vercel for serverless backend and frontend hosting
+
+---
+
+## Architecture
+
+### Inbox Data Flow
+
+```
+Mail Server (Gmail, Outlook, etc.)
+       │
+       ▼  (IMAP / POP3 — read-only fetch)
+  API Server (Express)
+       │
+       ├─► inbox_cache (PostgreSQL) ── server-side cache, latest N per account
+       │
+       ▼  (REST API response)
+  Frontend (React)
+       │
+       ▼  (AES-256-GCM encrypted)
+  IndexedDB (Dexie) ── local offline cache, latest N per account
+       │
+       ▼
+  UI Components (InboxPage, EmailPage, DashboardPage)
+```
+
+### Key Architectural Decisions
+
+| Decision | Rationale |
+|---|---|
+| **All operations are local-only** | Delete, archive, star, read/unread, and label changes only affect the local copy in IndexedDB and/or the server-side `inbox_cache`. They **never** modify or send commands back to the mail server. This protects the user's actual mailbox. |
+| **IMAP + POP3 support** | Both protocols are supported for fetching. IMAP provides richer metadata (read/unread flags, UIDs, multiple mailboxes). POP3 is supported as a fallback for providers that don't offer IMAP. |
+| **Cache limit rotation** | Both server-side (`inbox_cache` table) and client-side (IndexedDB) enforce a configurable cache limit (default 15). When new mails are synced, older mails beyond the limit are automatically pruned. |
+| **Client-side encryption** | Sensitive mail fields (from, subject, body) are encrypted with AES-256-GCM before storing in IndexedDB. The encryption key is derived per-session. |
+| **Minimal API calls** | Settings are cached in `localStorage` to avoid repeated API requests. The dashboard refreshes from local Dexie on focus/visibility change rather than hitting the API. |
+
+---
+
+## IMAP & POP3 Support
+
+### IMAP (recommended)
+- Full support for mailbox selection, UID-based incremental sync, read/unread flags
+- Supports **SSL**, **STARTTLS**, and **NONE** security modes
+- Pagination via sequence number ranges
+- TLS minimum version: 1.2
+
+### POP3
+- Fetches from the single POP3 inbox (no mailbox concept)
+- Uses `UIDL` for message listing, `RETR` for full message retrieval
+- Supports **SSL** and unencrypted connections
+- No read/unread flag support (POP3 protocol limitation — all fetched mails default to unread)
+- Pagination via message number ranges (newest first)
+
+### Configuration
+
+When adding an email account, set `incoming_type` to either `IMAP` or `POP3`:
+
+| Field | Description | Example |
+|---|---|---|
+| `incoming_type` | Protocol to use | `IMAP` or `POP3` |
+| `incoming_host` | Mail server hostname | `imap.gmail.com` or `pop.gmail.com` |
+| `incoming_port` | Server port | `993` (IMAP SSL), `995` (POP3 SSL), `143` (IMAP), `110` (POP3) |
+| `incoming_security` | Connection security | `SSL`, `STARTTLS`, or `NONE` |
+
+---
+
+## Local-Only Operations
+
+The following operations only affect the local copy of emails. They **do not** send any commands to the original mail server:
+
+| Operation | What happens locally |
+|---|---|
+| **Delete** | Removes the mail from IndexedDB (Dexie) |
+| **Archive** | Moves mail to `ARCHIVE` mailbox in Dexie, adds `archived` label, marks as read |
+| **Star / Unstar** | Toggles `isStarred` flag in Dexie |
+| **Mark Read / Unread** | Toggles `isRead` flag in Dexie |
+| **Labels** | Stored as a JSON array in the Dexie record |
+
+> **Important**: The original mail on the mail server remains completely untouched. These changes only persist in the local browser database and the server-side `inbox_cache`.
+
+---
+
+## Cache Management
+
+### Cache Limit
+
+The inbox cache limit controls how many emails are kept per email account:
+
+- **Default**: 15 emails per account
+- **Configurable**: 5–100 via Settings → Data Management
+- **Applies to both**: Server-side PostgreSQL cache and client-side IndexedDB
+- **Rotation**: When new mails are synced, the oldest mails beyond the limit are automatically deleted
+
+### How it works
+
+1. **Sync from server**: IMAP/POP3 fetch → save to `inbox_cache` table → trim to limit
+2. **Save to client**: API response → encrypt → save to IndexedDB → trim to limit
+3. **Settings cached**: The cache limit is stored in `localStorage` (`inbox_cache_limit`) to avoid repeated API calls
+
+---
 
 ## Installation
 
 ### Prerequisites
-- Node.js (v16 or higher)
+- Node.js (v20 or higher)
 - PostgreSQL (for local development)
 
 ### Steps
@@ -87,17 +188,93 @@ MailVoyage is optimized for serverless environments. To deploy on Vercel:
 2. Configure environment variables in the Vercel dashboard.
 3. Deploy the frontend and backend as separate projects or as a monorepo.
 
-## API Endpoints
-### Authentication
-- `POST /auth/register`: Register a new user.
-- `POST /auth/login`: Log in to the application.
-- `POST /auth/forgot-password`: Request a password reset.
-- More API Request like email-accounts, smtp-accounts, which embedded in mailvoyage
+---
 
-### Email Management
-- `POST /mail/send`: Send an email.
-- `GET /mail/fetch`: Fetch emails from a mailbox.
-- `POST /mail/config`: Configure mail server settings.
+## API Endpoints
+
+### Authentication
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/auth/register` | Register a new user |
+| `POST` | `/api/auth/login` | Log in |
+| `POST` | `/api/auth/logout` | Log out |
+| `POST` | `/api/auth/forgot-password` | Request password reset |
+| `GET`  | `/api/auth/ws-token` | Get WebSocket token |
+
+### Email Accounts
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET`  | `/api/email-accounts` | List all email accounts |
+| `POST` | `/api/email-accounts` | Add a new email account (IMAP or POP3) |
+| `PUT`  | `/api/email-accounts/:id` | Update an email account |
+| `DELETE` | `/api/email-accounts/:id` | Delete an email account |
+
+### Inbox (IMAP & POP3)
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET`  | `/api/inbox/cached` | Get cached mails from server DB (fast) |
+| `GET`  | `/api/inbox/fetch` | Fetch mails directly from mail server |
+| `POST` | `/api/inbox/sync` | Fetch from IMAP/POP3 + update server cache |
+| `GET`  | `/api/inbox/accounts` | List email accounts for dropdown |
+| `GET`  | `/api/inbox/settings` | Get inbox settings (cache limit) |
+| `PUT`  | `/api/inbox/settings` | Update inbox settings |
+
+### Sending
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/mail/send` | Send an email via SMTP |
+
+### Sent Mails
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET`  | `/api/sent-mails` | List sent mails (paginated) |
+| `GET`  | `/api/sent-mails/thread/:id` | Get a specific sent mail |
+
+---
+
+## Database Schema
+
+### Key Tables
+
+| Table | Purpose |
+|---|---|
+| `users` | User accounts (auto-incrementing integer ID) |
+| `email_accounts` | IMAP/POP3/SMTP configurations per user |
+| `inbox_cache` | Server-side cached inbox mails (latest N per account) |
+| `user_settings` | Per-user settings (cache limit, etc.) |
+| `smtp_accounts` | SMTP sending configurations |
+
+### Migrations
+
+Run migrations with:
+```bash
+cd api
+npm run migrate:latest
+```
+
+Rollback with:
+```bash
+npm run migrate:rollback
+```
+
+---
+
+## Client-Side Storage
+
+### IndexedDB (Dexie v4)
+
+| Store | Contents | Encrypted Fields |
+|---|---|---|
+| `inboxMails` | Inbox emails (synced from server) | fromAddress, fromName, subject, textBody, htmlBody |
+| `sentMails` | Sent mail records | — |
+| `drafts` | Local drafts | — |
+| `syncCheckpoints` | Last sync timestamps per table | — |
+| `pendingSync` | Offline operation queue | — |
+
+Encryption uses **AES-256-GCM** via the Web Crypto API. Keys are derived per browser session.
+
+---
+
 ## Development Focus
 
 We are currently prioritizing the implementation and refinement of key features to enhance the MailVoyage experience. Our main areas of focus include:

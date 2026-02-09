@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { logger } from '../utils/logger.js'; // Import logger
 // Update import to point to the standardized controller name
 import {
   register,
@@ -16,16 +15,6 @@ import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema 
 import { authenticateToken } from '../middlewares/auth.js'; // Assuming JWT middleware
 
 const router = Router();
-
-// Add global request logger for auth routes
-router.use((req, res, next) => {
-  logger.info(`Auth route accessed: ${req.method} ${req.path}`, {
-    cookies: req.cookies,
-    headers: req.headers,
-    query: req.query,
-  });
-  next();
-});
 
 router.post('/register', validateRequest({ body: registerSchema }), register);
 router.post('/login', validateRequest({ body: loginSchema }), login);

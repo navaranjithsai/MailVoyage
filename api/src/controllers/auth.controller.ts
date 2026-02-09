@@ -83,23 +83,15 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
 };
 
 export const validateToken = async (req: Request, res: Response, next: NextFunction) => {
-  logger.info('🔄 validateToken controller invoked.', { 
-    path: req.path,
-    method: req.method,
-    hasReqUser: !!req.user
-  });
-  
   // The authenticateToken middleware (which should have run before this)
   // populates req.user with { username, email } if the token is valid.
   if (req.user && req.user.email && req.user.username) {
-    logger.debug('✅ validateToken: req.user populated correctly.', { userFromToken: req.user });
     try {
       // Fetch the full user profile using email from the token.
-      logger.debug(`🔍 validateToken: Fetching user profile for email: ${req.user.email}`);
       const userProfile = await userService.getUserByEmail(req.user.email);
       
       if (!userProfile) {
-        logger.warn(`❌ validateToken: User from token not found in DB: ${req.user.email}`);
+        logger.warn(`validateToken: User not found in DB: ${req.user.email}`);
         res.cookie('authToken', '', { // Clear the now invalid cookie
           httpOnly: true,
           secure: config.nodeEnv === 'production',
@@ -110,17 +102,10 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
         return next(new AppError('Unauthorized: User not found', 401));
       }
 
-      // Additionally, verify that the username from the token matches the username from the DB for that email.
-      // This is an extra sanity check, though email is typically unique.
-      logger.debug('🔍 validateToken: Comparing username from token with DB.', { 
-        tokenUsername: req.user.username, 
-        dbUsername: userProfile.username,
-        match: userProfile.username === req.user.username
-      });
-      
+      // Verify that the username from the token matches the username from the DB
       if (userProfile.username !== req.user.username) {
-        logger.warn(`❌ validateToken: Username mismatch for email ${req.user.email}: token (${req.user.username}) vs DB (${userProfile.username})`);
-        res.cookie('authToken', '', { // Clear the potentially compromised/mismatched cookie
+        logger.warn(`validateToken: Username mismatch for ${req.user.email}: token=${req.user.username}, db=${userProfile.username}`);
+        res.cookie('authToken', '', {
           httpOnly: true,
           secure: config.nodeEnv === 'production',
           expires: new Date(0),
@@ -131,18 +116,13 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
       }
 
       // Token is valid, user exists in DB and matches token data.
-      // Send back the essential user details for the frontend state.
-      logger.info('✅ validateToken: Token validation successful. Sending user profile.');
       res.status(200).json({ 
         message: 'Token is valid', 
         user: { id: userProfile.id, username: userProfile.username, email: userProfile.email } 
       });
     } catch (error) {
-      logger.error('❌ validateToken: Error fetching user profile or during validation logic.', { 
-        error,
-        stack: error instanceof Error ? error.stack : 'No stack trace'
-      });
-      res.cookie('authToken', '', { // Clear cookie on any unexpected error
+      logger.error('validateToken: Error during validation', error);
+      res.cookie('authToken', '', {
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         expires: new Date(0),

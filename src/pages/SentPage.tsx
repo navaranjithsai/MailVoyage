@@ -1,18 +1,23 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { motion, easeOut } from 'framer-motion';
+import { motion, easeOut, AnimatePresence } from 'framer-motion';
 import { 
   Send, 
   Trash2, 
-  MoreHorizontal,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
   Mail,
-  AlertCircle
+  AlertCircle,
+  Paperclip,
+  X,
+  Forward,
+  Clock,
+  ChevronDown
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Button from '@/components/ui/Button';
-import { getSentMailsPaginated } from '@/lib/db';
+import ConfirmDialog from '@/components/common/ConfirmDialog';
+import { getSentMailsPaginated, deleteSentMails } from '@/lib/db';
 import { useSync } from '@/contexts/SyncContext';
 
 interface SentMail {
@@ -21,7 +26,14 @@ interface SentMail {
   fromEmail: string;
   toEmails: string[];
   subject: string;
+  htmlBody: string | null;
   textBody: string | null;
+  attachmentsMetadata: Array<{
+    filename: string;
+    contentType: string;
+    size: number;
+    content?: string;
+  }> | null;
   sentAt: string;
   status: 'pending' | 'sent' | 'failed';
 }
@@ -38,6 +50,13 @@ const SentPage: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const limit = 20;
+
+  // Expanded mail compact panel state
+  const [expandedMailId, setExpandedMailId] = useState<string | null>(null);
+
+  // Delete confirmation state
+  const [mailToDelete, setMailToDelete] = useState<SentMail | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // Track mount state
   const isMountedRef = useRef(true);
@@ -64,7 +83,14 @@ const SentPage: React.FC = () => {
         fromEmail: mail.fromEmail,
         toEmails: mail.toEmails,
         subject: mail.subject,
+        htmlBody: mail.htmlBody || null,
         textBody: mail.textBody || null,
+        attachmentsMetadata: mail.attachmentsMetadata?.map(a => ({
+          filename: a.filename,
+          contentType: a.contentType,
+          size: a.size,
+          content: a.content,
+        })) || null,
         sentAt: mail.sentAt,
         status: mail.status
       }));
@@ -128,8 +154,43 @@ const SentPage: React.FC = () => {
     }
   };
 
+  /** Navigate to full email view on row click */
   const handleMailClick = (mail: SentMail) => {
     navigate(`/email/${mail.threadId}?type=sent`);
+  };
+
+  /** Toggle expand panel on chevron click */
+  const handleToggleExpand = (e: React.MouseEvent, mailId: string) => {
+    e.stopPropagation();
+    setExpandedMailId(prev => (prev === mailId ? null : mailId));
+  };
+
+  /** Forward the mail */
+  const handleForward = (mail: SentMail) => {
+    navigate('/compose', {
+      state: {
+        type: 'forward',
+        originalEmail: {
+          subject: mail.subject,
+          content: mail.textBody || mail.htmlBody,
+        },
+      },
+    });
+  };
+
+  /** Delete a sent mail from local storage */
+  const handleDeleteMail = async (mail: SentMail) => {
+    setIsDeleting(true);
+    try {
+      await deleteSentMails([mail.id]);
+      setExpandedMailId(null);
+      setMailToDelete(null);
+      await loadSentMails(currentPage);
+    } catch (err) {
+      console.error('Error deleting sent mail:', err);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -153,6 +214,31 @@ const SentPage: React.FC = () => {
     if (toEmails.length === 0) return 'No recipients';
     if (toEmails.length === 1) return toEmails[0];
     return `${toEmails[0]} +${toEmails.length - 1} more`;
+  };
+
+  /** Full date format for the expanded detail panel */
+  const formatDateFull = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString([], {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  /** Get a plain-text preview snippet from either textBody or htmlBody */
+  const getPreviewText = (mail: SentMail): string => {
+    if (mail.textBody) return mail.textBody.substring(0, 150);
+    if (mail.htmlBody) {
+      // Strip HTML tags for preview
+      const div = document.createElement('div');
+      div.innerHTML = mail.htmlBody;
+      return (div.textContent || div.innerText || '').trim().substring(0, 150);
+    }
+    return '(No content)';
   };
 
   const pageVariants = {
@@ -309,83 +395,160 @@ const SentPage: React.FC = () => {
 
               {/* Email Rows */}
               {sentMails.map((mail, index) => (
-                <motion.div
-                  key={mail.id}
-                  variants={mailVariants}
-                  initial="initial"
-                  animate="animate"
-                  whileHover="hover"
-                  transition={{ delay: index * 0.03 }}
-                  className={`
-                    p-4 cursor-pointer group
-                    ${selectedMails.includes(mail.id) ? 'bg-blue-100 dark:bg-blue-900/20' : ''}
-                  `}
-                  onClick={() => handleMailClick(mail)}
-                >
-                  <div className="flex items-center space-x-4">
-                    <input
-                      type="checkbox"
-                      checked={selectedMails.includes(mail.id)}
-                      onChange={() => handleSelectMail(mail.id)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    
-                    <div className="flex-1 grid grid-cols-12 gap-4">
-                      {/* To */}
-                      <div className="col-span-3 flex items-center space-x-2">
-                        <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
-                          <Send className="w-4 h-4 text-green-600 dark:text-green-400" />
+                <React.Fragment key={mail.id}>
+                  <motion.div
+                    variants={mailVariants}
+                    initial="initial"
+                    animate="animate"
+                    whileHover="hover"
+                    transition={{ delay: index * 0.03 }}
+                    className={`
+                      p-4 cursor-pointer group transition-colors duration-150
+                      ${expandedMailId === mail.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500' : ''}
+                      ${selectedMails.includes(mail.id) ? 'bg-blue-100 dark:bg-blue-900/20' : ''}
+                    `}
+                    onClick={() => handleMailClick(mail)}
+                  >
+                    <div className="flex items-center space-x-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedMails.includes(mail.id)}
+                        onChange={() => handleSelectMail(mail.id)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      
+                      <div className="flex-1 grid grid-cols-12 gap-4">
+                        {/* To */}
+                        <div className="col-span-3 flex items-center space-x-2">
+                          <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                            <Send className="w-4 h-4 text-green-600 dark:text-green-400" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                              {formatRecipients(mail.toEmails)}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                              From: {mail.fromEmail}
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                            {formatRecipients(mail.toEmails)}
-                          </p>
+
+                        {/* Subject and Preview */}
+                        <div className="col-span-6 min-w-0">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                              {mail.subject || '(No Subject)'}
+                            </p>
+                            {mail.status === 'failed' && (
+                              <span className="px-2 py-0.5 text-xs bg-red-100 text-red-600 rounded-full">
+                                Failed
+                              </span>
+                            )}
+                            {mail.attachmentsMetadata && mail.attachmentsMetadata.length > 0 && (
+                              <span className="flex items-center gap-1 text-xs text-gray-400">
+                                <Paperclip className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span>{mail.attachmentsMetadata.length}</span>
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            From: {mail.fromEmail}
+                            {getPreviewText(mail)}
                           </p>
                         </div>
-                      </div>
 
-                      {/* Subject and Preview */}
-                      <div className="col-span-6 min-w-0">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                            {mail.subject || '(No Subject)'}
+                        {/* Time */}
+                        <div className="col-span-2 flex items-center">
+                          <p className="text-sm text-gray-500 dark:text-gray-400">
+                            {formatDate(mail.sentAt)}
                           </p>
-                          {mail.status === 'failed' && (
-                            <span className="px-2 py-0.5 text-xs bg-red-100 text-red-600 rounded-full">
-                              Failed
-                            </span>
-                          )}
                         </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                          {mail.textBody || '(No content)'}
-                        </p>
-                      </div>
 
-                      {/* Time */}
-                      <div className="col-span-2 flex items-center">
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {formatDate(mail.sentAt)}
-                        </p>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="col-span-1 flex items-center justify-end">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Show more options
-                          }}
-                          className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <MoreHorizontal className="w-4 h-4 text-gray-400" />
-                        </button>
+                        {/* Expand toggle */}
+                        <div className="col-span-1 flex items-center justify-end">
+                          <button
+                            onClick={(e) => handleToggleExpand(e, mail.id)}
+                            className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                            title={expandedMailId === mail.id ? 'Collapse' : 'Expand'}
+                          >
+                            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${expandedMailId === mail.id ? 'rotate-180' : ''}`} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </motion.div>
+                  </motion.div>
+
+                  {/* Compact Expanded Info Panel */}
+                  <AnimatePresence>
+                    {expandedMailId === mail.id && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: easeOut }}
+                        className="overflow-hidden border-l-4 border-l-blue-500 bg-gray-50 dark:bg-gray-900/50"
+                      >
+                        <div className="px-6 py-4">
+                          <div className="flex items-center justify-between">
+                            {/* Left: Sent label + metadata */}
+                            <div className="flex items-center gap-4 min-w-0 flex-1">
+                              <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-medium flex-shrink-0">
+                                <Send size={12} className="mr-1" />
+                                Sent
+                              </div>
+                              {mail.status === 'failed' && (
+                                <span className="px-2.5 py-0.5 text-xs bg-red-100 text-red-600 rounded-full font-medium flex-shrink-0">
+                                  Failed
+                                </span>
+                              )}
+                              <div className="text-sm text-gray-600 dark:text-gray-400 min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                  <span className="truncate">
+                                    <span className="text-gray-500 font-medium">From:</span> {mail.fromEmail}
+                                  </span>
+                                  <span className="truncate">
+                                    <span className="text-gray-500 font-medium">To:</span> {mail.toEmails.join(', ')}
+                                  </span>
+                                  <span className="flex items-center gap-1 flex-shrink-0">
+                                    <Clock size={13} className="text-gray-400" />
+                                    {formatDateFull(mail.sentAt)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Right: Action buttons */}
+                            <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                              <Button
+                                variant="outline"
+                                size="small"
+                                onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleForward(mail); }}
+                                className="flex items-center gap-1 text-xs"
+                              >
+                                <Forward size={14} />
+                                Forward
+                              </Button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setMailToDelete(mail); }}
+                                className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setExpandedMailId(null); }}
+                                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                                title="Close"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </React.Fragment>
               ))}
             </div>
 
@@ -421,6 +584,17 @@ const SentPage: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!mailToDelete}
+        onCancel={() => setMailToDelete(null)}
+        onConfirm={() => mailToDelete && handleDeleteMail(mailToDelete)}
+        title="Delete Sent Mail"
+        message={`Are you sure you want to delete "${mailToDelete?.subject || '(No Subject)'}"? This will remove it from your local storage.`}
+        confirmLabel={isDeleting ? 'Deleting...' : 'Delete'}
+        variant="danger"
+      />
     </motion.div>
   );
 };

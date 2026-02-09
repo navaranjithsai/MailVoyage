@@ -320,14 +320,13 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       }
     }
     
-    // Debug mode in development
+    // Debug mode in development (only log warnings and errors from SMTP)
     if (process.env.NODE_ENV !== 'production') {
-      transportConfig.debug = true;
       transportConfig.logger = {
-        debug: (msg: string) => logger.debug(`[SMTP Debug] ${msg}`),
-        info: (msg: string) => logger.info(`[SMTP Info] ${msg}`),
-        warn: (msg: string) => logger.warn(`[SMTP Warn] ${msg}`),
-        error: (msg: string) => logger.error(`[SMTP Error] ${msg}`),
+        debug: () => {},  // Suppress SMTP debug noise
+        info: () => {},   // Suppress SMTP info noise
+        warn: (msg: any) => logger.warn(`[SMTP] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`),
+        error: (msg: any) => logger.error(`[SMTP] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`),
       };
     }
     
@@ -471,10 +470,21 @@ export interface SentMailListItem {
   threadId: string;
   fromEmail: string;
   toEmails: string[];
+  cc: string[] | null;
+  bcc: string[] | null;
   subject: string;
+  htmlBody: string | null;
   textBody: string | null;
+  attachmentsMetadata: Array<{
+    filename: string;
+    contentType: string;
+    size: number;
+    content?: string;
+  }> | null;
+  messageId: string | null;
   sentAt: Date;
   status: 'pending' | 'sent' | 'failed';
+  createdAt: Date;
 }
 
 export interface SentMailDetail {
@@ -509,40 +519,59 @@ export interface PaginatedSentMails {
 
 /**
  * Get paginated list of sent mails for a user
+ * Supports delta sync via optional `since` timestamp filter
  */
 export const getSentMailsByUserId = async (
   userId: number,
   page: number = 1,
-  limit: number = 20
+  limit: number = 20,
+  since?: string
 ): Promise<PaginatedSentMails> => {
   const client = await pool.connect();
   
   try {
     const offset = (page - 1) * limit;
     
+    // Build WHERE clause with optional since filter for delta sync
+    const conditions = ['user_id = $1'];
+    const params: any[] = [userId];
+    
+    if (since) {
+      conditions.push(`(sent_at > $${params.length + 1} OR created_at > $${params.length + 1})`);
+      params.push(since);
+    }
+    
+    const whereClause = conditions.join(' AND ');
+    
     // Get total count
     const countResult = await client.query(
-      'SELECT COUNT(*) as total FROM sent_mails WHERE user_id = $1',
-      [userId]
+      `SELECT COUNT(*) as total FROM sent_mails WHERE ${whereClause}`,
+      params
     );
     const total = parseInt(countResult.rows[0].total, 10);
     
-    // Get paginated results
+    // Get paginated results with full data for delta sync
     const result = await client.query(
       `SELECT 
         id,
         thread_id,
         from_email,
         to_emails,
+        cc_emails,
+        bcc_emails,
         subject,
+        html_body,
         text_body,
+        attachments,
+        message_id,
         sent_at,
-        status
+        status,
+        created_at
       FROM sent_mails 
-      WHERE user_id = $1 
+      WHERE ${whereClause}
       ORDER BY sent_at DESC 
-      LIMIT $2 OFFSET $3`,
-      [userId, limit, offset]
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
     );
     
     const mails: SentMailListItem[] = result.rows.map(row => ({
@@ -550,10 +579,16 @@ export const getSentMailsByUserId = async (
       threadId: row.thread_id,
       fromEmail: row.from_email,
       toEmails: row.to_emails || [],
+      cc: row.cc_emails || null,
+      bcc: row.bcc_emails || null,
       subject: row.subject || '(No Subject)',
-      textBody: row.text_body ? row.text_body.substring(0, 150) : null,
+      htmlBody: row.html_body || null,
+      textBody: row.text_body || null,
+      attachmentsMetadata: row.attachments || null,
+      messageId: row.message_id || null,
       sentAt: row.sent_at,
       status: row.status,
+      createdAt: row.created_at,
     }));
     
     return {

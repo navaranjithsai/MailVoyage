@@ -280,33 +280,87 @@ export async function getSentMailsPaginated(
 // Inbox Mails Helpers
 // ============================================================================
 
+/** Fields encrypted at rest in IndexedDB */
+const ENCRYPTED_MAIL_FIELDS: (keyof InboxMailRecord)[] = [
+  'fromAddress', 'fromName', 'subject', 'textBody', 'htmlBody',
+];
+
 /**
- * Bulk upsert inbox mails
+ * Bulk upsert inbox mails (encrypts sensitive fields before storing)
  */
 export async function upsertInboxMails(mails: InboxMailRecord[]): Promise<void> {
   if (mails.length === 0) return;
-  await db.inboxMails.bulkPut(mails);
+  const { encryptMailRecord } = await import('./crypto');
+  const encrypted = await Promise.all(
+    mails.map(m => encryptMailRecord(m, ENCRYPTED_MAIL_FIELDS))
+  );
+  await db.inboxMails.bulkPut(encrypted);
 }
 
 /**
- * Get inbox mails for a specific account and mailbox
+ * Decrypt a single inbox mail record after reading from IndexedDB
+ */
+async function decryptInboxMail(mail: InboxMailRecord): Promise<InboxMailRecord> {
+  const { decryptMailRecord } = await import('./crypto');
+  return decryptMailRecord(mail, ENCRYPTED_MAIL_FIELDS);
+}
+
+/**
+ * Get inbox mails for a specific account and mailbox (decrypted)
  */
 export async function getInboxMails(
   accountId: string,
   mailbox: string = 'INBOX'
 ): Promise<InboxMailRecord[]> {
-  return db.inboxMails
+  const mails = await db.inboxMails
     .where('[accountId+mailbox]')
     .equals([accountId, mailbox])
     .reverse()
     .sortBy('date');
+  return Promise.all(mails.map(decryptInboxMail));
 }
 
 /**
- * Get all inbox mails
+ * Get inbox mails for a specific account with pagination (decrypted)
+ */
+export async function getInboxMailsPaginated(
+  accountId: string,
+  page: number = 1,
+  limit: number = 20,
+  mailbox: string = 'INBOX'
+): Promise<{ mails: InboxMailRecord[]; total: number; page: number; totalPages: number }> {
+  const allMails = await db.inboxMails
+    .where('[accountId+mailbox]')
+    .equals([accountId, mailbox])
+    .reverse()
+    .sortBy('date');
+  
+  const total = allMails.length;
+  const totalPages = Math.ceil(total / limit);
+  const offset = (page - 1) * limit;
+  const paginated = allMails.slice(offset, offset + limit);
+  const decrypted = await Promise.all(paginated.map(decryptInboxMail));
+  
+  return { mails: decrypted, total, page, totalPages };
+}
+
+/**
+ * Get all inbox mails (decrypted), excluding archived
  */
 export async function getAllInboxMails(): Promise<InboxMailRecord[]> {
-  return db.inboxMails.orderBy('date').reverse().toArray();
+  const mails = await db.inboxMails.orderBy('date').reverse().toArray();
+  const decrypted = await Promise.all(mails.map(decryptInboxMail));
+  // Filter out archived mails from the main inbox view
+  return decrypted.filter(m => m.mailbox !== 'ARCHIVE');
+}
+
+/**
+ * Get a single inbox mail by ID (decrypted)
+ */
+export async function getInboxMailById(id: string): Promise<InboxMailRecord | undefined> {
+  const mail = await db.inboxMails.get(id);
+  if (!mail) return undefined;
+  return decryptInboxMail(mail);
 }
 
 /**
@@ -337,7 +391,7 @@ export async function deleteInboxMails(ids: string[]): Promise<void> {
 }
 
 /**
- * Get unread count
+ * Get unread count (reads flags only, no decryption needed)
  */
 export async function getUnreadCount(accountId?: string): Promise<number> {
   if (accountId) {
@@ -348,6 +402,107 @@ export async function getUnreadCount(accountId?: string): Promise<number> {
       .count();
   }
   return db.inboxMails.filter(mail => !mail.isRead).count();
+}
+
+/**
+ * Get total inbox count for an account
+ */
+export async function getInboxCount(accountId?: string): Promise<number> {
+  if (accountId) {
+    return db.inboxMails.where('accountId').equals(accountId).count();
+  }
+  return db.inboxMails.count();
+}
+
+/**
+ * Search inbox mails locally (decrypts and searches)
+ */
+export async function searchInboxMails(
+  query: string,
+  accountId?: string
+): Promise<InboxMailRecord[]> {
+  const lowerQuery = query.toLowerCase();
+  let mails: InboxMailRecord[];
+
+  if (accountId) {
+    mails = await db.inboxMails.where('accountId').equals(accountId).toArray();
+  } else {
+    mails = await db.inboxMails.toArray();
+  }
+
+  // Decrypt all mails for search
+  const decrypted = await Promise.all(mails.map(decryptInboxMail));
+
+  return decrypted.filter(mail => {
+    return (
+      mail.subject.toLowerCase().includes(lowerQuery) ||
+      mail.fromAddress.toLowerCase().includes(lowerQuery) ||
+      (mail.fromName && mail.fromName.toLowerCase().includes(lowerQuery)) ||
+      mail.toAddresses.some(addr => addr.toLowerCase().includes(lowerQuery)) ||
+      (mail.textBody && mail.textBody.toLowerCase().includes(lowerQuery))
+    );
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+/**
+ * Get highest UID stored for an account+mailbox (for incremental IMAP sync).
+ * For POP3 accounts, the UIDs are hashed from UIDL strings — they are stable
+ * but not sequential, so this value cannot be used as a "since" marker for
+ * incremental POP3 fetch (POP3 doesn't support incremental sync anyway).
+ */
+export async function getHighestUid(accountId: string, mailbox: string = 'INBOX'): Promise<number> {
+  const mails = await db.inboxMails
+    .where('[accountId+mailbox]')
+    .equals([accountId, mailbox])
+    .toArray();
+  
+  if (mails.length === 0) return 0;
+  return Math.max(...mails.map(m => m.uid));
+}
+
+/**
+ * Clear inbox mails for a specific account
+ */
+export async function clearAccountInbox(accountId: string): Promise<void> {
+  const ids = await db.inboxMails
+    .where('accountId')
+    .equals(accountId)
+    .primaryKeys();
+  await db.inboxMails.bulkDelete(ids as string[]);
+}
+
+/**
+ * Archive an inbox mail locally (adds 'archived' label, marks read).
+ * This only affects the local Dexie copy — never touches the mail server.
+ */
+export async function archiveInboxMail(id: string): Promise<void> {
+  const mail = await db.inboxMails.get(id);
+  if (!mail) return;
+  const labels = Array.isArray(mail.labels) ? [...mail.labels] : [];
+  if (!labels.includes('archived')) labels.push('archived');
+  await db.inboxMails.update(id, {
+    labels,
+    isRead: true,
+    mailbox: 'ARCHIVE',
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Trim inbox mails to keep only the latest N per account (for cache limit enforcement).
+ */
+export async function trimInboxToLimit(accountId: string, limit: number): Promise<number> {
+  const mails = await db.inboxMails
+    .where('accountId')
+    .equals(accountId)
+    .reverse()
+    .sortBy('date');
+
+  if (mails.length <= limit) return 0;
+
+  const toDelete = mails.slice(limit).map(m => m.id);
+  await db.inboxMails.bulkDelete(toDelete);
+  return toDelete.length;
 }
 
 // ============================================================================

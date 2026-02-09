@@ -42,7 +42,7 @@ export const getEmailAccounts = async (req: Request, res: Response) => {
 export const getEmailAccount = async (req: Request, res: Response) => {
   try {
     const user = getAuthenticatedUser(req);
-    const accountId = req.params.id;
+    const accountId = String(req.params.id);
     
     const account = await emailAccountsService.getEmailAccountById(accountId, user.id);
     
@@ -92,7 +92,7 @@ export const addEmailAccount = async (req: Request, res: Response) => {
 export const updateEmailAccount = async (req: Request, res: Response) => {
   try {
     const user = getAuthenticatedUser(req);
-    const accountId = req.params.id;
+    const accountId = String(req.params.id);
     
     const updatedAccount = await emailAccountsService.updateEmailAccount(accountId, user.id, req.body);
     
@@ -121,7 +121,7 @@ export const updateEmailAccount = async (req: Request, res: Response) => {
 export const deleteEmailAccount = async (req: Request, res: Response) => {
   try {
     const user = getAuthenticatedUser(req);
-    const accountId = req.params.id;
+    const accountId = String(req.params.id);
     
     const deleted = await emailAccountsService.deleteEmailAccount(accountId, user.id);
     
@@ -139,7 +139,7 @@ export const deleteEmailAccount = async (req: Request, res: Response) => {
 // Get autoconfig settings for a domain
 export const getAutoConfig = async (req: Request, res: Response) => {
   try {
-    const domain = req.params.domain;
+    const domain = String(req.params.domain);
     const email = req.query.email as string | undefined;
     const config = await emailAccountsService.getAutoConfigForDomain(domain, email);
     
@@ -158,7 +158,7 @@ export const getAutoConfig = async (req: Request, res: Response) => {
 export const testEmailAccount = async (req: Request, res: Response) => {
   try {
     const user = getAuthenticatedUser(req);
-    const accountId = req.params.id;
+    const accountId = String(req.params.id);
     
     const testResult = await emailAccountsService.testEmailAccountConnection(accountId, user.id);
     
