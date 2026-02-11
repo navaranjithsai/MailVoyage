@@ -114,12 +114,22 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
       return;
     }
 
+    // Use AbortController-style flag so async work aborts if cleanup runs
+    // (logout or StrictMode teardown) before the async init completes.
+    let cancelled = false;
+
     const initializeSync = async () => {
       initializingRef.current = true;
 
       try {
         console.info('[SyncContext] Fetching WebSocket token...');
         const token = await fetchWebSocketToken();
+
+        // If auth was revoked while we were fetching, abort
+        if (cancelled) {
+          initializingRef.current = false;
+          return;
+        }
         
         if (token) {
           console.info('[SyncContext] WebSocket token obtained, initializing delta sync');
@@ -135,6 +145,10 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     };
 
     initializeSync();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated, fetchWebSocketToken]);
 
   // Manual sync trigger

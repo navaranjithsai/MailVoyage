@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, memo, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, memo, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
@@ -17,7 +17,6 @@ import {
   WifiOff,
   Clock,
   Star,
-  Trash2,
   Calendar,
   AlertCircle,
   Radio
@@ -31,12 +30,12 @@ import EmailList from '@/components/email/EmailList';
 import SearchBar from '@/components/email/SearchBar';
 import { toast } from '@/lib/toast';
 import { fetchAll, fetchDraftsCount, type FetchProgress } from '@/lib/dataSync';
+import { getStorageBreakdown, getSentMailsCount } from '@/lib/db';
 import { SectionErrorBoundary } from '@/components/ErrorBoundary';
 import { OfflineIndicator } from '@/components/OfflineQueueManager';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/hooks/usePullToRefresh';
 // Service worker utilities available via lib/serviceWorker.ts
 
-// Mock data for email statistics - replace with actual API calls
 interface EmailStats {
   unread: number;
   total: number;
@@ -46,9 +45,11 @@ interface EmailStats {
 
 // Storage and sync status interfaces
 interface StorageInfo {
-  used: number; // in MB
-  total: number; // in MB
+  used: number; // total in bytes
+  total: number; // browser quota in bytes
   percentage: number;
+  indexedDb: { bytes: number; tables: Record<string, { count: number; bytes: number }> };
+  localStorage: { bytes: number; keys: number };
 }
 
 interface SyncStatus {
@@ -179,6 +180,15 @@ const StatCard = memo(function StatCard({
   );
 });
 
+// Format bytes to human-readable string
+const formatBytes = (bytes: number): string => {
+  if (bytes === 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+};
+
 const DashboardPage: React.FC = () => {
   const { user, logout, getTabSessionInfo, clearTabValidation } = useAuth();
   const { theme, resolvedTheme } = useTheme();
@@ -189,15 +199,36 @@ const DashboardPage: React.FC = () => {
   const [emailStats, setEmailStats] = useState<EmailStats>({
     unread: unreadCount,
     total: emails.length,
-    sent: 0, // This would come from a different context/API in real app
-    drafts: 0 // This would come from a different context/API in real app
+    sent: 0,
+    drafts: 0,
   });
   const [storageInfo, setStorageInfo] = useState<StorageInfo>({
     used: 0,
     total: 1000,
-    percentage: 0
+    percentage: 0,
+    indexedDb: { bytes: 0, tables: {} },
+    localStorage: { bytes: 0, keys: 0 },
   });
-  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
+  // Derive recent activity from live email list — updates instantly on read/star changes
+  const recentActivity: RecentActivity[] = useMemo(() => {
+    const sorted = [...emails]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 5);
+    return sorted.map((email, idx) => ({
+      id: idx + 1,
+      type: email.isStarred ? 'starred' as const : 'received' as const,
+      description: `${email.isRead ? '' : '(New) '}${email.sender}: ${email.subject}`,
+      timestamp: email.time,
+      icon: email.isStarred
+        ? <Star size={16} className="text-yellow-500" />
+        : email.isRead
+          ? <Mail size={16} className="text-gray-400" />
+          : <Mail size={16} className="text-blue-500" />,
+    }));
+  }, [emails]);
+
+  // Starred count derived from emails
+  const starredCount = useMemo(() => emails.filter(e => e.isStarred).length, [emails]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<string>('');
@@ -269,68 +300,47 @@ const DashboardPage: React.FC = () => {
     const loadDashboardData = async () => {
       setIsLoading(true);
       try {
-        // Fetch real drafts count from IndexedDB
-        const draftsCount = await fetchDraftsCount();
+        // Fetch real counts from IndexedDB
+        const [draftsCount, sentCount] = await Promise.all([
+          fetchDraftsCount(),
+          getSentMailsCount(),
+        ]);
         
         // Update with real email data
         setEmailStats({
           unread: unreadCount,
           total: emails.length,
-          sent: 0, // Will be updated on manual refresh
+          sent: sentCount,
           drafts: draftsCount
         });
 
-        // Calculate real storage usage
-        if ('storage' in navigator && 'estimate' in navigator.storage) {
-          try {
+        // Calculate detailed storage breakdown (IndexedDB + localStorage)
+        try {
+          const breakdown = await getStorageBreakdown();
+          const totalUsed = breakdown.indexedDb.bytes + breakdown.localStorage.bytes;
+
+          // Also get browser quota for the overall bar
+          let quotaBytes = 100 * 1024 * 1024; // default 100 MB
+          if ('storage' in navigator && 'estimate' in navigator.storage) {
             const estimate = await navigator.storage.estimate();
-            const usedMB = Math.round((estimate.usage || 0) / (1024 * 1024));
-            const totalMB = Math.round((estimate.quota || 0) / (1024 * 1024));
-            const percentage = totalMB > 0 ? (usedMB / totalMB) * 100 : 0;
-            
-            setStorageInfo({
-              used: usedMB,
-              total: Math.min(totalMB, 1000), // Cap display at 1GB for readability
-              percentage: Math.min(percentage, 100)
-            });
-          } catch (storageError) {
-            console.warn('Could not estimate storage:', storageError);
+            quotaBytes = estimate.quota || quotaBytes;
           }
+
+          const percentage = quotaBytes > 0 ? (totalUsed / quotaBytes) * 100 : 0;
+
+          setStorageInfo({
+            used: totalUsed,
+            total: quotaBytes,
+            percentage: Math.min(percentage, 100),
+            indexedDb: breakdown.indexedDb,
+            localStorage: breakdown.localStorage,
+          });
+        } catch (storageError) {
+          console.warn('Could not estimate storage:', storageError);
         }
 
-        // Sync status is now derived from context via useMemo, no need to set it here
-
-        // TODO: Replace with real activity from API or local activity log
-        setRecentActivity([
-          {
-            id: 1,
-            type: 'received',
-            description: 'New email from GitHub Notifications',
-            timestamp: '2 min ago',
-            icon: <Mail size={16} className="text-blue-500" />
-          },
-          {
-            id: 2,
-            type: 'sent',
-            description: 'Email sent to team@company.com',
-            timestamp: '15 min ago',
-            icon: <Send size={16} className="text-green-500" />
-          },
-          {
-            id: 3,
-            type: 'starred',
-            description: 'Starred important meeting notes',
-            timestamp: '1 hour ago',
-            icon: <Star size={16} className="text-yellow-500" />
-          },
-          {
-            id: 4,
-            type: 'deleted',
-            description: 'Cleaned up old promotional emails',
-            timestamp: '2 hours ago',
-            icon: <Trash2 size={16} className="text-red-500" />
-          }
-        ]);
+        // Sync status derived from context via useMemo
+        // Recent activity derived from emails via useMemo
       } catch (error) {
         console.error('Error loading dashboard data:', error);
         toast.error('Failed to load dashboard data');
@@ -346,10 +356,10 @@ const DashboardPage: React.FC = () => {
   }, [unreadCount, emails.length]); // Re-run when email data changes
 
   // Refresh emails from Dexie when the page gains focus (live update)
+  // NOTE: No mount-time refresh here — the auto-sync effect (handleRefresh)
+  // already calls refreshEmails() after fetchAll completes, so calling it here
+  // too creates a race where two loadEmails() run concurrently.
   useEffect(() => {
-    // Refresh immediately on mount
-    refreshEmails();
-
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         refreshEmails();
@@ -381,45 +391,57 @@ const DashboardPage: React.FC = () => {
     setRefreshProgress('Starting sync...');
     
     try {
-      // Call the actual API sync function
+      // Full sync: accounts → inbox + sent + settings (parallel)
       const results = await fetchAll(handleFetchProgress, {
         fetchAccounts: true,
         fetchInbox: true,
         fetchSent: true,
-        invalidateCache: true
+        fetchSettings: true,
+        invalidateCache: false
       });
+
+      // Immediately refresh EmailContext so UI renders new data
+      await refreshEmails();
       
-      // Update email stats based on results
-      const newStats = { ...emailStats };
+      // Update email stats from fresh Dexie data
+      const [sentCount, draftsCount] = await Promise.all([
+        getSentMailsCount(),
+        fetchDraftsCount(),
+      ]);
+
+      setEmailStats(prev => ({
+        ...prev,
+        sent: sentCount,
+        total: results.inbox.success && results.inbox.data ? results.inbox.data.total : prev.total,
+        drafts: draftsCount,
+        unread: unreadCount,
+      }));
       
-      if (results.sentMails.success && results.sentMails.data) {
-        newStats.sent = results.sentMails.data.total;
-      }
-      
-      if (results.inbox.success && results.inbox.data) {
-        newStats.total = results.inbox.data.total;
-      }
-      
-      // Update drafts count from local storage
-      newStats.drafts = results.draftsCount;
-      newStats.unread = unreadCount;
-      
-      setEmailStats(newStats);
-      
-      // Sync status is now managed by deltaSyncManager via SyncContext
-      // Manual sync triggers deltaSyncManager.triggerDeltaSync() which updates lastSync on success
+      // Refresh storage breakdown after sync
+      try {
+        const breakdown = await getStorageBreakdown();
+        const totalUsed = breakdown.indexedDb.bytes + breakdown.localStorage.bytes;
+        setStorageInfo(prev => ({
+          ...prev,
+          used: totalUsed,
+          indexedDb: breakdown.indexedDb,
+          localStorage: breakdown.localStorage,
+          percentage: prev.total > 0 ? Math.min((totalUsed / prev.total) * 100, 100) : 0,
+        }));
+      } catch { /* ignore */ }
       
       // Show success/partial success message
       const successCount = [
         results.emailAccounts.success,
+        results.inbox.success,
         results.sentMails.success,
-        results.inbox.success
+        results.settings.success
       ].filter(Boolean).length;
       
-      if (successCount === 3) {
-        toast.success('Dashboard synced successfully');
+      if (successCount === 4) {
+        toast.success('All data synced successfully');
       } else if (successCount > 0) {
-        toast.info(`Partial sync complete (${successCount}/3 succeeded)`);
+        toast.info(`Partial sync complete (${successCount}/4 succeeded)`);
       } else {
         toast.error('Sync failed - please try again');
       }
@@ -431,7 +453,17 @@ const DashboardPage: React.FC = () => {
       setIsRefreshing(false);
       setRefreshProgress('');
     }
-  }, [handleFetchProgress, emailStats, unreadCount]);
+  }, [handleFetchProgress, unreadCount, refreshEmails]);
+
+  // Auto-trigger full sync on first load (e.g. after login)
+  const hasAutoSynced = useRef(false);
+  useEffect(() => {
+    if (!hasAutoSynced.current && user) {
+      hasAutoSynced.current = true;
+      // Call directly — no setTimeout to avoid StrictMode cleanup cancellation
+      handleRefresh();
+    }
+  }, [user, handleRefresh]);
 
   // Pull-to-refresh functionality for mobile
   const {
@@ -758,10 +790,10 @@ const DashboardPage: React.FC = () => {
                   Storage Usage
                 </h3>
                 <span className="text-sm text-gray-500 dark:text-gray-400">
-                  {storageInfo.used} MB / {storageInfo.total} MB
+                  {formatBytes(storageInfo.used)} / {formatBytes(storageInfo.total)}
                 </span>
               </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-2">
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-3">
                 <motion.div
                   initial={{ width: 0 }}
                   animate={{ width: `${storageInfo.percentage}%` }}
@@ -775,15 +807,48 @@ const DashboardPage: React.FC = () => {
                   }`}
                 ></motion.div>
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                {storageInfo.percentage.toFixed(1)}% used
-                {storageInfo.percentage > 80 && (
-                  <span className="ml-2 text-red-500 dark:text-red-400 flex items-center gap-1">
-                    <AlertCircle size={14} />
-                    Storage almost full
+
+              {/* Breakdown labels */}
+              <div className="space-y-2 mt-3 border-t border-gray-100 dark:border-gray-700 pt-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
+                    IndexedDB (Emails & Drafts)
                   </span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {formatBytes(storageInfo.indexedDb.bytes)}
+                  </span>
+                </div>
+                {/* Table sub-breakdown */}
+                {Object.keys(storageInfo.indexedDb.tables).length > 0 && (
+                  <div className="ml-5 space-y-0.5">
+                    {Object.entries(storageInfo.indexedDb.tables)
+                      .filter(([, t]) => t.count > 0)
+                      .map(([name, t]) => (
+                        <div key={name} className="flex justify-between text-xs text-gray-500 dark:text-gray-500">
+                          <span>{name} ({t.count})</span>
+                          <span>{formatBytes(t.bytes)}</span>
+                        </div>
+                      ))}
+                  </div>
                 )}
-              </p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+                    LocalStorage (Settings & Accounts)
+                  </span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">
+                    {formatBytes(storageInfo.localStorage.bytes)}
+                  </span>
+                </div>
+              </div>
+
+              {storageInfo.percentage > 80 && (
+                <p className="text-sm text-red-500 dark:text-red-400 flex items-center gap-1 mt-2">
+                  <AlertCircle size={14} />
+                  Storage almost full
+                </p>
+              )}
             </motion.div>
 
             {/* Sync Status */}
@@ -912,7 +977,11 @@ const DashboardPage: React.FC = () => {
               Recent Activity
             </h3>
             <div className="space-y-3">
-              {recentActivity.map((activity, index) => (
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                  No recent activity. Sync your inbox to see updates here.
+                </p>
+              ) : recentActivity.map((activity, index) => (
                 <motion.div
                   key={activity.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -936,10 +1005,10 @@ const DashboardPage: React.FC = () => {
             </div>
             <div className="mt-4 text-center">
               <Link
-                to="/activity"
+                to="/inbox"
                 className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 text-sm flex items-center justify-center gap-1 transition-colors"
               >
-                View all activity <Calendar size={14} />
+                View all in Inbox <Calendar size={14} />
               </Link>
             </div>          </motion.div>
         </section>
@@ -956,33 +1025,35 @@ const DashboardPage: React.FC = () => {
               <Folder size={20} className="text-amber-600 dark:text-amber-400" />
               Quick Folder Access
             </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {[
-                { name: 'Inbox', count: emailStats.unread, bgColor: 'bg-blue-500', hoverColor: 'group-hover:bg-blue-600' },
-                { name: 'Sent', count: emailStats.sent, bgColor: 'bg-green-500', hoverColor: 'group-hover:bg-green-600' },
-                { name: 'Drafts', count: emailStats.drafts, bgColor: 'bg-orange-500', hoverColor: 'group-hover:bg-orange-600' },
-                { name: 'Starred', count: 8, bgColor: 'bg-yellow-500', hoverColor: 'group-hover:bg-yellow-600' },
-                { name: 'Archive', count: 45, bgColor: 'bg-gray-500', hoverColor: 'group-hover:bg-gray-600' },
-                { name: 'Spam', count: 2, bgColor: 'bg-red-500', hoverColor: 'group-hover:bg-red-600' }
+                { name: 'Inbox', count: emailStats.unread, bgColor: 'bg-blue-500', hoverColor: 'group-hover:bg-blue-600', href: '/inbox' },
+                { name: 'Sent', count: emailStats.sent, bgColor: 'bg-green-500', hoverColor: 'group-hover:bg-green-600', href: '/sent' },
+                { name: 'Drafts', count: emailStats.drafts, bgColor: 'bg-orange-500', hoverColor: 'group-hover:bg-orange-600', href: '/drafts' },
+                { name: 'Starred', count: starredCount, bgColor: 'bg-yellow-500', hoverColor: 'group-hover:bg-yellow-600', href: '/inbox' },
               ].map((folder, index) => (
                 <motion.div
                   key={folder.name}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: 0.9 + index * 0.05, duration: 0.3 }}
-                  className="p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 transition-colors cursor-pointer group"
                 >
-                  <div className="text-center">
-                    <div className={`w-8 h-8 mx-auto mb-1 rounded-full flex items-center justify-center text-white ${folder.bgColor} ${folder.hoverColor} transition-colors`}>
-                      <Folder size={16} />
+                  <Link
+                    to={folder.href}
+                    className="block p-3 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 transition-colors cursor-pointer group"
+                  >
+                    <div className="text-center">
+                      <div className={`w-8 h-8 mx-auto mb-1 rounded-full flex items-center justify-center text-white ${folder.bgColor} ${folder.hoverColor} transition-colors`}>
+                        <Folder size={16} />
+                      </div>
+                      <p className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {folder.name}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {folder.count}
+                      </p>
                     </div>
-                    <p className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">
-                      {folder.name}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {folder.count}
-                    </p>
-                  </div>
+                  </Link>
                 </motion.div>
               ))}
             </div>

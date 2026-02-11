@@ -30,6 +30,9 @@ import {
   updateMailStarredStatus,
   upsertInboxMails,
   trimInboxToLimit,
+  clearAccountInbox,
+  getHighestUid,
+  getExistingMailIds,
   type InboxMailRecord,
 } from '@/lib/db';
 import { useEmail } from '@/contexts/EmailContext';
@@ -273,7 +276,7 @@ const InboxPage: React.FC = () => {
       setMobileLoadingMore(false);
       setIsLoading(false);
     }
-  }, [selectedAccount]);
+  }, [selectedAccount, limit]);
 
   // Intersection observer for mobile scroll-to-load
   useEffect(() => {
@@ -364,46 +367,64 @@ const InboxPage: React.FC = () => {
 
   // ── Sync from IMAP server ────────────────────────────────────────────
 
+  /**
+   * Convert server response mails (camelCase from mapRowToInboxMail) to InboxMailRecord.
+   * Handles both camelCase and snake_case for robustness.
+   */
+  const mapServerMailToRecord = useCallback((m: any, accountCode: string): InboxMailRecord => ({
+    id: String(m.id ?? `${accountCode}:${m.uid}`),
+    uid: m.uid,
+    accountId: accountCode,
+    mailbox: m.mailbox || 'INBOX',
+    messageId: m.message_id || m.messageId || null,
+    fromAddress: m.from_address || m.fromAddress || '',
+    fromName: m.from_name || m.fromName || '',
+    toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
+      ? (m.to_addresses || m.toAddresses)
+      : [m.to_addresses || m.toAddresses || ''],
+    ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
+      ? (m.cc_addresses || m.ccAddresses)
+      : [],
+    bccAddresses: Array.isArray(m.bcc_addresses || m.bccAddresses)
+      ? (m.bcc_addresses || m.bccAddresses)
+      : [],
+    subject: m.subject || '(No Subject)',
+    htmlBody: m.html_body || m.htmlBody || null,
+    textBody: m.text_body || m.textBody || null,
+    date: m.date || new Date().toISOString(),
+    isRead: m.is_read ?? m.isRead ?? false,
+    isStarred: m.is_starred ?? m.isStarred ?? false,
+    hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
+    attachmentsMetadata: m.attachments_metadata || m.attachmentsMetadata || null,
+    labels: m.labels || [],
+    updatedAt: new Date().toISOString(),
+    createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
+  }), []);
+
   const handleSync = useCallback(async () => {
     if (!selectedAccount || isSyncing) return;
     try {
       setIsSyncing(true);
       setError(null);
 
+      // Use sinceUid for incremental sync — only fetch new mails
+      const highestUid = await getHighestUid(selectedAccount.accountCode);
+
       const response = await apiFetch('/api/inbox/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountCode: selectedAccount.accountCode }),
+        body: JSON.stringify({
+          accountCode: selectedAccount.accountCode,
+          sinceUid: highestUid > 0 ? highestUid : undefined,
+        }),
       });
 
       const fetchedMails = response?.data?.mails || response?.mails || [];
 
       if (fetchedMails.length > 0) {
-        // Convert API mails to InboxMailRecord and save to Dexie (encrypted)
-        const records: InboxMailRecord[] = fetchedMails.map((m: any) => ({
-          id: `${selectedAccount.accountCode}:${m.uid}`,
-          uid: m.uid,
-          accountId: selectedAccount.accountCode,
-          mailbox: m.mailbox || 'INBOX',
-          messageId: m.messageId,
-          fromAddress: m.from?.address || m.from || '',
-          fromName: m.from?.name || '',
-          toAddresses: Array.isArray(m.to) ? m.to.map((t: any) => t.address || t) : [m.to || ''],
-          ccAddresses: m.cc ? (Array.isArray(m.cc) ? m.cc.map((c: any) => c.address || c) : []) : [],
-          bccAddresses: [],
-          subject: m.subject || '(No Subject)',
-          htmlBody: m.htmlBody || null,
-          textBody: m.textBody || null,
-          date: m.date || new Date().toISOString(),
-          isRead: m.isRead ?? false,
-          isStarred: m.isStarred ?? false,
-          hasAttachments: m.hasAttachments ?? false,
-          attachmentsMetadata: m.attachmentsMetadata || null,
-          labels: m.labels || [],
-          syncedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          createdAt: m.date || new Date().toISOString(),
-        }));
+        const records = fetchedMails.map((m: any) =>
+          mapServerMailToRecord(m, selectedAccount.accountCode)
+        );
 
         await upsertInboxMails(records);
 
@@ -434,7 +455,60 @@ const InboxPage: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  }, [selectedAccount, isSyncing, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails]);
+  }, [selectedAccount, isSyncing, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails, mapServerMailToRecord]);
+
+  // ── Refresh from Mail Server (full re-fetch, replaces all emails) ────
+
+  const [isRefreshingFromServer, setIsRefreshingFromServer] = useState(false);
+
+  const handleRefreshFromServer = useCallback(async () => {
+    if (!selectedAccount || isRefreshingFromServer) return;
+    try {
+      setIsRefreshingFromServer(true);
+      setError(null);
+
+      // Full re-fetch: no sinceUid → fetches all mails from server
+      const response = await apiFetch('/api/inbox/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountCode: selectedAccount.accountCode }),
+      });
+
+      const fetchedMails = response?.data?.mails || response?.mails || [];
+
+      // Clear local Dexie data for this account, then insert fresh data
+      await clearAccountInbox(selectedAccount.accountCode);
+
+      if (fetchedMails.length > 0) {
+        const records = fetchedMails.map((m: any) =>
+          mapServerMailToRecord(m, selectedAccount.accountCode)
+        );
+        await upsertInboxMails(records);
+
+        const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
+        await trimInboxToLimit(selectedAccount.accountCode, cacheLimit);
+
+        toast.success(`Refreshed ${records.length} email${records.length !== 1 ? 's' : ''} from server`);
+      } else {
+        toast.info('No emails found on server');
+      }
+
+      // Refresh local view + global context
+      if (isMobile) {
+        await loadMobileMails(true);
+      } else {
+        await loadMails(currentPage);
+      }
+      await refreshEmails();
+    } catch (err: any) {
+      console.error('[InboxPage] Refresh from server error:', err);
+      const msg = err?.message || 'Failed to refresh from mail server';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setIsRefreshingFromServer(false);
+    }
+  }, [selectedAccount, isRefreshingFromServer, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails, mapServerMailToRecord]);
 
   // ── Search ───────────────────────────────────────────────────────────
 
@@ -506,9 +580,13 @@ const InboxPage: React.FC = () => {
       }
 
       if (serverMails.length > 0) {
+        // Look up existing Dexie IDs so we upsert over the same primary key
+        const uids = serverMails.map((m: any) => m.uid as number);
+        const existingIds = await getExistingMailIds(selectedAccount.accountCode, uids);
+
         // Convert to InboxMailRecord and upsert into Dexie (local-only storage)
         const records: InboxMailRecord[] = serverMails.map((m: any) => ({
-          id: `${selectedAccount.accountCode}:${m.uid}`,
+          id: existingIds.get(m.uid) ?? `${selectedAccount.accountCode}:${m.uid}`,
           uid: m.uid,
           accountId: selectedAccount.accountCode,
           mailbox: m.mailbox || 'INBOX',
@@ -742,12 +820,24 @@ const InboxPage: React.FC = () => {
               <Button
                 variant="outline"
                 onClick={handleSync}
-                disabled={isSyncing || !selectedAccount}
+                disabled={isSyncing || isRefreshingFromServer || !selectedAccount}
                 className="flex items-center gap-2"
                 size="small"
+                title="Incremental sync — fetch new emails"
               >
                 <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">{isSyncing ? 'Syncing…' : 'Sync'}</span>
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleRefreshFromServer}
+                disabled={isRefreshingFromServer || isSyncing || !selectedAccount}
+                className="flex items-center gap-2"
+                size="small"
+                title="Full re-fetch — replaces all emails from mail server"
+              >
+                <Download className={`w-4 h-4 ${isRefreshingFromServer ? 'animate-bounce' : ''}`} />
+                <span className="hidden sm:inline">{isRefreshingFromServer ? 'Refreshing…' : 'Reload'}</span>
               </Button>
             </div>
           </div>

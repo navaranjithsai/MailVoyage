@@ -85,16 +85,34 @@ export interface InboxResult {
   total: number;
 }
 
+export interface SettingsResult {
+  inboxCacheLimit: number;
+}
+
 export interface FetchAllResult {
   emailAccounts: FetchResult<EmailAccountsResult>;
   sentMails: FetchResult<SentMailsResult>;
   inbox: FetchResult<InboxResult>;
+  settings: FetchResult<SettingsResult>;
   draftsCount: number;
 }
 
 export interface FetchProgress {
-  step: 'emailAccounts' | 'sentMails' | 'inbox' | 'complete';
+  step: 'emailAccounts' | 'sentMails' | 'inbox' | 'settings' | 'complete';
   message: string;
+}
+
+// ============================================================================
+// Auth Guard
+// ============================================================================
+
+/**
+ * Quick check: is there a logged-in user?
+ * We read `localStorage.authUser` to stay decoupled from React contexts.
+ * This prevents queued / in-flight API calls from firing after logout.
+ */
+function isUserLoggedIn(): boolean {
+  return !!localStorage.getItem('authUser');
 }
 
 // ============================================================================
@@ -106,6 +124,7 @@ export interface FetchProgress {
  * Updates localStorage with the fetched data.
  */
 export async function fetchEmailAccounts(): Promise<FetchResult<EmailAccountsResult>> {
+  if (!isUserLoggedIn()) return { success: false, error: 'Not authenticated' };
   try {
     console.log('🔄 Fetching email accounts from API...');
     const response = await apiFetch('/api/email-accounts', {
@@ -150,6 +169,7 @@ export async function fetchSentMails(
   page: number = 1, 
   limit: number = 20
 ): Promise<FetchResult<SentMailsResult>> {
+  if (!isUserLoggedIn()) return { success: false, error: 'Not authenticated' };
   try {
     console.log(`🔄 Fetching sent mails (page ${page})...`);
     const response = await apiFetch(`/api/sent-mails?page=${page}&limit=${limit}`);
@@ -210,6 +230,7 @@ export async function fetchSentMails(
 export async function fetchInboxMails(
   _mailbox: string = 'INBOX'
 ): Promise<FetchResult<InboxResult>> {
+  if (!isUserLoggedIn()) return { success: false, error: 'Not authenticated' };
   try {
     console.log('🔄 Fetching cached inbox mails from server...');
 
@@ -241,9 +262,9 @@ export async function fetchInboxMails(
     // Step 3: Save to local Dexie (encrypted)
     if (allMails.length > 0) {
       const records: InboxMailRecord[] = allMails.map((m: any) => ({
-        id: m.id || `${m.account_code || m.accountId}:${m.uid}`,
+        id: String(m.id ?? `${m.account_code || m.accountCode || m.accountId}:${m.uid}`),
         uid: m.uid,
-        accountId: m.account_code || m.accountId,
+        accountId: m.account_code || m.accountCode || m.accountId || '',
         mailbox: m.mailbox || 'INBOX',
         messageId: m.message_id || m.messageId,
         fromAddress: m.from_address || m.fromAddress || '',
@@ -336,9 +357,29 @@ export async function fetchAllMails(
 }
 
 /**
- * Fetch all data: email accounts, inbox, and sent mails.
- * Executes requests sequentially with progress callbacks.
- * 
+ * Fetch inbox settings (cache limit) from the API.
+ * Updates localStorage with the fetched limit.
+ */
+export async function fetchInboxSettings(): Promise<FetchResult<SettingsResult>> {
+  if (!isUserLoggedIn()) return { success: false, error: 'Not authenticated' };
+  try {
+    console.log('🔄 Fetching inbox settings...');
+    const res = await apiFetch('/api/inbox/settings');
+    const limit = res?.data?.inboxCacheLimit ?? res?.inboxCacheLimit ?? 15;
+    localStorage.setItem('inbox_cache_limit', String(limit));
+    console.log('✅ Inbox settings fetched: cacheLimit =', limit);
+    return { success: true, data: { inboxCacheLimit: limit } };
+  } catch (error: any) {
+    console.error('❌ Failed to fetch inbox settings:', error);
+    return { success: false, error: error.message || 'Failed to fetch inbox settings' };
+  }
+}
+
+/**
+ * Fetch all data: email accounts, inbox, sent mails, and settings.
+ * Accounts are fetched first (inbox depends on them), then inbox, sent,
+ * and settings are fetched in parallel for speed.
+ *
  * @param onProgress - Optional callback to report progress
  * @param options - Options to control which data to fetch
  */
@@ -348,57 +389,78 @@ export async function fetchAll(
     fetchAccounts?: boolean;
     fetchInbox?: boolean;
     fetchSent?: boolean;
+    fetchSettings?: boolean;
     invalidateCache?: boolean;
   } = {}
 ): Promise<FetchAllResult> {
-  const { 
-    fetchAccounts = true, 
-    fetchInbox = true, 
+  const {
+    fetchAccounts = true,
+    fetchInbox = true,
     fetchSent = true,
-    invalidateCache = true 
+    fetchSettings = true,
+    invalidateCache = true
   } = options;
-  
+
   // Initialize results
   const results: FetchAllResult = {
     emailAccounts: { success: false },
     sentMails: { success: false },
     inbox: { success: false },
+    settings: { success: false },
     draftsCount: 0
   };
-  
+
+  // Bail out early if user logged out before or during this call
+  if (!isUserLoggedIn()) {
+    return results;
+  }
+
   // Invalidate caches if requested - clear sent mails from Dexie
   if (invalidateCache) {
     await clearSentMails();
   }
-  
+
   try {
-    // Step 1: Fetch email accounts
+    // Step 1: Fetch email accounts first (inbox fetch depends on accounts in localStorage)
     if (fetchAccounts) {
       onProgress?.({ step: 'emailAccounts', message: 'Syncing email accounts...' });
       results.emailAccounts = await fetchEmailAccounts();
-      await new Promise(resolve => setTimeout(resolve, 200));
     }
-    
-    // Step 2: Fetch inbox mails
+
+    // Step 2: Fetch inbox, sent, and settings in parallel
+    const parallelTasks: Promise<void>[] = [];
+
     if (fetchInbox) {
       onProgress?.({ step: 'inbox', message: 'Fetching inbox...' });
-      results.inbox = await fetchInboxMails();
-      await new Promise(resolve => setTimeout(resolve, 200));
+      parallelTasks.push(
+        fetchInboxMails().then(r => { results.inbox = r; })
+      );
     }
-    
-    // Step 3: Fetch sent mails
+
     if (fetchSent) {
       onProgress?.({ step: 'sentMails', message: 'Fetching sent mails...' });
-      results.sentMails = await fetchSentMails();
+      parallelTasks.push(
+        fetchSentMails().then(r => { results.sentMails = r; })
+      );
     }
-    
-    // Step 4: Get drafts count (local only, fast)
+
+    if (fetchSettings) {
+      onProgress?.({ step: 'settings', message: 'Fetching settings...' });
+      parallelTasks.push(
+        fetchInboxSettings().then(r => { results.settings = r; })
+      );
+    }
+
+    // Wait for all parallel fetches
+    await Promise.allSettled(parallelTasks);
+
+    // Step 3: Get drafts count (local only, fast)
     results.draftsCount = await fetchDraftsCount();
-    
+
     onProgress?.({ step: 'complete', message: 'Sync complete!' });
-    
+
     return results;
-    
+
   } catch (error: any) {
     console.error('Error in fetchAll:', error);
     onProgress?.({ step: 'complete', message: 'Sync failed' });

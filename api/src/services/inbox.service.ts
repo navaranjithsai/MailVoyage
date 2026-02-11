@@ -628,6 +628,60 @@ export async function syncMailsToCache(
 }
 
 // ============================================================================
+// DB: Sync tracking — persist last UID per account+mailbox
+// ============================================================================
+
+/**
+ * Get the last synced UID for a user + account + mailbox.
+ * Returns 0 if no sync has been tracked yet.
+ */
+export async function getLastSyncedUid(
+  userId: string,
+  accountCode: string,
+  mailbox: string = 'INBOX'
+): Promise<number> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT last_uid FROM sync_tracking
+       WHERE user_id = $1 AND account_code = $2 AND mailbox = $3`,
+      [userId, accountCode, mailbox]
+    );
+    return result.rows.length > 0 ? result.rows[0].last_uid : 0;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Update (or insert) the sync tracking record after a successful sync.
+ */
+export async function updateSyncTracking(
+  userId: string,
+  accountCode: string,
+  mailbox: string,
+  lastUid: number,
+  totalOnServer?: number
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(
+      `INSERT INTO sync_tracking (user_id, account_code, mailbox, last_uid, total_on_server, last_synced_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+       ON CONFLICT (user_id, account_code, mailbox)
+       DO UPDATE SET
+         last_uid = GREATEST(sync_tracking.last_uid, EXCLUDED.last_uid),
+         total_on_server = COALESCE(EXCLUDED.total_on_server, sync_tracking.total_on_server),
+         last_synced_at = NOW(),
+         updated_at = NOW()`,
+      [userId, accountCode, mailbox, lastUid, totalOnServer ?? null]
+    );
+  } finally {
+    client.release();
+  }
+}
+
+// ============================================================================
 // DB: Get cached mails from inbox_cache
 // ============================================================================
 
@@ -929,19 +983,36 @@ export async function syncInbox(
     cacheLimit?: number;
   } = {}
 ): Promise<FetchFromServerResult & { cached: number }> {
+  const mailbox = options.mailbox || 'INBOX';
   const cacheLimit = options.cacheLimit || parseInt(
     await getUserSetting(userId, 'inbox_cache_limit', '15'), 10
   );
 
+  // If the client didn't send sinceUid, use the server-side tracked value
+  let sinceUid = options.sinceUid;
+  if (sinceUid === undefined || sinceUid === null) {
+    sinceUid = await getLastSyncedUid(userId, accountCode, mailbox);
+    if (sinceUid > 0) {
+      logger.info(`[InboxService] Using server-side sinceUid=${sinceUid} for ${accountCode}/${mailbox}`);
+    }
+  }
+
   const result = await fetchMailsFromServer(userId, accountCode, {
-    mailbox: options.mailbox,
+    mailbox,
     limit: options.limit,
-    sinceUid: options.sinceUid,
+    sinceUid: sinceUid > 0 ? sinceUid : undefined,
     page: options.page,
   });
 
   // Save to server-side cache
   const saved = await syncMailsToCache(userId, accountCode, result.mails, cacheLimit);
+
+  // Persist the highest UID we just synced
+  if (result.mails.length > 0) {
+    const highestUid = Math.max(...result.mails.map(m => m.uid));
+    await updateSyncTracking(userId, accountCode, mailbox, highestUid, result.totalOnServer);
+    logger.info(`[InboxService] Updated sync tracking: ${accountCode}/${mailbox} lastUid=${highestUid}`);
+  }
 
   return {
     ...result,

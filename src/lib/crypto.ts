@@ -79,20 +79,19 @@ const ENC_PREFIX = 'mv.enc$';
 const KEY_STORAGE_KEY = 'mv-enc-key';
 
 /**
- * Derive or retrieve the per-session encryption key.
- * Key is derived from the user's auth token hash + a random salt stored in sessionStorage.
- * This means the key only lives while the user is logged in.
+ * Derive or retrieve the per-user encryption key.
+ * Key is stored in localStorage so it survives tab close / page refresh.
+ * It is destroyed on logout when localStorage.clear() is called.
  */
 async function getEncryptionKey(): Promise<CryptoKey> {
-  // Use sessionStorage so key is lost on tab close
-  let rawKey = sessionStorage.getItem(KEY_STORAGE_KEY);
+  let rawKey = localStorage.getItem(KEY_STORAGE_KEY);
 
   if (!rawKey) {
-    // Generate a new 256-bit key and persist in session
+    // Generate a new 256-bit key and persist
     const keyBytes = new Uint8Array(32);
     crypto.getRandomValues(keyBytes);
     rawKey = btoa(String.fromCharCode(...keyBytes));
-    sessionStorage.setItem(KEY_STORAGE_KEY, rawKey);
+    localStorage.setItem(KEY_STORAGE_KEY, rawKey);
   }
 
   const keyBuffer = Uint8Array.from(atob(rawKey), c => c.charCodeAt(0));

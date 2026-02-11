@@ -5,6 +5,7 @@
  * - Lightweight signals only (no heavy data transfer)
  * - Heartbeat for connection status
  * - Debounced batch signaling
+ * - Multi-tab support: multiple connections per user
  * - Graceful handling when WebSocket unavailable
  */
 
@@ -48,7 +49,8 @@ interface PendingSignal {
 
 class WebSocketService {
   private wss: WebSocketServer | null = null;
-  private clients: Map<string, AuthenticatedClient> = new Map();
+  /** userId → Set of active connections (supports multiple tabs) */
+  private clients: Map<string, Set<AuthenticatedClient>> = new Map();
   private pendingSignals: Map<string, PendingSignal> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private isInitialized = false;
@@ -57,6 +59,7 @@ class WebSocketService {
   private readonly DEBOUNCE_MS = 2000; // 2 seconds debounce
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private readonly CLIENT_TIMEOUT = 60000; // 60 seconds without heartbeat = disconnect
+  private readonly MAX_CONNECTIONS_PER_USER = 5; // prevent runaway tabs
 
   /**
    * Initialize WebSocket server attached to HTTP server
@@ -71,9 +74,7 @@ class WebSocketService {
       this.wss = new WebSocketServer({ 
         server,
         path: '/ws',
-        // Verify client during upgrade
         verifyClient: (info, callback) => {
-          // Allow all connections initially, auth happens after connect
           callback(true);
         }
       });
@@ -83,16 +84,23 @@ class WebSocketService {
         logger.error('[WebSocket] Server error:', error);
       });
 
-      // Start heartbeat interval
       this.startHeartbeat();
 
       this.isInitialized = true;
       logger.info('[WebSocket] Server initialized on /ws path');
     } catch (error) {
       logger.error('[WebSocket] Failed to initialize:', error);
-      // Don't crash - graceful degradation
       this.isInitialized = false;
     }
+  }
+
+  /** Total number of active WebSocket connections across all users */
+  private get totalConnections(): number {
+    let count = 0;
+    for (const clientSet of this.clients.values()) {
+      count += clientSet.size;
+    }
+    return count;
   }
 
   /**
@@ -101,7 +109,6 @@ class WebSocketService {
   private handleConnection(ws: WebSocket, req: any): void {
     logger.info('[WebSocket] New connection attempt');
 
-    // Set up message handler for authentication
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
@@ -120,7 +127,6 @@ class WebSocketService {
       logger.warn('[WebSocket] Client error:', error.message);
     });
 
-    // Send connected signal (client needs to authenticate)
     this.send(ws, {
       type: 'connected',
       message: 'WebSocket connected. Please authenticate.',
@@ -147,7 +153,8 @@ class WebSocketService {
   }
 
   /**
-   * Authenticate client with JWT token
+   * Authenticate client with JWT token.
+   * Supports multiple connections per user (multi-tab).
    */
   private handleAuth(ws: WebSocket, token: string): void {
     if (!token) {
@@ -164,14 +171,23 @@ class WebSocketService {
         return;
       }
 
-      // Remove any existing connection for this user
-      const existingClient = this.clients.get(userId);
-      if (existingClient) {
-        logger.info(`[WebSocket] Replacing existing connection for user ${userId}`);
-        existingClient.ws.close(1000, 'Replaced by new connection');
+      // Get or create the set for this user
+      let clientSet = this.clients.get(userId);
+      if (!clientSet) {
+        clientSet = new Set();
+        this.clients.set(userId, clientSet);
       }
 
-      // Register the authenticated client
+      // Enforce per-user connection limit (close oldest if exceeded)
+      if (clientSet.size >= this.MAX_CONNECTIONS_PER_USER) {
+        const oldest = clientSet.values().next().value;
+        if (oldest) {
+          logger.info(`[WebSocket] User ${userId} exceeded max connections (${this.MAX_CONNECTIONS_PER_USER}), closing oldest`);
+          oldest.ws.close(1000, 'Too many connections');
+          clientSet.delete(oldest);
+        }
+      }
+
       const client: AuthenticatedClient = {
         ws,
         userId,
@@ -179,10 +195,9 @@ class WebSocketService {
         isAlive: true
       };
 
-      this.clients.set(userId, client);
-      logger.info(`[WebSocket] User ${userId} authenticated. Total clients: ${this.clients.size}`);
+      clientSet.add(client);
+      logger.info(`[WebSocket] User ${userId} authenticated (${clientSet.size} tab(s)). Total connections: ${this.totalConnections}`);
 
-      // Send success response
       this.send(ws, {
         type: 'connected',
         message: 'Authentication successful',
@@ -199,15 +214,20 @@ class WebSocketService {
    * Handle ping from client (keep-alive)
    */
   private handlePing(ws: WebSocket): void {
-    // Find the client and update heartbeat
-    for (const [userId, client] of this.clients) {
-      if (client.ws === ws) {
-        client.lastHeartbeat = Date.now();
-        client.isAlive = true;
-        break;
+    for (const clientSet of this.clients.values()) {
+      for (const client of clientSet) {
+        if (client.ws === ws) {
+          client.lastHeartbeat = Date.now();
+          client.isAlive = true;
+          this.send(ws, {
+            type: 'pong',
+            timestamp: new Date().toISOString()
+          });
+          return;
+        }
       }
     }
-
+    // Not authenticated yet, still send pong
     this.send(ws, {
       type: 'pong',
       timestamp: new Date().toISOString()
@@ -218,19 +238,24 @@ class WebSocketService {
    * Handle client disconnect
    */
   private handleDisconnect(ws: WebSocket): void {
-    for (const [userId, client] of this.clients) {
-      if (client.ws === ws) {
-        this.clients.delete(userId);
-        
-        // Clean up any pending signals
-        const pending = this.pendingSignals.get(userId);
-        if (pending?.timeout) {
-          clearTimeout(pending.timeout);
-          this.pendingSignals.delete(userId);
+    for (const [userId, clientSet] of this.clients) {
+      for (const client of clientSet) {
+        if (client.ws === ws) {
+          clientSet.delete(client);
+
+          // Clean up empty sets and pending signals when last tab closes
+          if (clientSet.size === 0) {
+            this.clients.delete(userId);
+            const pending = this.pendingSignals.get(userId);
+            if (pending?.timeout) {
+              clearTimeout(pending.timeout);
+              this.pendingSignals.delete(userId);
+            }
+          }
+
+          logger.info(`[WebSocket] User ${userId} tab disconnected (${clientSet.size} remaining). Total connections: ${this.totalConnections}`);
+          return;
         }
-        
-        logger.info(`[WebSocket] User ${userId} disconnected. Total clients: ${this.clients.size}`);
-        break;
       }
     }
   }
@@ -242,28 +267,37 @@ class WebSocketService {
     this.heartbeatInterval = setInterval(() => {
       const now = Date.now();
       
-      for (const [userId, client] of this.clients) {
-        if (now - client.lastHeartbeat > this.CLIENT_TIMEOUT) {
-          logger.info(`[WebSocket] User ${userId} timed out`);
-          client.ws.terminate();
-          this.clients.delete(userId);
-          continue;
+      for (const [userId, clientSet] of this.clients) {
+        const toRemove: AuthenticatedClient[] = [];
+
+        for (const client of clientSet) {
+          if (now - client.lastHeartbeat > this.CLIENT_TIMEOUT) {
+            logger.info(`[WebSocket] User ${userId} tab timed out`);
+            client.ws.terminate();
+            toRemove.push(client);
+            continue;
+          }
+
+          if (client.ws.readyState === WebSocket.OPEN) {
+            this.send(client.ws, {
+              type: 'heartbeat',
+              timestamp: new Date().toISOString()
+            });
+          }
         }
 
-        // Send heartbeat
-        if (client.ws.readyState === WebSocket.OPEN) {
-          this.send(client.ws, {
-            type: 'heartbeat',
-            timestamp: new Date().toISOString()
-          });
+        for (const dead of toRemove) {
+          clientSet.delete(dead);
+        }
+        if (clientSet.size === 0) {
+          this.clients.delete(userId);
         }
       }
     }, this.HEARTBEAT_INTERVAL);
   }
 
   /**
-   * Send a signal to a specific user (debounced)
-   * Call this when database changes occur
+   * Send a signal to ALL tabs of a specific user (debounced)
    */
   signalUser(userId: string, tables: string[], since?: string): void {
     if (!this.isInitialized) {
@@ -271,13 +305,12 @@ class WebSocketService {
       return;
     }
 
-    const client = this.clients.get(userId);
-    if (!client || client.ws.readyState !== WebSocket.OPEN) {
+    const clientSet = this.clients.get(userId);
+    if (!clientSet || clientSet.size === 0) {
       logger.debug(`[WebSocket] User ${userId} not connected, skipping signal`);
       return;
     }
 
-    // Get or create pending signal
     let pending = this.pendingSignals.get(userId);
     
     if (!pending) {
@@ -290,15 +323,12 @@ class WebSocketService {
       this.pendingSignals.set(userId, pending);
     }
 
-    // Add tables to the pending signal
     tables.forEach(t => pending!.tables.add(t));
     
-    // Update 'since' to the earliest timestamp
     if (since && since < pending.since) {
       pending.since = since;
     }
 
-    // Clear existing timeout and set new one (debounce)
     if (pending.timeout) {
       clearTimeout(pending.timeout);
     }
@@ -309,17 +339,11 @@ class WebSocketService {
   }
 
   /**
-   * Flush pending signal to user
+   * Flush pending signal to ALL tabs of a user
    */
   private flushSignal(userId: string): void {
     const pending = this.pendingSignals.get(userId);
     if (!pending) return;
-
-    const client = this.clients.get(userId);
-    if (!client || client.ws.readyState !== WebSocket.OPEN) {
-      this.pendingSignals.delete(userId);
-      return;
-    }
 
     const signal: SyncSignal = {
       type: 'sync_required',
@@ -328,31 +352,36 @@ class WebSocketService {
       timestamp: new Date().toISOString()
     };
 
-    this.send(client.ws, signal);
+    this.sendToAllTabs(userId, signal);
     logger.info(`[WebSocket] Sent sync signal to user ${userId} for tables: ${signal.tables?.join(', ')}`);
     
     this.pendingSignals.delete(userId);
   }
 
   /**
-   * Send an immediate (non-debounced) signal to a specific user.
-   * Use for one-off notifications like settings changes or sync completion.
+   * Send an immediate (non-debounced) signal to ALL tabs of a user.
    */
   sendToUser(userId: string, signal: SyncSignal): void {
     if (!this.isInitialized) return;
-
-    const client = this.clients.get(userId);
-    if (!client || client.ws.readyState !== WebSocket.OPEN) {
-      logger.debug(`[WebSocket] User ${userId} not connected, skipping direct signal`);
-      return;
-    }
-
-    this.send(client.ws, signal);
+    this.sendToAllTabs(userId, signal);
     logger.info(`[WebSocket] Sent ${signal.type} to user ${userId}`);
   }
 
   /**
-   * Broadcast a signal to all connected users
+   * Internal: send a signal to every open tab for a user.
+   */
+  private sendToAllTabs(userId: string, signal: SyncSignal): void {
+    const clientSet = this.clients.get(userId);
+    if (!clientSet) return;
+    for (const client of clientSet) {
+      if (client.ws.readyState === WebSocket.OPEN) {
+        this.send(client.ws, signal);
+      }
+    }
+  }
+
+  /**
+   * Broadcast a signal to all connected users (all their tabs)
    */
   broadcast(tables: string[], since?: string): void {
     if (!this.isInitialized) return;
@@ -383,15 +412,19 @@ class WebSocketService {
   }
 
   /**
-   * Check if a user is connected
+   * Check if a user has at least one connected tab
    */
   isUserConnected(userId: string): boolean {
-    const client = this.clients.get(userId);
-    return client !== undefined && client.ws.readyState === WebSocket.OPEN;
+    const clientSet = this.clients.get(userId);
+    if (!clientSet) return false;
+    for (const client of clientSet) {
+      if (client.ws.readyState === WebSocket.OPEN) return true;
+    }
+    return false;
   }
 
   /**
-   * Get connected users count
+   * Get count of unique connected users
    */
   getConnectedCount(): number {
     return this.clients.size;
@@ -405,7 +438,6 @@ class WebSocketService {
       clearInterval(this.heartbeatInterval);
     }
 
-    // Clear all pending signals
     for (const pending of this.pendingSignals.values()) {
       if (pending.timeout) {
         clearTimeout(pending.timeout);
@@ -413,9 +445,10 @@ class WebSocketService {
     }
     this.pendingSignals.clear();
 
-    // Close all client connections
-    for (const client of this.clients.values()) {
-      client.ws.close(1001, 'Server shutting down');
+    for (const clientSet of this.clients.values()) {
+      for (const client of clientSet) {
+        client.ws.close(1001, 'Server shutting down');
+      }
     }
     this.clients.clear();
 

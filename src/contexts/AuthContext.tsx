@@ -205,22 +205,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Continue with local cleanup even if API fails
     }
     
+    // ── CRITICAL: Set user to null FIRST ──
+    // This makes isAuthenticated=false immediately, so EmailProvider and
+    // SyncProvider react by stopping all Dexie operations and clearing
+    // in-memory state BEFORE we delete the underlying IndexedDB.
+    setUser(null);
+    localStorage.removeItem('authUser');
+    clearAllTabValidations();
+    
     try {
-      // Perform complete cleanup of all local data
+      // Now perform complete cleanup of all local data (IndexedDB, caches, etc.)
       console.log('AuthContext: Performing complete local data cleanup...');
       await performCompleteLogout();
       console.log('AuthContext: Complete cleanup finished');
     } catch (cleanupError) {
       console.error('AuthContext: Error during cleanup:', cleanupError);
       // Fallback: at minimum clear the essential items
-      localStorage.removeItem('authUser');
       localStorage.removeItem('emailAccounts');
       localStorage.removeItem('smtpAccounts');
-      clearAllTabValidations();
     }
     
-    // Reset state
-    setUser(null);
     setIsLoading(false);
     
     // Show success message and navigate
@@ -241,14 +245,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     console.log('AuthContext: Manually cleared tab validation for current tab');
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <LoadingSpinner message="Loading MailVoyage for you..." />
-      </div>
-    );
-  }
-
+  // Always render AuthContext.Provider so useAuth() never throws even during
+  // loading state (prevents intermittent "useAuth must be used within AuthProvider"
+  // errors caused by StrictMode double-render, Suspense, or HMR).
   return (
     <AuthContext.Provider value={{ 
       isAuthenticated: !!user, 
@@ -259,7 +258,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       getTabSessionInfo,
       clearTabValidation
     }}>
-      {children}
+      {isLoading ? (
+        <div className="flex justify-center items-center h-screen">
+          <LoadingSpinner message="Loading MailVoyage for you..." />
+        </div>
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   );
 };

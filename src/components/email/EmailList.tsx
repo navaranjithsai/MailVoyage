@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, memo, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, MailOpen, Star, Clock, ChevronDown, Paperclip, AlertCircle } from 'lucide-react';
 import Button from '@/components/ui/Button';
@@ -33,6 +34,7 @@ const EmailList: React.FC<EmailListProps> = ({
   maxHeight = 600
 }) => {
   const { emails, markAsRead, toggleEmailStarred } = useEmail();
+  const navigate = useNavigate();
   const [currentPage, setCurrentPage] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerHeight, setContainerHeight] = useState(maxHeight);
@@ -42,7 +44,9 @@ const EmailList: React.FC<EmailListProps> = ({
     let filtered = [...emails];
 
     if (folder && folder !== 'all') {
-      filtered = filtered.filter(email => email.folder === folder);
+      // Case-insensitive folder match (DB stores 'INBOX', UI may pass 'inbox')
+      const folderUpper = folder.toUpperCase();
+      filtered = filtered.filter(email => (email.folder || '').toUpperCase() === folderUpper);
     }
 
     if (searchQuery.trim()) {
@@ -77,6 +81,17 @@ const EmailList: React.FC<EmailListProps> = ({
     if (searchFilters.priority) {
       filtered = filtered.filter(email => email.priority === searchFilters.priority);
     }
+
+    // Final safety-net: deduplicate by id to prevent React duplicate-key warnings.
+    // Upstream layers (EmailContext.loadEmails) already deduplicate, but race
+    // conditions between concurrent dataSync / deltaSync writes and React
+    // render cycles can briefly produce duplicate entries.
+    const seen = new Set<string>();
+    filtered = filtered.filter(email => {
+      if (seen.has(email.id)) return false;
+      seen.add(email.id);
+      return true;
+    });
 
     return filtered;
   }, [emails, searchQuery, searchFilters, folder]);
@@ -147,9 +162,8 @@ const EmailList: React.FC<EmailListProps> = ({
 
   const handleEmailClick = useCallback((emailId: string) => {
     markAsRead(emailId);
-    // Navigate to email detail page (using window.location for now)
-    window.location.href = `/email/${emailId}`;
-  }, [markAsRead]);
+    navigate(`/email/${emailId}`);
+  }, [markAsRead, navigate]);
 
   const handleStarClick = useCallback((e: React.MouseEvent, emailId: string) => {
     e.stopPropagation();

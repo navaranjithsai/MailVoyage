@@ -149,6 +149,19 @@ class MailVoyageDB extends Dexie {
 // Singleton instance
 export const db = new MailVoyageDB();
 
+/**
+ * Ensure the Dexie database is open.
+ * After logout, `db.close()` + `indexedDB.deleteDatabase()` leaves the
+ * singleton in a closed state. Any subsequent read/write will throw
+ * `DatabaseClosedError`. This helper reopens it (creating a fresh empty DB
+ * if the old one was deleted).
+ */
+export async function ensureOpen(): Promise<void> {
+  if (!db.isOpen()) {
+    await db.open();
+  }
+}
+
 // ============================================================================
 // Sync Checkpoint Helpers
 // ============================================================================
@@ -228,6 +241,14 @@ export async function clearSentMails(): Promise<void> {
 }
 
 /**
+ * Get sent mails count (safe — ensures DB is open first)
+ */
+export async function getSentMailsCount(): Promise<number> {
+  await ensureOpen();
+  return db.sentMails.count();
+}
+
+/**
  * Add or update sent mails (upsert multiple)
  */
 export async function addOrUpdateSentMails(mails: Array<Omit<SentMailRecord, 'updatedAt'> & { syncedAt?: string }>): Promise<void> {
@@ -286,10 +307,28 @@ const ENCRYPTED_MAIL_FIELDS: (keyof InboxMailRecord)[] = [
 ];
 
 /**
+ * One-time migration: remove inbox mail records that were stored with numeric
+ * primary keys (from a previous deltaSync bug).  String-keyed records are the
+ * canonical ones; numeric-keyed records are duplicates that cause React
+ * duplicate-key warnings.
+ */
+export async function cleanupNumericKeyedMails(): Promise<number> {
+  await ensureOpen();
+  const allKeys = await db.inboxMails.toCollection().primaryKeys();
+  const numericKeys = allKeys.filter(k => typeof k === 'number');
+  if (numericKeys.length > 0) {
+    await db.inboxMails.bulkDelete(numericKeys as any);
+    console.log(`[DB] Cleaned up ${numericKeys.length} numeric-keyed duplicate inbox mails`);
+  }
+  return numericKeys.length;
+}
+
+/**
  * Bulk upsert inbox mails (encrypts sensitive fields before storing)
  */
 export async function upsertInboxMails(mails: InboxMailRecord[]): Promise<void> {
   if (mails.length === 0) return;
+  await ensureOpen();
   const { encryptMailRecord } = await import('./crypto');
   const encrypted = await Promise.all(
     mails.map(m => encryptMailRecord(m, ENCRYPTED_MAIL_FIELDS))
@@ -298,11 +337,20 @@ export async function upsertInboxMails(mails: InboxMailRecord[]): Promise<void> 
 }
 
 /**
- * Decrypt a single inbox mail record after reading from IndexedDB
+ * Decrypt a single inbox mail record after reading from IndexedDB.
+ * Returns null if any encrypted field couldn't be decrypted (stale key).
  */
-async function decryptInboxMail(mail: InboxMailRecord): Promise<InboxMailRecord> {
-  const { decryptMailRecord } = await import('./crypto');
-  return decryptMailRecord(mail, ENCRYPTED_MAIL_FIELDS);
+async function decryptInboxMail(mail: InboxMailRecord): Promise<InboxMailRecord | null> {
+  const { decryptMailRecord, isEncryptedData } = await import('./crypto');
+  const decrypted = await decryptMailRecord(mail, ENCRYPTED_MAIL_FIELDS);
+  // If any field still starts with the encryption prefix, the key is stale
+  for (const field of ENCRYPTED_MAIL_FIELDS) {
+    const val = (decrypted as any)[field];
+    if (typeof val === 'string' && isEncryptedData(val)) {
+      return null; // Stale — caller should discard
+    }
+  }
+  return decrypted;
 }
 
 /**
@@ -317,7 +365,8 @@ export async function getInboxMails(
     .equals([accountId, mailbox])
     .reverse()
     .sortBy('date');
-  return Promise.all(mails.map(decryptInboxMail));
+  const results = await Promise.all(mails.map(decryptInboxMail));
+  return results.filter((m): m is InboxMailRecord => m !== null);
 }
 
 /**
@@ -340,27 +389,46 @@ export async function getInboxMailsPaginated(
   const offset = (page - 1) * limit;
   const paginated = allMails.slice(offset, offset + limit);
   const decrypted = await Promise.all(paginated.map(decryptInboxMail));
+  const valid = decrypted.filter((m): m is InboxMailRecord => m !== null);
   
-  return { mails: decrypted, total, page, totalPages };
+  return { mails: valid, total, page, totalPages };
 }
 
 /**
  * Get all inbox mails (decrypted), excluding archived
  */
 export async function getAllInboxMails(): Promise<InboxMailRecord[]> {
+  await ensureOpen();
   const mails = await db.inboxMails.orderBy('date').reverse().toArray();
   const decrypted = await Promise.all(mails.map(decryptInboxMail));
+  const valid = decrypted.filter((m): m is InboxMailRecord => m !== null);
+  // If many records are stale (undecryptable), wipe them so a re-fetch picks up fresh data
+  const staleCount = decrypted.length - valid.length;
+  if (staleCount > 0) {
+    console.warn(`[DB] ${staleCount} inbox mails had stale encryption — clearing them`);
+    const staleKeys = mails
+      .filter((_, i) => decrypted[i] === null)
+      .map(m => m.id);
+    await db.inboxMails.bulkDelete(staleKeys);
+  }
   // Filter out archived mails from the main inbox view
-  return decrypted.filter(m => m.mailbox !== 'ARCHIVE');
+  return valid.filter(m => m.mailbox !== 'ARCHIVE');
 }
 
 /**
  * Get a single inbox mail by ID (decrypted)
  */
 export async function getInboxMailById(id: string): Promise<InboxMailRecord | undefined> {
+  await ensureOpen();
   const mail = await db.inboxMails.get(id);
   if (!mail) return undefined;
-  return decryptInboxMail(mail);
+  const decrypted = await decryptInboxMail(mail);
+  if (!decrypted) {
+    // Stale encryption — delete the record
+    await db.inboxMails.delete(id);
+    return undefined;
+  }
+  return decrypted;
 }
 
 /**
@@ -391,9 +459,32 @@ export async function deleteInboxMails(ids: string[]): Promise<void> {
 }
 
 /**
+ * Look up existing Dexie primary keys for a set of (accountId, uid) pairs.
+ * Returns a Map<uid, existingId> for quick lookup.
+ */
+export async function getExistingMailIds(
+  accountId: string,
+  uids: number[]
+): Promise<Map<number, string>> {
+  await ensureOpen();
+  const existing = await db.inboxMails
+    .where('accountId')
+    .equals(accountId)
+    .toArray();
+  const map = new Map<number, string>();
+  for (const m of existing) {
+    if (uids.includes(m.uid)) {
+      map.set(m.uid, m.id);
+    }
+  }
+  return map;
+}
+
+/**
  * Get unread count (reads flags only, no decryption needed)
  */
 export async function getUnreadCount(accountId?: string): Promise<number> {
+  await ensureOpen();
   if (accountId) {
     return db.inboxMails
       .where('accountId')
@@ -432,8 +523,9 @@ export async function searchInboxMails(
 
   // Decrypt all mails for search
   const decrypted = await Promise.all(mails.map(decryptInboxMail));
+  const valid = decrypted.filter((m): m is InboxMailRecord => m !== null);
 
-  return decrypted.filter(mail => {
+  return valid.filter(mail => {
     return (
       mail.subject.toLowerCase().includes(lowerQuery) ||
       mail.fromAddress.toLowerCase().includes(lowerQuery) ||
@@ -492,6 +584,11 @@ export async function archiveInboxMail(id: string): Promise<void> {
  * Trim inbox mails to keep only the latest N per account (for cache limit enforcement).
  */
 export async function trimInboxToLimit(accountId: string, limit: number): Promise<number> {
+  // Guard: Dexie .equals() requires a valid key (string/number/Date/Array)
+  if (!accountId || typeof accountId !== 'string') {
+    console.warn('[DB] trimInboxToLimit called with invalid accountId:', accountId);
+    return 0;
+  }
   const mails = await db.inboxMails
     .where('accountId')
     .equals(accountId)
@@ -567,6 +664,7 @@ export async function deleteDrafts(ids: string[]): Promise<void> {
  * Get drafts count
  */
 export async function getDraftsCount(): Promise<number> {
+  await ensureOpen();
   return db.drafts.count();
 }
 
@@ -638,6 +736,7 @@ export async function setCacheValue(
   value: any,
   ttlMs?: number
 ): Promise<void> {
+  await ensureOpen();
   await db.cacheMetadata.put({
     key,
     value,
@@ -649,6 +748,7 @@ export async function setCacheValue(
  * Get a cache value (returns null if expired)
  */
 export async function getCacheValue<T = any>(key: string): Promise<T | null> {
+  await ensureOpen();
   const entry = await db.cacheMetadata.get(key);
   if (!entry) return null;
   
@@ -703,5 +803,59 @@ export async function getDbSizeEstimate(): Promise<{
   
   return { sentMails, inboxMails, drafts, pendingSync };
 }
+/**
+ * Estimate the byte sizes of IndexedDB (Dexie) and localStorage.
+ * Returns bytes for each.
+ */
+export async function getStorageBreakdown(): Promise<{
+  indexedDb: { bytes: number; tables: Record<string, { count: number; bytes: number }> };
+  localStorage: { bytes: number; keys: number };
+}> {
+  // --- IndexedDB: estimate by serialising a sample and multiplying ---
+  const tables: Record<string, { count: number; bytes: number }> = {};
 
+  const estimateTable = async (table: Table<any, any>, name: string) => {
+    const count = await table.count();
+    if (count === 0) {
+      tables[name] = { count: 0, bytes: 0 };
+      return;
+    }
+    // Sample up to 10 records and extrapolate
+    const sampleSize = Math.min(count, 10);
+    const sample = await table.limit(sampleSize).toArray();
+    const sampleBytes = sample.reduce((acc, r) => acc + new Blob([JSON.stringify(r)]).size, 0);
+    const avgBytes = sampleBytes / sampleSize;
+    tables[name] = { count, bytes: Math.round(avgBytes * count) };
+  };
+
+  await Promise.all([
+    estimateTable(db.inboxMails, 'inboxMails'),
+    estimateTable(db.sentMails, 'sentMails'),
+    estimateTable(db.drafts, 'drafts'),
+    estimateTable(db.pendingSync, 'pendingSync'),
+    estimateTable(db.syncCheckpoints, 'syncCheckpoints'),
+    estimateTable(db.cacheMetadata, 'cacheMetadata'),
+  ]);
+
+  const indexedDbBytes = Object.values(tables).reduce((s, t) => s + t.bytes, 0);
+
+  // --- localStorage ---
+  let lsBytes = 0;
+  let lsKeys = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key) {
+        lsKeys++;
+        const val = localStorage.getItem(key) || '';
+        lsBytes += (key.length + val.length) * 2; // JS strings are UTF-16
+      }
+    }
+  } catch { /* private browsing etc. */ }
+
+  return {
+    indexedDb: { bytes: indexedDbBytes, tables },
+    localStorage: { bytes: lsBytes, keys: lsKeys },
+  };
+}
 export default db;

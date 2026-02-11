@@ -5,7 +5,7 @@
  * localStorage, sessionStorage, and IndexedDB on logout.
  */
 
-import { db, clearAllData } from './db';
+import { db, clearAllData, ensureOpen } from './db';
 
 // IndexedDB database names used by the application
 const CACHE_DB_NAME = 'MailVoyageCache'; // Legacy database (mailCache.ts) - should no longer be created
@@ -49,8 +49,9 @@ export const clearSessionStorage = (): void => {
  * Delete the entire IndexedDB databases
  * This is more thorough than clearing individual stores
  */
-export const deleteIndexedDB = async (): Promise<void> => {
+export const deleteIndexedDB = async (): Promise<boolean> => {
   const databasesToDelete = [CACHE_DB_NAME, DEXIE_DB_NAME];
+  let allDeleted = true;
   
   // First, close any open Dexie connections
   try {
@@ -64,28 +65,31 @@ export const deleteIndexedDB = async (): Promise<void> => {
     try {
       console.log(`🧹 Deleting IndexedDB database: ${dbName}`);
       
-      await new Promise<void>((resolve) => {
+      const deleted = await new Promise<boolean>((resolve) => {
         const request = indexedDB.deleteDatabase(dbName);
         
         request.onsuccess = () => {
           console.log(`✅ ${dbName} deleted successfully`);
-          resolve();
+          resolve(true);
         };
         
         request.onerror = () => {
           console.warn(`⚠️ Error deleting ${dbName}:`, request.error);
-          resolve(); // Continue with other databases
+          resolve(false);
         };
         
         request.onblocked = () => {
-          console.warn(`⚠️ ${dbName} deletion blocked - will be deleted on page refresh`);
-          resolve();
+          console.warn(`⚠️ ${dbName} deletion blocked - will fallback to clearing stores`);
+          resolve(false);
         };
       });
+      if (!deleted) allDeleted = false;
     } catch (error) {
       console.warn(`⚠️ Error initiating ${dbName} deletion:`, error);
+      allDeleted = false;
     }
   }
+  return allDeleted;
 };
 
 /**
@@ -171,17 +175,30 @@ export const performCompleteLogout = async (): Promise<void> => {
     clearSessionStorage();
     
     // 3. Clear IndexedDB - try delete first, fallback to clearing stores
+    let dbFullyDeleted = false;
     try {
-      await deleteIndexedDB();
+      dbFullyDeleted = await deleteIndexedDB();
     } catch (dbError) {
       console.warn('⚠️ Could not delete IndexedDB, falling back to clearing stores');
+    }
+    // If any database deletion was blocked/failed, clear stores as fallback
+    if (!dbFullyDeleted) {
+      console.log('⚠️ IndexedDB deletion incomplete, clearing all stores as fallback');
       await clearIndexedDBStores();
     }
-    
-    // 4. Clear accessible cookies
+
+    // 4. Reopen the Dexie singleton so subsequent reads don't throw DatabaseClosedError
+    try {
+      await ensureOpen();
+      console.log('✅ Dexie database reopened (fresh empty instance)');
+    } catch (reopenError) {
+      console.warn('⚠️ Could not reopen Dexie after cleanup:', reopenError);
+    }
+
+    // 6. Clear accessible cookies
     clearCookies();
     
-    // 5. Clear Cache API (service worker caches)
+    // 7. Clear Cache API (service worker caches)
     await clearCacheAPI();
     
     console.log('✅ Complete logout cleanup finished successfully');

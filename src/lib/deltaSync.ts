@@ -102,6 +102,12 @@ function debouncedSync(tables: SyncTable[], since?: string): void {
     pendingSync.since = null;
     pendingSync.timeout = null;
     
+    // Abort if manager was shut down while debouncing (e.g. user logged out)
+    if (!deltaSyncManager.isReady()) {
+      console.debug('[DeltaSync] Debounced sync skipped — manager shut down');
+      return;
+    }
+
     // Execute sync
     if (tablesToSync.length > 0) {
       console.info(`[DeltaSync] Executing debounced sync for: ${tablesToSync.join(', ')}`);
@@ -201,6 +207,14 @@ class DeltaSyncManager {
     this.currentToken = null;
     this.tokenRefreshCallback = null;
     this.isRefreshingToken = false;
+
+    // Cancel any pending debounced sync
+    if (pendingSync.timeout) {
+      clearTimeout(pendingSync.timeout);
+      pendingSync.timeout = null;
+      pendingSync.tables.clear();
+      pendingSync.since = null;
+    }
     
     // Only reset connection-related state, preserve lastSync
     this.updateState({
@@ -405,11 +419,17 @@ class DeltaSyncManager {
   private async performInitialSync(): Promise<void> {
     console.info('[DeltaSync] Performing initial sync...');
     
+    // Abort if shutdown has already been called
+    if (!this.isInitialized) return;
+
     // Load cached data first (instant render)
     const [sentMails, inboxMails] = await Promise.all([
       this.getCachedSentMails(),
       this.getCachedInboxMails()
     ]);
+
+    // Re-check after async — logout may have happened while loading cache
+    if (!this.isInitialized) return;
 
     console.info(`[DeltaSync] Loaded from cache: ${sentMails.length} sent, ${inboxMails.length} inbox`);
 
@@ -488,6 +508,11 @@ async function executeDeltaSync(
     deleted: 0
   };
 
+  // Abort if delta sync was shut down (e.g. user logged out)
+  if (!deltaSyncManager.isReady()) {
+    return { ...result, success: false, error: 'DeltaSync not initialized' };
+  }
+
   // Check if already syncing to prevent duplicate syncs
   if (deltaSyncManager.getState().isSyncing) {
     console.debug('[DeltaSync] Sync already in progress, skipping');
@@ -498,6 +523,14 @@ async function executeDeltaSync(
 
   try {
     for (const table of tables) {
+      // Re-check readiness before each table sync (logout could happen mid-sync)
+      if (!deltaSyncManager.isReady()) {
+        console.info('[DeltaSync] Shutdown during sync, aborting');
+        result.success = false;
+        result.error = 'Sync aborted — shutdown';
+        break;
+      }
+
       switch (table) {
         case 'sent_mails':
           const sentResult = await syncSentMails(since);
@@ -517,6 +550,12 @@ async function executeDeltaSync(
           await syncAccounts();
           break;
       }
+    }
+
+    // Don't update checkpoints if aborted
+    if (!deltaSyncManager.isReady()) {
+      deltaSyncManager.updateState({ isSyncing: false });
+      return result;
     }
 
     // Update global checkpoint
@@ -627,7 +666,7 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
         const serverMails = res?.data?.mails || res?.mails || [];
         if (serverMails.length) {
           const mails: InboxMailRecord[] = serverMails.map((m: any) => ({
-            id: m.id || `${m.account_code || acc.accountCode}:${m.uid}`,
+            id: String(m.id ?? `${m.account_code || acc.accountCode}:${m.uid}`),
             uid: m.uid,
             accountId: m.account_code || acc.accountCode,
             mailbox: m.mailbox || 'INBOX',
