@@ -1,0 +1,82 @@
+# ──────────────────────────────────────────────────────────────
+# MailVoyage — Git Attributes
+#
+# Enforce LF line endings everywhere (the standard for
+# web/Node.js projects). This ensures consistent behavior
+# across Windows, macOS, and Linux — no more CRLF warnings.
+#
+# How it works:
+#   • Git stores all text files with LF in the repository
+#   • On checkout, files stay LF regardless of OS
+#   • `core.autocrlf` in your local git config is overridden
+#     by these rules (`.gitattributes` takes priority)
+# ──────────────────────────────────────────────────────────────
+
+# ── Default: auto-detect text files, normalize to LF ────────
+* text=auto eol=lf
+
+# ── Explicitly mark known text file types ────────────────────
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.xml       text eol=lf
+*.svg       text eol=lf
+*.txt       text eol=lf
+*.env       text eol=lf
+*.sql       text eol=lf
+*.sh        text eol=lf
+*.toml      text eol=lf
+
+# ── Config files ─────────────────────────────────────────────
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+docker-compose* text eol=lf
+.dockerignore   text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+.editorconfig   text eol=lf
+.eslintrc*      text eol=lf
+.prettierrc*    text eol=lf
+.browserslistrc text eol=lf
+Makefile        text eol=lf
+LICENSE         text eol=lf
+Procfile        text eol=lf
+
+# ── Shell scripts need LF (won't run with CRLF on Linux) ────
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# ── Windows batch files need CRLF ───────────────────────────
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# ── Binary files (never touch line endings) ──────────────────
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.avif  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.otf   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.mp4   binary
+*.webm  binary
+*.mp3   binary
+*.ogg   binary

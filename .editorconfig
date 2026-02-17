@@ -1,0 +1,32 @@
+# ──────────────────────────────────────────────────────────────
+# MailVoyage — EditorConfig
+#
+# Ensures consistent coding style across all editors and IDEs
+# (VS Code, WebStorm, Vim, etc.) regardless of OS.
+#
+# VS Code: install the "EditorConfig for VS Code" extension
+# (editorconfig.editorconfig) for automatic support.
+# ──────────────────────────────────────────────────────────────
+
+root = true
+
+# ── Default for all files ────────────────────────────────────
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# ── Markdown (trailing spaces can be intentional) ────────────
+[*.md]
+trim_trailing_whitespace = false
+
+# ── Makefiles require tabs ───────────────────────────────────
+[Makefile]
+indent_style = tab
+
+# ── Windows scripts ──────────────────────────────────────────
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
