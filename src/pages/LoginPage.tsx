@@ -76,7 +76,7 @@ const LoginPage: React.FC = () => {
                 id="email"
                 autoComplete="email"
                 {...register('email', emailValidation)}
-                className={`pl-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
+                className={`pl-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
                 placeholder="Enter your email"
                 autoFocus
@@ -84,7 +84,7 @@ const LoginPage: React.FC = () => {
             </div>
             {errors.email && (
               <p className="text-red-500 text-xs mt-1 flex items-start gap-1">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
                 <span>{errors.email.message}</span>
               </p>
             )}
@@ -109,7 +109,7 @@ const LoginPage: React.FC = () => {
                 id="password"
                 autoComplete="current-password"
                 {...register('password', { required: 'Password is required' })}
-                className={`pl-10 pr-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
+                className={`pl-10 pr-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
               />
               <button
@@ -123,7 +123,7 @@ const LoginPage: React.FC = () => {
             </div>
             {errors.password && (
               <p className="text-red-500 text-xs mt-1 flex items-start gap-1">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
                 <span>{errors.password.message}</span>
               </p>
             )}
@@ -131,7 +131,7 @@ const LoginPage: React.FC = () => {
           <Button
             type="submit"
             disabled={isSubmitting}
-            className="submit-button-gradient-border w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 h-[44px]
+            className="submit-button-gradient-border w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 h-11
               bg-blue-500 text-white hover:bg-blue-600 dark:bg-white dark:text-black dark:hover:bg-gray-100 
               dark:border dark:border-gray-300 transition-colors"
           >

@@ -302,7 +302,7 @@ const EmailItem = memo(function EmailItem({
       <div className="flex items-start justify-between">
         <div className="flex items-start space-x-3 flex-1 min-w-0">
           <div className={`
-            flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-medium
+            shrink-0 h-10 w-10 rounded-full flex items-center justify-center text-white text-sm font-medium
             ${email.isRead ? 'bg-gray-400 dark:bg-gray-600' : 'bg-blue-500 dark:bg-blue-600'}
           `}>
             {formatSenderName(email.senderName, email.sender).charAt(0).toUpperCase()}

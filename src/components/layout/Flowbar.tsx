@@ -123,7 +123,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
           border border-gray-200/50 dark:border-gray-700/50
           rounded-2xl shadow-2xl p-3
           before:absolute before:inset-0 before:rounded-2xl 
-          before:bg-gradient-to-r before:from-white/20 before:to-transparent 
+          before:bg-linear-to-r before:from-white/20 before:to-transparent 
           before:pointer-events-none dark:before:from-gray-800/20
         `}
         variants={containerVariants}
@@ -148,14 +148,14 @@ const Flowbar: React.FC<FlowbarProps> = ({
               onClick={toggleExpansion}
               className={`
                 relative flex items-center justify-center w-12 h-12 
-                rounded-xl bg-gradient-to-br from-blue-500 to-purple-600
+                rounded-xl bg-linear-to-br from-blue-500 to-purple-600
                 text-white shadow-lg hover:shadow-xl
                 transition-all duration-300 group overflow-hidden
               `}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+              <div className="absolute inset-0 bg-linear-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
               
               <AnimatePresence mode="wait">
                 {isExpanded ? (
@@ -261,7 +261,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
                           }
                         `}
                       >
-                        <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                        <div className="absolute inset-0 bg-linear-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                         
                         <Icon className="w-5 h-5 relative z-10" />
                         
@@ -334,7 +334,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                     >
-                      <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                      <div className="absolute inset-0 bg-linear-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                       {theme === 'system' && <Monitor className="w-5 h-5 relative z-10" />}
                       {theme === 'light' && <Sun className="w-5 h-5 relative z-10" />}
                       {theme === 'dark' && <Moon className="w-5 h-5 relative z-10" />}
@@ -369,7 +369,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                     >
-                      <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                      <div className="absolute inset-0 bg-linear-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                       <LogOut className="w-5 h-5 relative z-10" />
                     </motion.button>
 
@@ -403,7 +403,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                     >
-                      <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                      <div className="absolute inset-0 bg-linear-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                       <X className="w-5 h-5 relative z-10" />
                     </motion.button>
 

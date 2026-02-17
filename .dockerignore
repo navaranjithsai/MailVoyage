@@ -1,0 +1,40 @@
+# ── Dependencies ──────────────────────────────────────────────
+node_modules
+api/node_modules
+
+# ── Build outputs ─────────────────────────────────────────────
+dist
+api/dist
+
+# ── Version control ───────────────────────────────────────────
+.git
+.gitignore
+
+# ── IDE / Editor ──────────────────────────────────────────────
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# ── Docker itself ─────────────────────────────────────────────
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# ── CI / GitHub ───────────────────────────────────────────────
+.github
+
+# ── Environment & secrets ────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── API backend (not needed for frontend image) ──────────────
+api/
+
+# ── Documentation & misc ─────────────────────────────────────
+*.md
+LICENSE
+idea.prompt
+ToDo.md

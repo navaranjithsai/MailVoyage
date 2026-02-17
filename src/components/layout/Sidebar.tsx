@@ -77,7 +77,7 @@ const Tooltip: React.FC<{
 
   return (
     <div
-      className="fixed pointer-events-none z-[9999] transition-opacity duration-200"
+      className="fixed pointer-events-none z-9999 transition-opacity duration-200"
       style={{
         top: position.top,
         left: position.left,
@@ -266,7 +266,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
           ${isMobileTabletWidth() && !isCollapsed ? 'fixed' : 'relative'} top-0 left-0 h-screen bg-white dark:bg-gray-900 
           border-r border-gray-200 dark:border-gray-700 z-50 
           flex flex-col shadow-xl ${isMobileTabletWidth() ? '' : 'shadow-none'} 
-          flex-shrink-0
+          shrink-0
         `}
         variants={sidebarVariants}
         animate={isCollapsed ? 'collapsed' : 'expanded'}
@@ -295,7 +295,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                 transition={{ duration: 0.2 }}
                 className="flex items-center space-x-3 flex-1"
               >
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center overflow-hidden">
+                <div className="w-8 h-8 bg-linear-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center overflow-hidden">
                   {logoLoaded ? (
                     <img 
                       src={logoSvg} 
@@ -356,7 +356,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                   `}
                 >
                   <div className="relative">
-                    <Icon className="w-5 h-5 flex-shrink-0" />
+                    <Icon className="w-5 h-5 shrink-0" />
                     {/* Red dot for unread emails - only for inbox and if notifications are enabled */}
                     {item.id === 'inbox' && item.badge && showUnreadBadge && (
                       <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-gray-800"></div>
@@ -519,7 +519,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
               ${isCollapsed ? 'justify-center' : 'justify-start space-x-3'}
             `}
           >
-            <LogOut className="w-5 h-5 flex-shrink-0" />
+            <LogOut className="w-5 h-5 shrink-0" />
             
             <AnimatePresence>
               {!isCollapsed && (
@@ -588,7 +588,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
               {/* Expand button tooltip */}
               {hoveredTooltip === 'expand' && (
                 <div
-                  className="fixed pointer-events-none z-[9999] transition-opacity duration-200"
+                  className="fixed pointer-events-none z-9999 transition-opacity duration-200"
                   style={{
                     top: expandButtonRef.current?.getBoundingClientRect().top! + expandButtonRef.current?.getBoundingClientRect().height! / 2,
                     left: expandButtonRef.current?.getBoundingClientRect().right! + 8,
@@ -608,7 +608,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
           {/* Expanded sidebar tooltips */}
           {!isCollapsed && hoveredTooltip === 'collapse' && (
             <div
-              className="fixed pointer-events-none z-[9999] transition-opacity duration-200"
+              className="fixed pointer-events-none z-9999 transition-opacity duration-200"
               style={{
                 top: collapseButtonRef.current?.getBoundingClientRect().top! + collapseButtonRef.current?.getBoundingClientRect().height! / 2,
                 left: collapseButtonRef.current?.getBoundingClientRect().right! + 8,

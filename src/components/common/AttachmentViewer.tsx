@@ -310,7 +310,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
             <div className="flex items-center space-x-3 min-w-0 flex-1">
-              <div className="flex-shrink-0">
+              <div className="shrink-0">
                 {getFileIcon(currentAttachment?.contentType || '')}
               </div>
               <div className="min-w-0 flex-1">
@@ -414,7 +414,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
                   <button
                     key={index}
                     onClick={() => setCurrentIndex(index)}
-                    className={`flex-shrink-0 w-16 h-16 rounded-lg border-2 overflow-hidden transition-all ${
+                    className={`shrink-0 w-16 h-16 rounded-lg border-2 overflow-hidden transition-all ${
                       index === currentIndex
                         ? 'border-blue-500 ring-2 ring-blue-500/30'
                         : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
@@ -478,7 +478,7 @@ export const AttachmentListItem: React.FC<AttachmentListItemProps> = ({
   return (
     <div className={`flex items-center justify-between ${compact ? 'p-2' : 'p-3'} bg-gray-50 dark:bg-gray-700 rounded-lg group hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors`}>
       <div className="flex items-center space-x-3 min-w-0 flex-1">
-        <div className={`${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0`}>
+        <div className={`${compact ? 'w-8 h-8' : 'w-10 h-10'} rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0`}>
           <span className="text-blue-600 dark:text-blue-400">
             {getFileIcon(attachment.contentType)}
           </span>

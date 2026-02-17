@@ -1,57 +1,54 @@
-# Use a minimal Alpine-based Node.js runtime to reduce vulnerabilities
-FROM node:24-alpine3.19 AS base
+# ──────────────────────────────────────────────────────────────
+# MailVoyage API — Production Dockerfile  
+# Multi-stage build: base → deps → build → production
+# ──────────────────────────────────────────────────────────────
 
-# Set the working directory in the container
+# ── Base stage ────────────────────────────────────────────────
+FROM node:22-alpine AS base
+
 WORKDIR /app
 
-# Update Alpine packages to remove known vulnerabilities
+# Update Alpine packages to remove known CVEs
 RUN apk update && apk upgrade --no-cache
 
-# --- Dependencies Stage ---
+# ── Dependencies stage ────────────────────────────────────────
 FROM base AS deps
 
-# Copy package.json and package-lock.json (or yarn.lock or pnpm-lock.yaml)
-COPY package.json ./package.json
-COPY package-lock.json ./package-lock.json
-# If using pnpm:
-# COPY pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts \
+    && npm cache clean --force
 
-# Install dependencies
-# Use --frozen-lockfile for CI/production builds
-RUN npm install --frozen-lockfile
-# If using pnpm:
-# RUN corepack enable
-# RUN pnpm install --frozen-lockfile
-
-# --- Build Stage ---
+# ── Build stage ───────────────────────────────────────────────
 FROM base AS builder
 
-# Copy dependency files from the 'deps' stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build the TypeScript project
 RUN npm run build
 
-# --- Production Stage ---
+# ── Production stage ──────────────────────────────────────────
 FROM base AS production
 
-# Set NODE_ENV to production
-ENV NODE_ENV production
+# OCI metadata labels
+LABEL org.opencontainers.image.title="MailVoyage API" \
+      org.opencontainers.image.description="Backend API for MailVoyage email client" \
+      org.opencontainers.image.source="https://github.com/navaranjithsai/MailVoyage" \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.vendor="navaranjithsai"
 
-# Copy built artifacts and necessary files from the 'builder' stage
+ENV NODE_ENV=production
+
+# Copy only production artifacts
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
-# Copy .env.example if needed for reference, but DO NOT copy .env
-# COPY --from=builder /app/.env.example ./.env.example
 
-# Expose the port the app runs on
-# Use the ARG and ENV pattern to make the port configurable at build time and runtime
+# Run as non-root user for security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
 ARG PORT=3001
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
-# Define the command to run the application
-# Use node directly to run the compiled JavaScript
 CMD ["node", "dist/index.js"]

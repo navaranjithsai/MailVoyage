@@ -421,7 +421,7 @@ const SentPage: React.FC = () => {
                       <div className="flex-1 grid grid-cols-12 gap-4">
                         {/* To */}
                         <div className="col-span-3 flex items-center space-x-2">
-                          <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center shrink-0">
                             <Send className="w-4 h-4 text-green-600 dark:text-green-400" />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -447,7 +447,7 @@ const SentPage: React.FC = () => {
                             )}
                             {mail.attachmentsMetadata && mail.attachmentsMetadata.length > 0 && (
                               <span className="flex items-center gap-1 text-xs text-gray-400">
-                                <Paperclip className="w-3.5 h-3.5 flex-shrink-0" />
+                                <Paperclip className="w-3.5 h-3.5 shrink-0" />
                                 <span>{mail.attachmentsMetadata.length}</span>
                               </span>
                             )}
@@ -492,12 +492,12 @@ const SentPage: React.FC = () => {
                           <div className="flex items-center justify-between">
                             {/* Left: Sent label + metadata */}
                             <div className="flex items-center gap-4 min-w-0 flex-1">
-                              <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-medium flex-shrink-0">
+                              <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-medium shrink-0">
                                 <Send size={12} className="mr-1" />
                                 Sent
                               </div>
                               {mail.status === 'failed' && (
-                                <span className="px-2.5 py-0.5 text-xs bg-red-100 text-red-600 rounded-full font-medium flex-shrink-0">
+                                <span className="px-2.5 py-0.5 text-xs bg-red-100 text-red-600 rounded-full font-medium shrink-0">
                                   Failed
                                 </span>
                               )}
@@ -509,7 +509,7 @@ const SentPage: React.FC = () => {
                                   <span className="truncate">
                                     <span className="text-gray-500 font-medium">To:</span> {mail.toEmails.join(', ')}
                                   </span>
-                                  <span className="flex items-center gap-1 flex-shrink-0">
+                                  <span className="flex items-center gap-1 shrink-0">
                                     <Clock size={13} className="text-gray-400" />
                                     {formatDateFull(mail.sentAt)}
                                   </span>
@@ -518,7 +518,7 @@ const SentPage: React.FC = () => {
                             </div>
 
                             {/* Right: Action buttons */}
-                            <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                            <div className="flex items-center gap-2 ml-4 shrink-0">
                               <Button
                                 variant="outline"
                                 size="small"

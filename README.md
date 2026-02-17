@@ -2,7 +2,8 @@
 
 # MailVoyage - Modern Email Client for Developers and Users
 
-[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub license](https://img.shields.io/github/license/navaranjithsai/MailVoyage
+)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Made with Love](https://img.shields.io/badge/Made%20with-❤️-red.svg)](https://github.com/navaranjithsai)
 
@@ -183,7 +184,66 @@ The inbox cache limit controls how many emails are kept per email account:
   ```
 
 ## Deployment
-MailVoyage is optimized for serverless environments. To deploy on Vercel:
+
+### Docker (Recommended)
+
+Pull the pre-built image from Docker Hub:
+
+```bash
+docker pull navaranjithsai/mailvoyage:latest
+docker run -d -p 80:80 navaranjithsai/mailvoyage:latest
+```
+
+Or build locally:
+
+```bash
+docker build -t mailvoyage .
+docker run -d -p 80:80 mailvoyage
+```
+
+### Docker Compose (Full Stack)
+
+Run both frontend and API together:
+
+```bash
+# Copy and configure environment variables
+cp api/.env.example api/.env
+# Edit api/.env with your database credentials, JWT secret, etc.
+
+# Start all services
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### CI/CD — Automatic Versioning & Docker Hub Builds
+
+Every push to `main` automatically:
+1. Calculates the next **CalVer** version (e.g. `2026.2.1` → `2026.2.2`)
+2. Updates `package.json` versions in both frontend and API
+3. Creates a git tag and GitHub Release
+4. Builds and pushes the Docker image to [Docker Hub](https://hub.docker.com/r/navaranjithsai/mailvoyage)
+
+**No manual version numbers needed** — versions auto-increment per month.
+
+**Version format:** `YYYY.M.BUILD` (e.g. `2026.2.1`, `2026.2.2`, `2026.3.1`)
+
+**Setup (one-time):**
+
+1. Go to [Docker Hub → Account Settings → Security](https://hub.docker.com/settings/security)
+   and create an **Access Token** (Read & Write).
+
+2. Go to your GitHub repo → **Settings → Secrets and variables → Actions** and add:
+   | Secret Name | Value |
+   |---|---|
+   | `DOCKERHUB_USERNAME` | `navaranjithsai` |
+   | `DOCKERHUB_TOKEN` | The access token from step 1 |
+
+3. Push to `main` — everything else is automatic. `GITHUB_TOKEN` is provided by GitHub automatically.
+
+**Docker tags per build:** `navaranjithsai/mailvoyage:2026.2.1`, `navaranjithsai/mailvoyage:latest`, `navaranjithsai/mailvoyage:sha-abc1234`
+
+### Vercel (Serverless)
+
+MailVoyage also supports serverless deployment on Vercel:
 1. Link the repository to your Vercel account.
 2. Configure environment variables in the Vercel dashboard.
 3. Deploy the frontend and backend as separate projects or as a monorepo.
@@ -291,7 +351,7 @@ We welcome contributions to MailVoyage! To get started:
 3. Submit a pull request with a detailed description.
 
 ## License
-MailVoyage is open-source and licensed under the MIT License.
+MailVoyage is open-source and licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 ## Contact
 For questions or support, start a discussion in the Discussion tab.

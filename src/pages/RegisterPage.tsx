@@ -84,14 +84,14 @@ const RegisterPage: React.FC = () => {
                 id="username"
                 autoComplete="username"
                 {...register('username', usernameValidation)}
-                className={`pl-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
+                className={`pl-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.username ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
                 autoFocus
               />
             </div>
             {errors.username && (
               <p className="text-red-500 text-xs mt-1 flex items-start gap-1">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
                 <span>{errors.username.message}</span>
               </p>
             )}
@@ -109,13 +109,13 @@ const RegisterPage: React.FC = () => {
                 id="email"
                 autoComplete="email"
                 {...register('email', emailValidation)}
-                className={`pl-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
+                className={`pl-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
               />
             </div>
             {errors.email && (
               <p className="text-red-500 text-xs mt-1 flex items-start gap-1">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
                 <span>{errors.email.message}</span>
               </p>
             )}
@@ -133,7 +133,7 @@ const RegisterPage: React.FC = () => {
                 id="password"
                 autoComplete="new-password"
                 {...register('password', passwordValidation)}
-                className={`pl-10 pr-10 mt-1 block w-full border h-[44px] rounded-md shadow-sm focus:ring focus:ring-blue-500 
+                className={`pl-10 pr-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
                 onFocus={() => setPasswordFocused(true)}
                 onBlur={() => setPasswordFocused(false)}
@@ -180,7 +180,7 @@ const RegisterPage: React.FC = () => {
             </div>
             {errors.password && (
               <p className="text-red-500 text-xs mt-1 flex items-start gap-1">
-                <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
                 <span>
                   {typeof errors.password.message === 'string'
                     ? errors.password.message
@@ -192,7 +192,7 @@ const RegisterPage: React.FC = () => {
           <Button
             type="submit"
             disabled={isSubmitting}
-            className="submit-button-gradient-border w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 h-[44px]
+            className="submit-button-gradient-border w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 h-11
               bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white
               dark:bg-white dark:text-black dark:hover:bg-gray-100 dark:border dark:border-gray-300 transition-colors"
           >

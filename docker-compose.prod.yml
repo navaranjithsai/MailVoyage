@@ -1,29 +1,37 @@
-# MailVoyage Production Docker Compose
-# Usage: docker-compose -f docker-compose.prod.yml up -d
-
-version: '3.8'
+# ──────────────────────────────────────────────────────────────
+# MailVoyage — Production Docker Compose
+# 
+# Quick start:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Using pre-built Docker Hub images:
+#   MAILVOYAGE_TAG=latest docker compose -f docker-compose.prod.yml up -d
+# ──────────────────────────────────────────────────────────────
 
 services:
-  # Frontend (Nginx serving static files)
+  # ── Frontend (Nginx serving static files) ───────────────────
   web:
+    image: navaranjithsai/mailvoyage:${MAILVOYAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
     container_name: mailvoyage-web
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "${WEB_PORT:-80}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - mailvoyage-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
+      start_period: 10s
       retries: 3
 
-  # Backend API
+  # ── Backend API ─────────────────────────────────────────────
   api:
     build:
       context: ./api
@@ -40,13 +48,14 @@ services:
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     ports:
-      - "3001:3001"
+      - "${API_PORT:-3001}:3001"
     networks:
       - mailvoyage-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
+      start_period: 15s
       retries: 3
 
 networks:

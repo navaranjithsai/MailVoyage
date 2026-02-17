@@ -810,7 +810,7 @@ const InboxPage: React.FC = () => {
                   // Auto-focus the input after the animation opens
                   if (!showSearchBar) setTimeout(() => searchInputRef.current?.focus(), 150);
                 }}
-                className={`flex items-center gap-2 ${showSearchBar ? '!border-blue-500 !text-blue-600 dark:!text-blue-400' : ''}`}
+                className={`flex items-center gap-2 ${showSearchBar ? 'border-blue-500! text-blue-600! dark:text-blue-400!' : ''}`}
                 size="small"
               >
                 <Search className="w-4 h-4" />
@@ -849,9 +849,9 @@ const InboxPage: React.FC = () => {
               <div className="relative" ref={accountDropdownRef}>
                 <button
                   onClick={() => setShowAccountDropdown(v => !v)}
-                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors w-full sm:w-auto min-w-[180px]"
+                  className="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors w-full sm:w-auto min-w-45"
                 >
-                  <Mail className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  <Mail className="w-4 h-4 text-gray-400 shrink-0" />
                   <span className="truncate flex-1 text-left">
                     {selectedAccount?.email || 'Select account'}
                   </span>
@@ -879,7 +879,7 @@ const InboxPage: React.FC = () => {
                               : 'text-gray-700 dark:text-gray-200'
                           }`}
                         >
-                          <Mail className="w-4 h-4 flex-shrink-0" />
+                          <Mail className="w-4 h-4 shrink-0" />
                           <span className="truncate">{acc.email}</span>
                           {acc.isPrimary && (
                             <span className="ml-auto text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">
@@ -902,7 +902,7 @@ const InboxPage: React.FC = () => {
               <Button
                 variant="outline"
                 onClick={() => setShowFilterMenu(v => !v)}
-                className={`flex items-center gap-2 ${filterMode !== 'all' ? '!border-blue-500 !text-blue-600 dark:!text-blue-400' : ''}`}
+                className={`flex items-center gap-2 ${filterMode !== 'all' ? 'border-blue-500! text-blue-600! dark:text-blue-400!' : ''}`}
                 size="small"
               >
                 <Filter className="w-4 h-4" />
@@ -1018,7 +1018,7 @@ const InboxPage: React.FC = () => {
                     variant="outline"
                     size="small"
                     onClick={handleBulkDelete}
-                    className="flex items-center gap-1 !text-red-600 !border-red-300 dark:!border-red-700"
+                    className="flex items-center gap-1 text-red-600! border-red-300! dark:border-red-700!"
                   >
                     <Trash2 className="w-4 h-4" />
                     <span>Delete</span>
@@ -1039,7 +1039,7 @@ const InboxPage: React.FC = () => {
         {/* ── Error Banner ────────────────────────────────────────── */}
         {error && (
           <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 flex items-center gap-2 text-sm text-red-700 dark:text-red-300">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <AlertCircle className="w-4 h-4 shrink-0" />
             <span className="flex-1">{error}</span>
             <button onClick={() => setError(null)} className="hover:text-red-900">
               <X className="w-4 h-4" />
@@ -1113,7 +1113,7 @@ const InboxPage: React.FC = () => {
                 className={`
                   group px-4 py-3 cursor-pointer transition-colors
                   ${!mail.isRead ? 'bg-blue-50/50 dark:bg-blue-900/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}
-                  ${selectedIds.includes(mail.id) ? '!bg-blue-100 dark:!bg-blue-900/30' : ''}
+                  ${selectedIds.includes(mail.id) ? 'bg-blue-100! dark:bg-blue-900/30!' : ''}
                 `}
               >
                 <div className="flex items-start gap-3">
@@ -1158,7 +1158,7 @@ const InboxPage: React.FC = () => {
                         <p className={`text-sm truncate ${!mail.isRead ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>
                           {mail.subject || '(No Subject)'}
                         </p>
-                        {mail.hasAttachments && <Paperclip className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />}
+                        {mail.hasAttachments && <Paperclip className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
                         <span className="text-xs text-gray-400 dark:text-gray-500 truncate hidden lg:inline">
                           — {getPreview(mail)}
                         </span>
@@ -1193,7 +1193,7 @@ const InboxPage: React.FC = () => {
                         <p className={`text-sm truncate ${!mail.isRead ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>
                           {mail.fromName || mail.fromAddress}
                         </p>
-                        <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0 ml-2">
+                        <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 ml-2">
                           {formatDate(mail.date)}
                         </span>
                       </div>
@@ -1201,7 +1201,7 @@ const InboxPage: React.FC = () => {
                         <p className={`text-sm truncate ${!mail.isRead ? 'font-medium text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'}`}>
                           {mail.subject || '(No Subject)'}
                         </p>
-                        {mail.hasAttachments && <Paperclip className="w-3 h-3 text-gray-400 flex-shrink-0" />}
+                        {mail.hasAttachments && <Paperclip className="w-3 h-3 text-gray-400 shrink-0" />}
                       </div>
                       <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
                         {getPreview(mail)}
@@ -1255,7 +1255,7 @@ const InboxPage: React.FC = () => {
                       variant={currentPage === page ? 'primary' : 'outline'}
                       size="small"
                       onClick={() => handlePageChange(page)}
-                      className="!px-3 min-w-[36px]"
+                      className="px-3! min-w-9"
                     >
                       {page}
                     </Button>

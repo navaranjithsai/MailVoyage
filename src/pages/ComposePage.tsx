@@ -791,7 +791,7 @@ const ComposePage: React.FC = () => {
 
             {/* Editor (replaces custom toolbar + textarea) */}
             <div className="border border-gray-300 dark:border-gray-600 rounded-lg">
-              <div className="min-h-[480px] p-2 dark:bg-gray-700 dark:text-white">
+              <div className="min-h-120 p-2 dark:bg-gray-700 dark:text-white">
                 {/* CKEditor attaches to this div. We hide it in preview mode. */}
                 <div ref={editorHostRef} className={isPreview ? 'hidden' : ''} />
               </div>

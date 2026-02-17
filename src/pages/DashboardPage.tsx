@@ -888,7 +888,7 @@ const DashboardPage: React.FC = () => {
               
               {/* Info note */}
               <p className="text-xs text-gray-500 dark:text-gray-400 mb-4 flex items-start gap-1.5">
-                <span className="text-blue-500 dark:text-blue-400 mt-0.5 flex-shrink-0">ℹ</span>
+                <span className="text-blue-500 dark:text-blue-400 mt-0.5 shrink-0">ℹ</span>
                 <span>
                   {syncStatus.isRealTime 
                     ? 'Real-time WebSocket connection active. Updates sync instantly when server detects changes.'
@@ -918,7 +918,7 @@ const DashboardPage: React.FC = () => {
                 {syncState.lastSyncError && (
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-gray-600 dark:text-gray-400">Error:</span>
-                    <span className="text-sm font-medium text-red-600 dark:text-red-400 truncate max-w-[150px]" title={syncState.lastSyncError}>
+                    <span className="text-sm font-medium text-red-600 dark:text-red-400 truncate max-w-37.5" title={syncState.lastSyncError}>
                       {syncState.lastSyncError}
                     </span>
                   </div>
@@ -989,7 +989,7 @@ const DashboardPage: React.FC = () => {
                   transition={{ delay: 0.8 + index * 0.1, duration: 0.3 }}
                   className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
-                  <div className="flex-shrink-0">
+                  <div className="shrink-0">
                     {activity.icon}
                   </div>
                   <div className="flex-1 min-w-0">

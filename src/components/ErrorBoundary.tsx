@@ -74,7 +74,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         return (
           <div className="flex items-center justify-center p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
             <div className="flex items-center gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
               <div>
                 <p className="text-sm text-red-700 dark:text-red-400">
                   {name ? `${name} failed to load` : 'Something went wrong'}
@@ -146,7 +146,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Error Message:
                   </h4>
-                  <pre className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words">
+                  <pre className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap wrap-break-word">
                     {error.message}
                   </pre>
                 </div>
@@ -157,7 +157,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Stack Trace:
                   </h4>
-                  <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-words max-h-32 overflow-auto">
+                  <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap wrap-break-word max-h-32 overflow-auto">
                     {error.stack}
                   </pre>
                 </div>
@@ -168,7 +168,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Component Stack:
                   </h4>
-                  <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-words max-h-32 overflow-auto">
+                  <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap wrap-break-word max-h-32 overflow-auto">
                     {errorInfo.componentStack}
                   </pre>
                 </div>

@@ -249,7 +249,7 @@ const DraftsPage: React.FC = () => {
           {/* Info Banner */}
           <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-3 text-sm text-amber-700 dark:text-amber-300">
             <div className="flex items-center space-x-2">
-              <Info className="w-4 h-4 flex-shrink-0" />
+              <Info className="w-4 h-4 shrink-0" />
               <span>Drafts are saved locally in your browser. Once sent, they will be automatically removed.</span>
             </div>
           </div>
