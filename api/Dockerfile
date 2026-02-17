@@ -24,7 +24,9 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-RUN npm run build
+# Use build:only (tsc only) — migrations run at container startup,
+# not during image build (no database available at build time)
+RUN npm run build:only
 
 # ── Production stage ──────────────────────────────────────────
 FROM base AS production
