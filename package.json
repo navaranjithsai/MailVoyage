@@ -1,7 +1,7 @@
 {
   "name": "mailvoyage",
   "description": "MailVoyage - A modern email client with offline-first architecture",
-  "version": "1.0.0",
+  "version": "2026.2.1",
   "private": true,
   "type": "module",
   "engines": {

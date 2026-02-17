@@ -1,6 +1,6 @@
 {
   "name": "mailvoyage-api",
-  "version": "1.0.0",
+  "version": "2026.2.1",
   "description": "Backend API for MailVoyage - Email client REST API with WebSocket support",
   "main": "dist/index.js",
   "type": "module",
