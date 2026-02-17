@@ -45,8 +45,17 @@ env:
   DOCKER_IMAGE: navaranjithsai/mailvoyage
 
 jobs:
+  # ────────────────────────────────────────────────────────────
+  # Job 1: Read version from package.json (set locally via
+  #        `npm run version:bump` or `npm run release`)
+  #
+  # The old auto-CalVer calculation is commented out below.
+  # If you ever need CI to calculate versions again, uncomment
+  # the "Calculate CalVer version" block and comment out
+  # "Read version from package.json".
+  # ────────────────────────────────────────────────────────────
   version:
-    name: Calculate Version
+    name: Read Version
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,39 +63,50 @@ jobs:
       version: ${{ steps.calver.outputs.version }}
       version_tag: ${{ steps.calver.outputs.version_tag }}
     steps:
-      - name: Checkout (with tags)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Need full history for tag discovery
 
-      - name: Calculate CalVer version
+      - name: Read version from package.json
         id: calver
         run: |
-          YEAR=$(date -u +%Y)
-          MONTH=$(date -u +%-m)  # No zero-padding: 1-12
-          PREFIX="v${YEAR}.${MONTH}"
-
           # If manual override provided, use it directly
           if [[ -n "${{ inputs.tag_override }}" ]]; then
             VERSION="${{ inputs.tag_override }}"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "## Version (manual override)" >> "$GITHUB_STEP_SUMMARY"
-            echo "**${VERSION}**" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          else
+            # Read version that was set locally by `npm run version:bump`
+            VERSION=$(jq -r '.version' package.json)
           fi
-
-          # Find the highest existing build number for this year.month
-          LATEST_BUILD=$(git tag --list "${PREFIX}.*" --sort=-version:refname | head -n1 | grep -oP '\d+$' || echo "0")
-          NEXT_BUILD=$((LATEST_BUILD + 1))
-          VERSION="${YEAR}.${MONTH}.${NEXT_BUILD}"
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "version_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-          echo "## Version Calculated" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Previous:** ${PREFIX}.${LATEST_BUILD}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Next:** v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Version" >> "$GITHUB_STEP_SUMMARY"
+          echo "**v${VERSION}** (from package.json)" >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Old auto-CalVer calculation (commented out) ─────────
+      # Kept for reference — uncomment if you want CI to
+      # calculate versions instead of reading from package.json.
+      #
+      # - name: Calculate CalVer version
+      #   id: calver
+      #   run: |
+      #     YEAR=$(date -u +%Y)
+      #     MONTH=$(date -u +%-m)  # No zero-padding: 1-12
+      #     PREFIX="v${YEAR}.${MONTH}"
+      #
+      #     if [[ -n "${{ inputs.tag_override }}" ]]; then
+      #       VERSION="${{ inputs.tag_override }}"
+      #       echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      #       echo "version_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+      #       exit 0
+      #     fi
+      #
+      #     LATEST_BUILD=$(git tag --list "${PREFIX}.*" --sort=-version:refname | head -n1 | grep -oP '\d+$' || echo "0")
+      #     NEXT_BUILD=$((LATEST_BUILD + 1))
+      #     VERSION="${YEAR}.${MONTH}.${NEXT_BUILD}"
+      #
+      #     echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+      #     echo "version_tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
   build-and-push:
     name: Build & Push
@@ -104,21 +124,19 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Update package.json versions ──────────────────────────
-      - name: Sync version in package.json files
-        run: |
-          VERSION="${{ needs.version.outputs.version }}"
-          echo "Setting version to ${VERSION} in package.json files..."
-
-          # Update root package.json
-          jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
-
-          # Update api/package.json
-          jq --arg v "$VERSION" '.version = $v' api/package.json > tmp.json && mv tmp.json api/package.json
-
-          echo "### package.json versions updated to ${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+      # ── Old CI version sync (commented out) ──────────────────
+      # Version is now bumped locally via `npm run version:bump`
+      # before pushing. No CI commit needed = fewer commits.
+      #
+      # - name: Sync version in package.json files
+      #   run: |
+      #     VERSION="${{ needs.version.outputs.version }}"
+      #     jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
+      #     jq --arg v "$VERSION" '.version = $v' api/package.json > tmp.json && mv tmp.json api/package.json
 
       # ── Create git tag ────────────────────────────────────────
+      # No version-bump commit needed — version was already
+      # committed locally. CI only creates the tag.
       - name: Create version tag
         run: |
           VERSION_TAG="${{ needs.version.outputs.version_tag }}"
@@ -126,16 +144,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Commit the version bump (if changed)
-          if git diff --quiet; then
-            echo "No version file changes to commit"
-          else
-            git add package.json api/package.json
-            git commit -m "chore: bump version to ${VERSION_TAG} [skip ci]"
-            git push origin main
-          fi
-
-          # Create annotated tag
+          # Create annotated tag (no commit — version already in repo)
           git tag -a "${VERSION_TAG}" -m "Release ${VERSION_TAG}"
           git push origin "${VERSION_TAG}"
 

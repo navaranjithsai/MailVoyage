@@ -214,19 +214,57 @@ cp api/.env.example api/.env
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-### CI/CD — Automatic Versioning & Docker Hub Builds
+### CI/CD — Local Build + Automatic Release Pipeline
 
-Every push to `main` automatically:
-1. Calculates the next **CalVer** version (e.g. `2026.2.1` → `2026.2.2`)
-2. Updates `package.json` versions in both frontend and API
-3. Creates a git tag and GitHub Release
-4. Builds and pushes the Docker image to [Docker Hub](https://hub.docker.com/r/navaranjithsai/mailvoyage)
+MailVoyage uses a **local-first versioning** workflow. You bump the version locally,
+and CI handles the rest (tag, Docker image, GitHub Release) — zero bot commits.
 
-**No manual version numbers needed** — versions auto-increment per month.
+#### Developer Workflow
 
-**Version format:** `YYYY.M.BUILD` (e.g. `2026.2.1`, `2026.2.2`, `2026.3.1`)
+```bash
+# 1. Bump version + lint + build everything
+npm run release
 
-**Setup (one-time):**
+# 2. Commit your changes (version bump is included)
+git add -A
+git commit -m "feat: my awesome feature"
+
+# 3. Push — CI creates tag, Docker image, and GitHub Release
+git push origin main
+```
+
+**Available scripts:**
+
+| Script | What it does |
+|---|---|
+| `npm run version:bump` | Bump CalVer version in `package.json` files only |
+| `npm run release` | Bump + lint + build frontend & API |
+| `npm run release:quick` | Bump + build frontend only (skip lint & API) |
+
+**Version format:** CalVer `YYYY.M.BUILD` (e.g. `2026.2.1`, `2026.2.2`, `2026.3.1`).
+Build number auto-increments per month from existing git tags.
+
+#### What CI does on push to `main`
+
+1. **Reads** the version from `package.json` (already bumped locally)
+2. **Creates** an annotated git tag (`v2026.2.4`)
+3. **Builds** a multi-platform Docker image (`linux/amd64` + `linux/arm64`)
+4. **Pushes** to [Docker Hub](https://hub.docker.com/r/navaranjithsai/mailvoyage)
+5. **Creates** a GitHub Release with auto-generated release notes
+
+#### CI Pipelines
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| **Docker Publish** (`docker-publish.yml`) | Push to main | Tag, build Docker image, publish to Docker Hub, GitHub Release |
+| **CI** (`ci.yml`) | Manual (`workflow_dispatch`) | Lint, type-check, build verification (frontend + API) |
+| **CodeQL** (`codeql.yml`) | Manual (`workflow_dispatch`) | Security vulnerability scanning |
+
+> **Note:** CI and CodeQL are manual during active development to conserve GitHub Actions minutes.
+> Dependabot is configured via GitHub Settings (not a workflow file).
+> Once the project stabilizes, CI and CodeQL can be switched back to automatic triggers.
+
+#### Setup (one-time)
 
 1. Go to [Docker Hub → Account Settings → Security](https://hub.docker.com/settings/security)
    and create an **Access Token** (Read & Write).
@@ -237,7 +275,7 @@ Every push to `main` automatically:
    | `DOCKERHUB_USERNAME` | `navaranjithsai` |
    | `DOCKERHUB_TOKEN` | The access token from step 1 |
 
-3. Push to `main` — everything else is automatic. `GITHUB_TOKEN` is provided by GitHub automatically.
+3. That's it — `GITHUB_TOKEN` is provided by GitHub automatically.
 
 **Docker tags per build:** `navaranjithsai/mailvoyage:2026.2.1`, `navaranjithsai/mailvoyage:latest`, `navaranjithsai/mailvoyage:sha-abc1234`
 

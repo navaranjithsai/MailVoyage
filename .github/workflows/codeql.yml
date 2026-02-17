@@ -1,0 +1,58 @@
+# ──────────────────────────────────────────────────────────────
+# MailVoyage — CodeQL Security Analysis
+#
+# Scans for vulnerabilities in JavaScript/TypeScript code.
+# Currently manual-only (workflow_dispatch) to conserve
+# GitHub Actions minutes during active development.
+#
+# When the project reaches a stable stage, switch back to:
+#   on:
+#     push:
+#       branches: [main]
+#       paths: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.mjs']
+#     pull_request:
+#       branches: [main]
+#     schedule:
+#       - cron: '0 6 * * 1'   # Weekly Monday 06:00 UTC
+# ──────────────────────────────────────────────────────────────
+
+name: CodeQL
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

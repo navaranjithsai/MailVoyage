@@ -1,0 +1,194 @@
+# ──────────────────────────────────────────────────────────────
+# MailVoyage — CI Pipeline (Manual)
+#
+# Currently manual-only (workflow_dispatch) to conserve
+# GitHub Actions minutes during active development.
+#
+# When the project reaches a stable stage, switch back to:
+#   on:
+#     pull_request:
+#       branches: [main]
+#     push:
+#       branches: [main]
+#       paths-ignore: ['**.md', 'LICENSE', '.github/ISSUE_TEMPLATE/**']
+#
+# Gates: lint, type-check, and build verification for both
+# the frontend (Vite + React) and the API (Express + Knex).
+# All jobs run in parallel for speed.
+# ──────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_api_build:
+        description: 'Include API build (requires PostgreSQL service)'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Frontend Lint ─────────────────────────────────────────────
+  lint:
+    name: Lint (Frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  # ── Frontend Type Check ──────────────────────────────────────
+  typecheck:
+    name: Type Check (Frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+  # ── Frontend Build ───────────────────────────────────────────
+  build:
+    name: Build (Frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check bundle size
+        run: |
+          TOTAL=$(du -sb dist/ | cut -f1)
+          TOTAL_MB=$(echo "scale=2; $TOTAL / 1048576" | bc)
+          echo "## 📦 Bundle Size" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Total: **${TOTAL_MB} MB**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          find dist/assets -name '*.js' -o -name '*.css' | sort | while read f; do
+            SIZE=$(du -sh "$f" | cut -f1)
+            echo "| \`$(basename $f)\` | ${SIZE} |" >> $GITHUB_STEP_SUMMARY
+          done
+
+  # ── API Type Check ───────────────────────────────────────────
+  api-typecheck:
+    name: Type Check (API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API dependencies
+        run: npm ci --prefix api
+
+      - name: TypeScript check
+        run: npm run --prefix api typecheck
+
+  # ── API Build ────────────────────────────────────────────────
+  api-build:
+    name: Build (API)
+    runs-on: ubuntu-latest
+    # API build needs a PostgreSQL database for migrations
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: mailvoyage_test
+          POSTGRES_USER: mailvoyage
+          POSTGRES_PASSWORD: testpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: mailvoyage_test
+      DB_USER: mailvoyage
+      DB_PASSWORD: testpassword
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API dependencies
+        run: npm ci --prefix api
+
+      - name: Build API
+        run: npm run --prefix api build:only
+
+  # ── Summary Gate ─────────────────────────────────────────────
+  ci-passed:
+    name: CI Passed
+    if: always()
+    needs: [lint, typecheck, build, api-typecheck, api-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs
+        run: |
+          echo "Lint:           ${{ needs.lint.result }}"
+          echo "Typecheck:      ${{ needs.typecheck.result }}"
+          echo "Build:          ${{ needs.build.result }}"
+          echo "API Typecheck:  ${{ needs.api-typecheck.result }}"
+          echo "API Build:      ${{ needs.api-build.result }}"
+
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.typecheck.result }}" != "success" ]] || \
+             [[ "${{ needs.build.result }}" != "success" ]] || \
+             [[ "${{ needs.api-typecheck.result }}" != "success" ]] || \
+             [[ "${{ needs.api-build.result }}" != "success" ]]; then
+            echo "❌ One or more CI checks failed"
+            exit 1
+          fi
+
+          echo "✅ All CI checks passed"
