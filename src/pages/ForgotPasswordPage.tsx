@@ -109,16 +109,18 @@ const ForgotPasswordPage: React.FC = () => {
       setCurrentStep(2);
       toast.success('OTP sent to your email address');
       
-    } catch (error: any) {
-      const errorMessage = error.meta?.general || 'Failed to verify user credentials';
+    } catch (error: unknown) {
+      const err = error as { meta?: Record<string, string> };
+      const errorMessage = err.meta?.general || 'Failed to verify user credentials';
       toast.error(errorMessage);
       
-      if (error.meta) {
-        Object.keys(error.meta).forEach(field => {
+      if (err.meta) {
+        const meta = err.meta;
+        Object.keys(meta).forEach(field => {
           if (field !== 'general') {
             step1Form.setError(field as keyof Step1Form, {
               type: 'server',
-              message: error.meta[field]
+              message: meta[field]
             });
           }
         });
@@ -155,7 +157,7 @@ const ForgotPasswordPage: React.FC = () => {
         });
         toast.error('Invalid OTP');
       }
-    } catch (error) {
+    } catch (_error) {
       step2Form.setError('otp', {
         type: 'manual',
         message: 'Failed to verify OTP'
@@ -199,8 +201,9 @@ const ForgotPasswordPage: React.FC = () => {
         state: { message: 'Password reset successful. Please login with your new password.' }
       });
       
-    } catch (error: any) {
-      const errorMessage = error.meta?.general || 'Failed to update password';
+    } catch (error: unknown) {
+      const err = error as { meta?: Record<string, string> };
+      const errorMessage = err.meta?.general || 'Failed to update password';
       toast.error(errorMessage);
     } finally {
       setIsLoading(false);

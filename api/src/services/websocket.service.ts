@@ -33,7 +33,7 @@ export interface SyncSignal {
   since?: string;          // Timestamp of oldest change
   message?: string;        // Optional message
   timestamp: string;       // Signal timestamp
-  data?: Record<string, any>;  // Optional payload data
+  data?: Record<string, unknown>;  // Optional payload data
 }
 
 interface PendingSignal {
@@ -106,14 +106,14 @@ class WebSocketService {
   /**
    * Handle new WebSocket connection
    */
-  private handleConnection(ws: WebSocket, req: any): void {
+  private handleConnection(ws: WebSocket, _req: unknown): void {
     logger.info('[WebSocket] New connection attempt');
 
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
         this.handleMessage(ws, message);
-      } catch (error) {
+      } catch (_error) {
         logger.warn('[WebSocket] Invalid message format');
         this.sendError(ws, 'Invalid message format');
       }
@@ -137,10 +137,10 @@ class WebSocketService {
   /**
    * Handle incoming message from client
    */
-  private handleMessage(ws: WebSocket, message: any): void {
+  private handleMessage(ws: WebSocket, message: Record<string, unknown>): void {
     switch (message.type) {
       case 'auth':
-        this.handleAuth(ws, message.token);
+        this.handleAuth(ws, message.token as string);
         break;
       
       case 'ping':
@@ -204,8 +204,8 @@ class WebSocketService {
         timestamp: new Date().toISOString()
       });
 
-    } catch (error: any) {
-      logger.warn('[WebSocket] Auth failed:', error.message);
+    } catch (error: unknown) {
+      logger.warn('[WebSocket] Auth failed:', error instanceof Error ? error.message : String(error));
       this.sendError(ws, 'Authentication failed');
     }
   }

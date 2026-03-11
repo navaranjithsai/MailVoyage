@@ -25,6 +25,7 @@ const SearchPage: React.FC = () => {
     const isStarred = searchParams.get('starred') ? searchParams.get('starred') === 'true' : undefined;
     const priority = searchParams.get('priority') as 'high' | 'normal' | 'low' | undefined;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync from URL search params
     setSearchQuery(query);
     setSearchFilters({
       from,

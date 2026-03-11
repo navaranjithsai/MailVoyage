@@ -51,10 +51,10 @@ const DraftsPage: React.FC = () => {
         setDrafts(allDrafts);
         setIsLoading(false);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading drafts:', err);
       if (isMountedRef.current) {
-        setError(err.message || 'Failed to load drafts');
+        setError(err instanceof Error ? err.message : 'Failed to load drafts');
         setIsLoading(false);
       }
     }
@@ -113,7 +113,7 @@ const DraftsPage: React.FC = () => {
       setDrafts(prev => prev.filter(d => d.id !== draftToDelete));
       setSelectedDrafts(prev => prev.filter(id => id !== draftToDelete));
       toast.success('Draft deleted');
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting draft:', err);
       toast.error('Failed to delete draft');
     } finally {
@@ -130,7 +130,7 @@ const DraftsPage: React.FC = () => {
       setDrafts(prev => prev.filter(d => !selectedDrafts.includes(d.id)));
       setSelectedDrafts([]);
       toast.success(`${selectedDrafts.length} draft${selectedDrafts.length > 1 ? 's' : ''} deleted`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting drafts:', err);
       toast.error('Failed to delete drafts');
     }

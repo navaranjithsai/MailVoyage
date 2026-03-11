@@ -7,6 +7,7 @@
  * @returns Promise<any> The JSON response from the API
  * @throws Error if the request fails or the response is not ok
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const apiFetch = async (endpoint: string, options: RequestInit = {}): Promise<any> => {
   // Token is now handled by HttpOnly cookie, no need to get from localStorage for Authorization header.
   // const token = localStorage.getItem('authToken'); 
@@ -40,7 +41,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
   try {
     const response = await fetch(endpoint, config);
 
-    let responseData: any;
+    let responseData: unknown;
     let responseText = ''; // Store raw text for better error reporting
 
     try {
@@ -52,22 +53,25 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
         // For errors, this will be overridden by the !response.ok block
         responseData = response.ok ? {} : { message: 'Empty response from server.' };
       }
-    } catch (jsonError) {
+    } catch (_jsonError) {
       // If JSON parsing fails, use the raw text as the message if available and response is not ok
       // If response is ok but JSON is malformed, that's a server issue.
       responseData = { message: responseText || `Failed to parse JSON response. Status: ${response.status}` };
     }
 
     if (!response.ok) {
+      // Type-narrow responseData for property access
+      const resObj = (typeof responseData === 'object' && responseData !== null)
+        ? responseData as Record<string, unknown>
+        : null;
       // Ensure message comes from parsed JSON error or fallback
-      const message = responseData?.message || responseText || `HTTP error! status: ${response.status}`;
-      const err: any = new Error(message);
+      const message = String(resObj?.message || responseText || `HTTP error! status: ${response.status}`);
+      const err = Object.assign(new Error(message), { status: response.status });
       
       // Attach errors object (e.g., { field: 'message' }) if provided by backend
-      if (responseData?.errors) {
-        err.errors = responseData.errors;
+      if (resObj?.errors) {
+        Object.assign(err, { errors: resObj.errors });
       }
-      err.status = response.status; // Attach status code to the error
       throw err;
     }
 
@@ -85,15 +89,16 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
     // Fallback for other types of thrown values (less common)
     let message = 'An unexpected error occurred during the API request.';
+    const errRecord = (typeof error === 'object' && error !== null) ? error as Record<string, unknown> : null;
     if (typeof error === 'string' && error.length > 0) {
       message = error;
-    } else if (typeof (error as any)?.message === 'string') {
-      message = (error as any).message;
+    } else if (errRecord && typeof errRecord.message === 'string') {
+      message = errRecord.message;
     }
     const newError = new Error(message);
     // If the original error had a status, try to preserve it (though less likely for non-Error types)
-    if (typeof (error as any)?.status === 'number') {
-      (newError as any).status = (error as any).status;
+    if (errRecord && typeof errRecord.status === 'number') {
+      Object.assign(newError, { status: errRecord.status });
     }
     throw newError;
   }

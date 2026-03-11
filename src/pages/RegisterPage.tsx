@@ -26,6 +26,7 @@ const RegisterPage: React.FC = () => {
   const [passwordFocused, setPasswordFocused] = useState(false);
   const navigate = useNavigate();
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- react-hook-form is compatible with current React version
   const passwordValue = watch('password', '');
 
   const togglePasswordVisibility = () => setShowPassword((v) => !v);
@@ -39,9 +40,9 @@ const RegisterPage: React.FC = () => {
       toast.success('Registration successful! Please log in.');
       navigate('/login');
     } catch (error: unknown) {
-      const err = error as any;
+      const err = error as { errors?: Record<string, string>; message?: string };
       if (err.errors && typeof err.errors === 'object') {
-        Object.entries(err.errors as Record<string, string>).forEach(([field, msg]) => {
+        Object.entries(err.errors).forEach(([field, msg]) => {
           const message = String(msg);
           setError(field as keyof RegisterForm, { type: 'server', message });
           toast.error(message);

@@ -31,7 +31,7 @@ import EmailSettings from './settings/EmailSettings';
 interface SettingsSection {
   id: string;
   label: string;
-  icon: React.ComponentType<any>;
+  icon: React.ComponentType<{ className?: string }>;
 }
 
 const SettingsPage: React.FC = () => {
@@ -109,7 +109,8 @@ const SettingsPage: React.FC = () => {
       setInboxCacheLimit(parseInt(cachedLimit, 10) || 15);
     } else {
       apiFetch('/api/inbox/settings')
-        .then((res: any) => {
+        .then((response: unknown) => {
+          const res = response as { data?: { inboxCacheLimit?: number }; inboxCacheLimit?: number };
           // Controller returns { success: true, data: { inboxCacheLimit: number } }
           const limit = res?.data?.inboxCacheLimit || res?.inboxCacheLimit || 15;
           setInboxCacheLimit(limit);
@@ -185,14 +186,15 @@ const SettingsPage: React.FC = () => {
       setConfirmDialogOpen(true);
       toast.success(response.message || 'Profile updated successfully!');
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       setIsUpdating(false);
       setConfirmDialogOpen(false);
       
-      if (error.errors) {
-        setProfileErrors(error.errors);
+      const err = error as { errors?: { username?: string; email?: string }; message?: string };
+      if (err.errors) {
+        setProfileErrors(err.errors);
       } else {
-        toast.error(error.message || 'Failed to update profile');
+        toast.error(err.message || 'Failed to update profile');
       }
     }
   };
@@ -246,8 +248,8 @@ const SettingsPage: React.FC = () => {
       // Cache locally to avoid re-fetching on next visit
       localStorage.setItem('inbox_cache_limit', String(inboxCacheLimit));
       toast.success('Inbox cache limit updated');
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to save setting');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save setting');
     } finally {
       setIsSavingCacheLimit(false);
     }
@@ -461,7 +463,7 @@ const SettingsPage: React.FC = () => {
               ].map((themeOption) => (
                 <button
                   key={themeOption.id}
-                  onClick={() => setTheme(themeOption.id as any)}
+                  onClick={() => setTheme(themeOption.id as 'light' | 'dark' | 'system')}
                   className={`
                     p-4 border-2 rounded-lg text-left transition-all
                     ${theme === themeOption.id 

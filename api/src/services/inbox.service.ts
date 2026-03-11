@@ -1,7 +1,6 @@
-import { ImapFlow, FetchMessageObject } from 'imapflow';
+import { ImapFlow, ImapFlowOptions } from 'imapflow';
 import { simpleParser, AddressObject } from 'mailparser';
 import crypto from 'crypto';
-// @ts-ignore — node-pop3 has no type declarations
 import Pop3Command from 'node-pop3';
 import pool from '../db/index.js';
 import { logger } from '../utils/logger.js';
@@ -47,6 +46,8 @@ export interface InboxMail {
     size: number;
   }> | null;
   labels: string[] | null;
+  /** @internal POP3 flag for sync logic */
+  _pop3?: boolean;
 }
 
 export interface PaginatedInbox {
@@ -250,7 +251,7 @@ async function fetchMailsViaPop3(
     // Get list of message UIDs
     // POP3 UIDL response varies by server: can be array-of-arrays,
     // array-of-strings, raw multi-line string, or even an object.
-    const uidListRaw: any = await pop3.UIDL();
+    const uidListRaw: unknown = await pop3.UIDL();
     let uidList: Array<[string, string]> = []; // [msgNum, uidlValue]
 
     if (typeof uidListRaw === 'string') {
@@ -261,7 +262,7 @@ async function fetchMailsViaPop3(
         return [parts[0], parts[1] || parts[0]] as [string, string];
       });
     } else if (Array.isArray(uidListRaw)) {
-      uidList = uidListRaw.map((item: any) => {
+      uidList = uidListRaw.map((item: unknown) => {
         if (Array.isArray(item)) {
           return [String(item[0]), String(item[1] ?? item[0])] as [string, string];
         }
@@ -348,7 +349,7 @@ async function fetchMailsViaPop3(
 
     // Tag mails so syncMailsToCache knows not to overwrite local flags
     for (const m of fetchedMails) {
-      (m as any)._pop3 = true;
+      m._pop3 = true;
     }
 
     return {
@@ -356,18 +357,19 @@ async function fetchMailsViaPop3(
       totalOnServer: totalMessages,
       fetched: fetchedMails.length,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`[POP3] Error fetching mails:`, error);
 
-    try { await pop3.QUIT(); } catch {}
+    try { await pop3.QUIT(); } catch { /* best-effort cleanup */ }
 
     if (error instanceof AppError) throw error;
 
+    const errMsg = error instanceof Error ? error.message : String(error);
     throw new AppError(
-      `Failed to fetch emails via POP3: ${error.message}`,
+      `Failed to fetch emails via POP3: ${errMsg}`,
       500,
       false,
-      { details: error.message }
+      { details: errMsg }
     );
   }
 }
@@ -389,7 +391,7 @@ async function fetchMailsViaImap(
   const { mailbox, limit, sinceUid, page } = options;
   const secure = creds.security === 'SSL';
 
-  const imapConfig: any = {
+  const imapConfig: ImapFlowOptions = {
     host: creds.host,
     port: creds.port,
     secure,
@@ -406,7 +408,7 @@ async function fetchMailsViaImap(
 
   if (creds.security === 'STARTTLS') {
     imapConfig.secure = false;
-    imapConfig.starttls = { required: true };
+    (imapConfig as unknown as Record<string, unknown>).starttls = { required: true };
   }
 
   const client = new ImapFlow(imapConfig);
@@ -513,20 +515,21 @@ async function fetchMailsViaImap(
       totalOnServer: (client.mailbox && typeof client.mailbox !== 'boolean') ? client.mailbox.exists || 0 : fetchedMails.length,
       fetched: fetchedMails.length,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`[IMAP] Error fetching mails:`, error);
 
     if (client && client.usable) {
-      try { await client.logout(); } catch {}
+      try { await client.logout(); } catch { /* best-effort cleanup */ }
     }
 
     if (error instanceof AppError) throw error;
 
+    const errMsg = error instanceof Error ? error.message : String(error);
     throw new AppError(
-      `Failed to fetch emails: ${error.message}`,
+      `Failed to fetch emails: ${errMsg}`,
       500,
       false,
-      { details: error.message }
+      { details: errMsg }
     );
   }
 }
@@ -555,7 +558,7 @@ export async function syncMailsToCache(
 
     // Determine if this is a POP3 account (POP3 has no flags; preserve local read/starred)
     const isPop3 = mails.length > 0 && mails[0].mailbox === 'INBOX'
-      && (mails[0] as any)._pop3 === true;
+      && mails[0]._pop3 === true;
 
     for (const mail of mails) {
       // For IMAP: overwrite flags from server (they are authoritative).
@@ -697,7 +700,7 @@ export async function getCachedMails(
   const client = await pool.connect();
   try {
     let query: string;
-    let params: any[];
+    let params: unknown[];
 
     if (accountCode) {
       query = `SELECT * FROM inbox_cache
@@ -812,7 +815,7 @@ export async function searchMailsOnServer(
   }
 
   const secure = creds.security === 'SSL';
-  const imapConfig: any = {
+  const imapConfig: ImapFlowOptions = {
     host: creds.host,
     port: creds.port,
     secure,
@@ -825,7 +828,7 @@ export async function searchMailsOnServer(
   };
   if (creds.security === 'STARTTLS') {
     imapConfig.secure = false;
-    imapConfig.starttls = { required: true };
+    (imapConfig as unknown as Record<string, unknown>).starttls = { required: true };
   }
 
   const client = new ImapFlow(imapConfig);
@@ -848,7 +851,7 @@ export async function searchMailsOnServer(
       // IMAP SEARCH: search for the query across OR(FROM, TO, SUBJECT, TEXT).
       // ImapFlow's .search() accepts SearchObject with OR arrays.
       // We use TEXT (which covers headers + body) combined with the date range.
-      const searchCriteria: any = {};
+      const searchCriteria: { since?: Date; text?: string } = {};
 
       if (sinceDate) {
         searchCriteria.since = sinceDate;
@@ -951,20 +954,21 @@ export async function searchMailsOnServer(
       },
       protocol: 'IMAP',
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`[Search] Error searching mails:`, error);
 
     if (client && client.usable) {
-      try { await client.logout(); } catch {}
+      try { await client.logout(); } catch { /* best-effort cleanup */ }
     }
 
     if (error instanceof AppError) throw error;
 
+    const errMsg = error instanceof Error ? error.message : String(error);
     throw new AppError(
-      `Failed to search emails: ${error.message}`,
+      `Failed to search emails: ${errMsg}`,
       500,
       false,
-      { details: error.message }
+      { details: errMsg }
     );
   }
 }
@@ -1042,26 +1046,26 @@ export async function getAccountList(userId: string): Promise<Array<{ accountCod
 // Helper: Map DB row to InboxMail
 // ============================================================================
 
-function mapRowToInboxMail(row: any): InboxMail {
+function mapRowToInboxMail(row: Record<string, unknown>): InboxMail {
   return {
-    id: row.id,
-    uid: row.uid,
-    accountCode: row.account_code,
-    mailbox: row.mailbox,
-    messageId: row.message_id || null,
-    fromAddress: row.from_address,
-    fromName: row.from_name || null,
-    toAddresses: row.to_addresses || [],
-    ccAddresses: row.cc_addresses || null,
-    bccAddresses: row.bcc_addresses || null,
-    subject: row.subject || '(No Subject)',
-    textBody: row.text_body || null,
-    htmlBody: row.html_body || null,
-    date: row.date ? new Date(row.date).toISOString() : new Date().toISOString(),
-    isRead: row.is_read || false,
-    isStarred: row.is_starred || false,
-    hasAttachments: row.has_attachments || false,
-    attachmentsMetadata: row.attachments_metadata || null,
-    labels: row.labels || null,
+    id: row.id as string,
+    uid: row.uid as number,
+    accountCode: row.account_code as string,
+    mailbox: row.mailbox as string,
+    messageId: (row.message_id as string) || null,
+    fromAddress: row.from_address as string,
+    fromName: (row.from_name as string) || null,
+    toAddresses: (row.to_addresses as string[]) || [],
+    ccAddresses: (row.cc_addresses as string[]) || null,
+    bccAddresses: (row.bcc_addresses as string[]) || null,
+    subject: (row.subject as string) || '(No Subject)',
+    textBody: (row.text_body as string) || null,
+    htmlBody: (row.html_body as string) || null,
+    date: row.date ? new Date(row.date as string).toISOString() : new Date().toISOString(),
+    isRead: (row.is_read as boolean) || false,
+    isStarred: (row.is_starred as boolean) || false,
+    hasAttachments: (row.has_attachments as boolean) || false,
+    attachmentsMetadata: (row.attachments_metadata as InboxMail['attachmentsMetadata']) || null,
+    labels: (row.labels as string[]) || null,
   };
 }

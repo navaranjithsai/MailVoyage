@@ -1,6 +1,4 @@
 import nodemailer from 'nodemailer';
-import { ImapFlow } from 'imapflow';
-import { simpleParser, ParsedMail, AddressObject } from 'mailparser'; // Import AddressObject
 import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
@@ -12,10 +10,6 @@ import { signalNewSentMail } from '../utils/signaling.js';
 const generateThreadId = (): string => {
   return crypto.randomBytes(16).toString('hex');
 };
-
-// --- Types (Define properly later) ---
-type MailServerConfig = any; // Replace with actual type/interface
-type MailData = any; // Replace with actual type/interface
 
 // Placeholder: Encrypt/Decrypt functions (Implement securely)
 // const encrypt = (text: string): string => {
@@ -224,7 +218,7 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
     
     logger.debug(`email_accounts query result: ${accountResult.rows.length} rows`);
     
-    let smtpConfig: any = null;
+    let smtpConfig: { host: string; port: number; username: string; password: string; security: string } | null = null;
     let fromEmail = '';
     
     if (accountResult.rows.length > 0) {
@@ -288,7 +282,8 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
     const secure = smtpConfig.security === 'SSL';
     const requireTLS = smtpConfig.security === 'TLS' || smtpConfig.security === 'STARTTLS';
     
-    const transportConfig: any = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nodemailer transport options type not importable with NodeNext moduleResolution
+    const transportConfig: Record<string, any> = {
       host: smtpConfig.host,
       port: smtpConfig.port,
       secure: secure, // true for SSL (port 465), false for STARTTLS/TLS
@@ -323,10 +318,13 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
     // Debug mode in development (only log warnings and errors from SMTP)
     if (process.env.NODE_ENV !== 'production') {
       transportConfig.logger = {
-        debug: () => {},  // Suppress SMTP debug noise
-        info: () => {},   // Suppress SMTP info noise
-        warn: (msg: any) => logger.warn(`[SMTP] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`),
-        error: (msg: any) => logger.error(`[SMTP] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`),
+        level: () => {},   // Suppress SMTP level noise
+        trace: () => {},   // Suppress SMTP trace noise
+        debug: () => {},   // Suppress SMTP debug noise
+        info: () => {},    // Suppress SMTP info noise
+        warn: (msg: unknown) => logger.warn(`[SMTP] ${typeof msg === 'object' ? JSON.stringify(msg) : String(msg)}`),
+        error: (msg: unknown) => logger.error(`[SMTP] ${typeof msg === 'object' ? JSON.stringify(msg) : String(msg)}`),
+        fatal: () => {},   // Suppress SMTP fatal noise
       };
     }
     
@@ -337,18 +335,23 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       logger.info('Verifying SMTP connection...');
       await transporter.verify();
       logger.info('SMTP connection verified successfully');
-    } catch (verifyError: any) {
+    } catch (verifyError: unknown) {
       logger.error('SMTP connection verification failed:', verifyError);
+      const verifyMsg = verifyError instanceof Error ? verifyError.message : String(verifyError);
       throw new AppError(
-        `SMTP connection failed: ${verifyError.message}`,
+        `SMTP connection failed: ${verifyMsg}`,
         500,
         false,
-        { details: verifyError.message }
+        { details: verifyMsg }
       );
     }
     
     // Step 4: Prepare email options
-    const mailOptions: any = {
+    const mailOptions: {
+      from: string; to: string; subject: string; html: string; text?: string;
+      cc?: string; bcc?: string;
+      attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
+    } = {
       from: `${fromEmail} <${fromEmail}>`,
       to: payload.to.join(', '),
       subject: payload.subject,
@@ -380,16 +383,18 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
     try {
       info = await transporter.sendMail(mailOptions);
       logger.info(`Email sent successfully. Message ID: ${info.messageId}`);
-    } catch (sendError: any) {
+    } catch (sendError: unknown) {
       logger.error('Failed to send email:', sendError);
+      const sendMsg = sendError instanceof Error ? sendError.message : String(sendError);
+      const sendErrExt = sendError as Record<string, unknown> | undefined;
       throw new AppError(
-        `Failed to send email: ${sendError.message}`,
+        `Failed to send email: ${sendMsg}`,
         500,
         false,
         { 
-          details: sendError.message,
-          response: sendError.response,
-          responseCode: sendError.responseCode,
+          details: sendMsg,
+          response: sendErrExt?.response,
+          responseCode: sendErrExt?.responseCode,
         }
       );
     }
@@ -433,7 +438,7 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       
       // Signal the client that sent_mails table has been updated
       signalNewSentMail(userId, new Date().toISOString());
-    } catch (dbError: any) {
+    } catch (dbError: unknown) {
       // Log error but don't fail the operation - email was sent successfully
       logger.error('Failed to save sent email to database:', dbError);
     }
@@ -445,18 +450,20 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       message: 'Email sent successfully',
     };
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error in sendMailFromAccount:', error);
     
     if (error instanceof AppError) {
       throw error;
     }
     
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
     throw new AppError(
-      error.message || 'Failed to send email',
+      errMsg || 'Failed to send email',
       500,
       false,
-      { details: error.message, stack: error.stack }
+      { details: errMsg, stack: errStack }
     );
   } finally {
     client.release();
@@ -485,6 +492,7 @@ export interface SentMailListItem {
   sentAt: Date;
   status: 'pending' | 'sent' | 'failed';
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface SentMailDetail {
@@ -507,6 +515,7 @@ export interface SentMailDetail {
   status: 'pending' | 'sent' | 'failed';
   sentAt: Date;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface PaginatedSentMails {
@@ -534,7 +543,7 @@ export const getSentMailsByUserId = async (
     
     // Build WHERE clause with optional since filter for delta sync
     const conditions = ['user_id = $1'];
-    const params: any[] = [userId];
+    const params: unknown[] = [userId];
     
     if (since) {
       conditions.push(`(sent_at > $${params.length + 1} OR created_at > $${params.length + 1})`);
@@ -566,7 +575,8 @@ export const getSentMailsByUserId = async (
         message_id,
         sent_at,
         status,
-        created_at
+        created_at,
+        updated_at
       FROM sent_mails 
       WHERE ${whereClause}
       ORDER BY sent_at DESC 
@@ -589,6 +599,7 @@ export const getSentMailsByUserId = async (
       sentAt: row.sent_at,
       status: row.status,
       createdAt: row.created_at,
+      updatedAt: row.updated_at || row.sent_at,
     }));
     
     return {
@@ -629,7 +640,8 @@ export const getSentMailByThreadId = async (
         message_id,
         status,
         sent_at,
-        created_at
+        created_at,
+        updated_at
       FROM sent_mails 
       WHERE user_id = $1 AND thread_id = $2`,
       [userId, threadId]
@@ -656,6 +668,7 @@ export const getSentMailByThreadId = async (
       status: row.status,
       sentAt: row.sent_at,
       createdAt: row.created_at,
+      updatedAt: row.updated_at || row.sent_at,
     };
     
   } finally {
@@ -688,7 +701,8 @@ export const getSentMailById = async (
         message_id,
         status,
         sent_at,
-        created_at
+        created_at,
+        updated_at
       FROM sent_mails 
       WHERE user_id = $1 AND id = $2`,
       [userId, mailId]
@@ -715,6 +729,7 @@ export const getSentMailById = async (
       status: row.status,
       sentAt: row.sent_at,
       createdAt: row.created_at,
+      updatedAt: row.updated_at || row.sent_at,
     };
     
   } finally {

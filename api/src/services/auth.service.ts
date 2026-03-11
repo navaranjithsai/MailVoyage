@@ -39,7 +39,7 @@ export const registerUser = async (username: string, email: string, password: st
     logger.info(`User registered: ${newUser.email}`);
     // Exclude password hash from response
     return { message: 'Registration successful', user: { id: newUser.id, username: newUser.username, email: newUser.email } };
-  } catch (err: any) { // Catch specific errors if possible
+  } catch (err: unknown) { // Catch specific errors if possible
     logger.error('Error during registration:', err);
     // Re-throw specific AppErrors or a generic one
     if (err instanceof AppError) throw err;
@@ -81,7 +81,7 @@ export const loginUser = async (email: string, password: string) => {
       // refreshToken: refreshToken, // If using refresh tokens
       user: { id: user.id, username: user.username, email: user.email }
     };
-  } catch (err: any) { // Catch specific errors if possible
+  } catch (err: unknown) { // Catch specific errors if possible
     logger.error('Error during login:', err);
     // Re-throw specific AppErrors or a generic one
     if (err instanceof AppError) throw err;
@@ -127,7 +127,7 @@ export const requestPasswordReset = async (username: string, email: string) => {
       hashedOTP, // Send hashed OTP back to client for verification
       username: user.username // Send username back for frontend state
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Error during password reset request:', err);
     if (err instanceof AppError) throw err;
     throw new AppError('Internal Server Error', 500, false, { 
@@ -172,7 +172,7 @@ export const resetPasswordWithToken = async (username: string, newPassword: stri
     return {
       message: 'Password updated successfully'
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Error during password reset:', err);
     if (err instanceof AppError) throw err;
     throw new AppError('Internal Server Error', 500, false, { 

@@ -98,7 +98,7 @@ export const getUserPreferences = async (userId: number) => {
 };
 
 // Placeholder: Update user preferences
-export const updateUserPreferences = async (userId: number, preferencesData: any) => {
+export const updateUserPreferences = async (userId: number, _preferencesData: Record<string, unknown>) => {
   logger.info(`Placeholder: Updating preferences for user ${userId}`);
   // Update user preferences in DB
   return { message: `Placeholder: Preferences updated for user ${userId}` };

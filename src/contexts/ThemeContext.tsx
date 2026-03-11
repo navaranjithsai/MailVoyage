@@ -33,6 +33,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Update resolved theme and apply class when theme changes or system preference changes
   useEffect(() => {
     const currentResolvedTheme = theme === 'system' ? getSystemTheme() : theme;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync resolved theme from theme preference
     setResolvedTheme(currentResolvedTheme);
     applyTheme(currentResolvedTheme);
     localStorage.setItem('theme', theme); // Store user preference
@@ -63,6 +64,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = (): ThemeContextType => {
   const context = useContext(ThemeContext);
   if (context === undefined) {

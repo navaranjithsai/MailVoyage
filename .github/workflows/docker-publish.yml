@@ -144,11 +144,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Create annotated tag (no commit — version already in repo)
-          git tag -a "${VERSION_TAG}" -m "Release ${VERSION_TAG}"
-          git push origin "${VERSION_TAG}"
-
-          echo "### Git tag created: ${VERSION_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          # Check if this tag already exists (locally or on remote)
+          if git rev-parse "${VERSION_TAG}" >/dev/null 2>&1; then
+            echo "⚠️ Tag ${VERSION_TAG} already exists — skipping tag creation"
+            echo "### ⚠️ Tag ${VERSION_TAG} already exists (reusing)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            git tag -a "${VERSION_TAG}" -m "Release ${VERSION_TAG}"
+            git push origin "${VERSION_TAG}"
+            echo "### ✅ Git tag created: ${VERSION_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # ── Docker metadata (tags + labels) ───────────────────────
       - name: Extract Docker metadata

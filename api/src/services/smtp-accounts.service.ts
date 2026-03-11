@@ -19,19 +19,19 @@ export interface SmtpAccount {
   updatedAt?: Date;
 }
 
-const mapFromDb = (row: any): SmtpAccount => ({
-  id: row.id,
-  userId: row.user_id,
-  email: row.email,
-  host: row.host,
-  port: row.port,
-  username: row.username,
-  password: row.password,
-  security: row.security,
-  accountCode: row.account_code,
-  isActive: row.is_active,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
+const mapFromDb = (row: Record<string, unknown>): SmtpAccount => ({
+  id: row.id as string,
+  userId: row.user_id as string,
+  email: row.email as string,
+  host: row.host as string,
+  port: row.port as number,
+  username: row.username as string,
+  password: row.password as string,
+  security: row.security as SmtpAccount['security'],
+  accountCode: row.account_code as string,
+  isActive: row.is_active as boolean,
+  createdAt: row.created_at as Date,
+  updatedAt: row.updated_at as Date,
 });
 
 export const getSmtpAccountsByUserId = async (userId: string): Promise<SmtpAccount[]> => {
@@ -117,10 +117,10 @@ export const updateSmtpAccount = async (id: string, userId: string, update: Part
     if (existing.rows.length === 0) return null;
 
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let i = 1;
 
-    const push = (col: string, val: any) => { fields.push(`${col} = $${i++}`); values.push(val); };
+    const push = (col: string, val: unknown) => { fields.push(`${col} = $${i++}`); values.push(val); };
 
     if (update.email !== undefined) push('email', update.email);
     if (update.host !== undefined) push('host', update.host);

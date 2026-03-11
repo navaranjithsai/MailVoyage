@@ -22,8 +22,9 @@ export const verifyAccessToken = (token: string): object | string => {
   if (!jwtSecret) throw new AppError('Configuration Error', 500, false, { general: 'JWT Secret not configured.' });
   try {
     return jwt.verify(token, jwtSecret);
-  } catch (error: any) {
-    logger.error('JWT Access Token verification failed:', error.message);
+  } catch (error: unknown) {
+    const errMessage = error instanceof Error ? error.message : String(error);
+    logger.error('JWT Access Token verification failed:', errMessage);
     if (error instanceof jwt.TokenExpiredError) {
       throw new AppError('Unauthorized', 401, true, { token: 'Token expired' });
     } else if (error instanceof jwt.JsonWebTokenError) {

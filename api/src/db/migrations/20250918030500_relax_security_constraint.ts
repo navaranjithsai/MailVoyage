@@ -43,6 +43,6 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw(`ALTER TABLE ${table} ALTER COLUMN security SET NOT NULL`);
 }
 
-export async function down(knex: Knex): Promise<void> {
+export async function down(_knex: Knex): Promise<void> {
   // Keep the relaxed constraint; no-op for down to avoid flip-flopping types/constraints
 }

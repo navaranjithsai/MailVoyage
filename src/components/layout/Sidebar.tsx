@@ -43,15 +43,17 @@ interface SidebarProps {
 // Tooltip component that renders at document root
 const Tooltip: React.FC<{
   isVisible: boolean;
-  targetRef: React.RefObject<HTMLElement | null>;
+  targetRef?: React.RefObject<HTMLElement | null>;
+  getTarget?: () => HTMLElement | null;
   children: React.ReactNode;
-}> = ({ isVisible, targetRef, children }) => {
+}> = ({ isVisible, targetRef, getTarget, children }) => {
   const [position, setPosition] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
-    if (!isVisible || !targetRef.current) return;
-    
-    const target = targetRef.current;
+    if (!isVisible) return;
+
+    const target = targetRef?.current ?? getTarget?.() ?? null;
+    if (!target) return;
     
     const updatePosition = () => {
       const rect = target.getBoundingClientRect();
@@ -71,7 +73,7 @@ const Tooltip: React.FC<{
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition);
     };
-  }, [isVisible, targetRef.current]); // Use targetRef.current instead of targetRef object
+  }, [isVisible, targetRef, getTarget]);
 
   if (!isVisible) return null;
 
@@ -175,7 +177,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
       // If collapsed, cycle through themes on click
       const currentIndex = themeOptions.findIndex(opt => opt.id === theme);
       const nextIndex = (currentIndex + 1) % themeOptions.length;
-      setTheme(themeOptions[nextIndex].id as any);
+      setTheme(themeOptions[nextIndex].id as 'system' | 'light' | 'dark');
     }
   };
 
@@ -433,7 +435,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                         return (
                           <button
                             key={option.id}
-                            onClick={() => setTheme(option.id as any)}
+                            onClick={() => setTheme(option.id as 'system' | 'light' | 'dark')}
                             className={`
                               w-full flex items-center space-x-3 px-3 py-2 rounded text-sm
                               transition-colors duration-200
@@ -548,7 +550,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                 <Tooltip
                   key={`${item.id}-tooltip`}
                   isVisible={hoveredTooltip === item.id}
-                  targetRef={{ current: navItemRefs.current[item.id] as HTMLElement | null }}
+                  getTarget={() => navItemRefs.current[item.id] as HTMLElement | null}
                 >
                   <div>
                     {item.label}
@@ -586,41 +588,29 @@ const SidebarComponent: React.FC<SidebarProps> = ({
               </Tooltip>
 
               {/* Expand button tooltip */}
-              {hoveredTooltip === 'expand' && (
-                <div
-                  className="fixed pointer-events-none z-9999 transition-opacity duration-200"
-                  style={{
-                    top: expandButtonRef.current?.getBoundingClientRect().top! + expandButtonRef.current?.getBoundingClientRect().height! / 2,
-                    left: expandButtonRef.current?.getBoundingClientRect().right! + 8,
-                    transform: 'translateY(-50%)',
-                  }}
-                >
-                  <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
-                    Expand
-                    <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+c</div>
-                    <div className="absolute top-1/2 -translate-y-1/2 -left-1 w-0 h-0 border-t-4 border-b-4 border-r-4 border-transparent border-r-gray-900 dark:border-r-gray-100" />
-                  </div>
+              <Tooltip
+                isVisible={hoveredTooltip === 'expand'}
+                targetRef={expandButtonRef as React.RefObject<HTMLElement | null>}
+              >
+                <div>
+                  Expand
+                  <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+c</div>
                 </div>
-              )}
+              </Tooltip>
             </>
           )}
 
           {/* Expanded sidebar tooltips */}
-          {!isCollapsed && hoveredTooltip === 'collapse' && (
-            <div
-              className="fixed pointer-events-none z-9999 transition-opacity duration-200"
-              style={{
-                top: collapseButtonRef.current?.getBoundingClientRect().top! + collapseButtonRef.current?.getBoundingClientRect().height! / 2,
-                left: collapseButtonRef.current?.getBoundingClientRect().right! + 8,
-                transform: 'translateY(-50%)',
-              }}
+          {!isCollapsed && (
+            <Tooltip
+              isVisible={hoveredTooltip === 'collapse'}
+              targetRef={collapseButtonRef as React.RefObject<HTMLElement | null>}
             >
-              <div className="bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm px-3 py-2 rounded-lg whitespace-nowrap shadow-lg">
+              <div>
                 Collapse
                 <div className="text-xs text-gray-300 dark:text-gray-600 mt-1">alt+c</div>
-                <div className="absolute top-1/2 -translate-y-1/2 -left-1 w-0 h-0 border-t-4 border-b-4 border-r-4 border-transparent border-r-gray-900 dark:border-r-gray-100" />
               </div>
-            </div>
+            </Tooltip>
           )}
         </>,
         document.body

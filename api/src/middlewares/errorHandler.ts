@@ -3,7 +3,7 @@ import { AppError } from '../utils/errors.js'; // Import custom error class
 import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 
-export const errorHandler = (err: Error | AppError, req: Request, res: Response, next: NextFunction) => { // Type err more specifically
+export const errorHandler = (err: Error | AppError, req: Request, res: Response, _next: NextFunction) => { // Type err more specifically
   // Log the error
   logger.error(`${err.name}: ${err.message}`, {
     stack: config.nodeEnv === 'development' ? err.stack : undefined,

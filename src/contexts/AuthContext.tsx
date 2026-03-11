@@ -22,92 +22,92 @@ interface AuthContextType {
   clearTabValidation: () => void;
 }
 
+// ── Session storage helpers (module-level for stable references) ──────────────
+
+const getSessionItem = (key: string): string | null => {
+  try {
+    return sessionStorage.getItem(key);
+  } catch (e) {
+    console.error(`Error accessing sessionStorage for key ${key}:`, e);
+    return null;
+  }
+};
+
+const setSessionItem = (key: string, value: string): boolean => {
+  try {
+    sessionStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    console.error(`Error setting sessionStorage for key ${key}:`, e);
+    return false;
+  }
+};
+
+const removeSessionItem = (key: string): boolean => {
+  try {
+    sessionStorage.removeItem(key);
+    return true;
+  } catch (e) {
+    console.error(`Error removing sessionStorage for key ${key}:`, e);
+    return false;
+  }
+};
+
+const generateTabSessionId = (): string => {
+  return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+};
+
+const getTabSessionId = (): string => {
+  let tabSessionId = getSessionItem('tabSessionId');
+  if (!tabSessionId) {
+    tabSessionId = generateTabSessionId();
+    setSessionItem('tabSessionId', tabSessionId);
+    console.log('AuthContext: Generated new tab session ID:', tabSessionId);
+  }
+  return tabSessionId;
+};
+
+const getSessionValidationState = (tabSessionId: string): boolean => {
+  const validatedKey = `sessionValidated_${tabSessionId}`;
+  const isValidated = getSessionItem(validatedKey) === 'true';
+  console.log(`AuthContext: Tab ${tabSessionId} validation state:`, isValidated);
+  return isValidated;
+};
+
+const setSessionValidationState = (tabSessionId: string, isValid: boolean): void => {
+  const validatedKey = `sessionValidated_${tabSessionId}`;
+  if (isValid) {
+    setSessionItem(validatedKey, 'true');
+    console.log(`AuthContext: Marked tab ${tabSessionId} as validated`);
+  } else {
+    removeSessionItem(validatedKey);
+    console.log(`AuthContext: Cleared validation for tab ${tabSessionId}`);
+  }
+};
+
+const clearAllTabValidations = (): void => {
+  try {
+    const keys = Object.keys(sessionStorage);
+    keys.forEach(key => {
+      if (key.startsWith('sessionValidated_')) {
+        removeSessionItem(key);
+      }
+    });
+    console.log('AuthContext: Cleared all tab validation states');
+  } catch (e) {
+    console.error('AuthContext: Error clearing tab validations:', e);
+  }
+};
+
 // Export context so other providers can use it directly (to avoid circular hook issues during HMR)
+// eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
-  // Generate a unique session ID for this tab
-  const generateTabSessionId = (): string => {
-    return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  };
 
-  // Get or create tab session ID
-  const getTabSessionId = (): string => {
-    let tabSessionId = getSessionItem('tabSessionId');
-    if (!tabSessionId) {
-      tabSessionId = generateTabSessionId();
-      setSessionItem('tabSessionId', tabSessionId);
-      console.log('AuthContext: Generated new tab session ID:', tabSessionId);
-    }
-    return tabSessionId;
-  };
-
-  // Helper functions to safely interact with sessionStorage
-  const getSessionItem = (key: string): string | null => {
-    try {
-      return sessionStorage.getItem(key);
-    } catch (e) {
-      console.error(`Error accessing sessionStorage for key ${key}:`, e);
-      return null;
-    }
-  };
-
-  const setSessionItem = (key: string, value: string): boolean => {
-    try {
-      sessionStorage.setItem(key, value);
-      return true;
-    } catch (e) {
-      console.error(`Error setting sessionStorage for key ${key}:`, e);
-      return false;
-    }
-  };
-
-  const removeSessionItem = (key: string): boolean => {
-    try {
-      sessionStorage.removeItem(key);
-      return true;
-    } catch (e) {
-      console.error(`Error removing sessionStorage for key ${key}:`, e);
-      return false;
-    }
-  };
-
-  // Helper functions for tab-based session management
-  const getSessionValidationState = (tabSessionId: string): boolean => {
-    const validatedKey = `sessionValidated_${tabSessionId}`;
-    const isValidated = getSessionItem(validatedKey) === 'true';
-    console.log(`AuthContext: Tab ${tabSessionId} validation state:`, isValidated);
-    return isValidated;
-  };
-
-  const setSessionValidationState = (tabSessionId: string, isValid: boolean): void => {
-    const validatedKey = `sessionValidated_${tabSessionId}`;
-    if (isValid) {
-      setSessionItem(validatedKey, 'true');
-      console.log(`AuthContext: Marked tab ${tabSessionId} as validated`);
-    } else {
-      removeSessionItem(validatedKey);
-      console.log(`AuthContext: Cleared validation for tab ${tabSessionId}`);
-    }
-  };
-
-  // Clear all tab validation states (used on logout)
-  const clearAllTabValidations = (): void => {
-    try {
-      const keys = Object.keys(sessionStorage);
-      keys.forEach(key => {
-        if (key.startsWith('sessionValidated_')) {
-          removeSessionItem(key);
-        }
-      });
-      console.log('AuthContext: Cleared all tab validation states');
-    } catch (e) {
-      console.error('AuthContext: Error clearing tab validations:', e);
-    }
-  };
   useEffect(() => {
     const verifyAuthOnLoad = async () => {
       console.log('AuthContext: verifyAuthOnLoad triggered.');
@@ -162,15 +162,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                  toast.info('Your session may have ended. Please log in again.');
             }
           }
-        } catch (error: any) {
-          console.error('AuthContext: /api/auth/validate-token call failed. Status:', error.status, 'Message:', error.message, error);
+        } catch (error: unknown) {
+          const errStatus = typeof error === 'object' && error !== null && 'status' in error ? (error as Record<string, unknown>).status as number | undefined : undefined;
+          const errMessage = error instanceof Error ? error.message : String(error);
+          console.error('AuthContext: /api/auth/validate-token call failed. Status:', errStatus, 'Message:', errMessage, error);
           setUser(null);
           localStorage.removeItem('authUser');
           clearAllTabValidations(); // Clear all tab validation states
-          if (error.status === 401 && parsedUserForValidation) { // Only toast if user was expecting to be logged in
+          if (errStatus === 401 && parsedUserForValidation) { // Only toast if user was expecting to be logged in
             toast.warn('Your session has expired. Please log in again.');
-          } else if (error.status !== 401) {
-            console.error('AuthContext: Session validation failed with non-401 error:', error.message);
+          } else if (errStatus !== 401) {
+            console.error('AuthContext: Session validation failed with non-401 error:', errMessage);
           }
         }
       } else {
@@ -200,8 +202,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Call logout API first (to invalidate server-side session/cookie)
       await apiFetch('/api/auth/logout', { method: 'POST' });
       console.log('AuthContext: Logout API call successful');
-    } catch (error: any) {
-      console.error('AuthContext: Logout API call failed:', error.message);
+    } catch (error: unknown) {
+      console.error('AuthContext: Logout API call failed:', error instanceof Error ? error.message : String(error));
       // Continue with local cleanup even if API fails
     }
     
@@ -269,6 +271,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (context === undefined) {

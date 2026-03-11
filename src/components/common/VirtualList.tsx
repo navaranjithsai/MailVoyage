@@ -134,6 +134,7 @@ export const VirtualList = memo(VirtualListInner) as typeof VirtualListInner;
 /**
  * Hook for virtual scrolling with dynamic item heights
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useVirtualList<T>(
   items: T[],
   estimatedItemHeight: number,
@@ -141,7 +142,7 @@ export function useVirtualList<T>(
 ) {
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
-  const itemHeightsRef = useRef<Map<number, number>>(new Map());
+  const [itemHeights, setItemHeights] = useState<Map<number, number>>(() => new Map());
 
   // Update container height on resize
   useEffect(() => {
@@ -170,11 +171,11 @@ export function useVirtualList<T>(
     let foundStart = false;
 
     for (let i = 0; i < items.length; i++) {
-      const height = itemHeightsRef.current.get(i) || estimatedItemHeight;
+      const height = itemHeights.get(i) || estimatedItemHeight;
       
       if (!foundStart && currentOffset + height > scrollTop) {
         startIndex = Math.max(0, i - 2); // Small overscan
-        offsetY = currentOffset - (i > 0 ? (itemHeightsRef.current.get(startIndex) || estimatedItemHeight) * (i - startIndex) : 0);
+        offsetY = currentOffset - (i > 0 ? (itemHeights.get(startIndex) || estimatedItemHeight) * (i - startIndex) : 0);
         foundStart = true;
       }
 
@@ -188,12 +189,18 @@ export function useVirtualList<T>(
     }
 
     return { startIndex, endIndex, offsetY, totalHeight };
-  }, [items, scrollTop, containerHeight, estimatedItemHeight]);
+  }, [items, scrollTop, containerHeight, estimatedItemHeight, itemHeights]);
 
   // Measure item heights
   const measureItem = useCallback((index: number, element: HTMLElement | null) => {
     if (element) {
-      itemHeightsRef.current.set(index, element.offsetHeight);
+      const height = element.offsetHeight;
+      setItemHeights(prev => {
+        if (prev.get(index) === height) return prev;
+        const next = new Map(prev);
+        next.set(index, height);
+        return next;
+      });
     }
   }, []);
 

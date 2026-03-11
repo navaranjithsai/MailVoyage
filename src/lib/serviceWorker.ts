@@ -314,7 +314,8 @@ export async function requestBackgroundSync(): Promise<boolean> {
 
   try {
     const registration = await navigator.serviceWorker.ready;
-    await (registration as any).sync.register('sync-offline-queue');
+    const reg = registration as unknown as { sync: { register(tag: string): Promise<void> } };
+    await reg.sync.register('sync-offline-queue');
     console.log('[BackgroundSync] Registered');
     return true;
   } catch (error) {

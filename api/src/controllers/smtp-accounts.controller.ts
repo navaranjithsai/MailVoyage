@@ -11,7 +11,7 @@ export const list = async (req: Request, res: Response) => {
   try {
     const user = getUser(req);
     const items = await smtpService.getSmtpAccountsByUserId(user.id);
-    const sanitized = items.map(({ password, ...rest }) => ({ ...rest }));
+    const sanitized = items.map(({ password: _password, ...rest }) => ({ ...rest }));
     res.json(sanitized);
   } catch (err) {
     logger.error('Error listing SMTP accounts:', err);
@@ -24,7 +24,7 @@ export const getOne = async (req: Request, res: Response) => {
     const user = getUser(req);
     const item = await smtpService.getSmtpAccountById(String(req.params.id), user.id);
     if (!item) return res.status(404).json({ message: 'SMTP account not found' });
-    const { password, ...sanitized } = item;
+    const { password: _password, ...sanitized } = item;
     res.json(sanitized);
   } catch (err) {
     logger.error('Error getting SMTP account:', err);
@@ -36,7 +36,7 @@ export const create = async (req: Request, res: Response) => {
   try {
     const user = getUser(req);
     const newItem = await smtpService.createSmtpAccount({ ...req.body, userId: user.id });
-    const { password, ...sanitized } = newItem;
+    const { password: _password, ...sanitized } = newItem;
     res.status(201).json(sanitized);
   } catch (err) {
     logger.error('Error creating SMTP account:', err);
@@ -49,7 +49,7 @@ export const update = async (req: Request, res: Response) => {
     const user = getUser(req);
     const updated = await smtpService.updateSmtpAccount(String(req.params.id), user.id, req.body);
     if (!updated) return res.status(404).json({ message: 'SMTP account not found' });
-    const { password, ...sanitized } = updated;
+    const { password: _password, ...sanitized } = updated;
     res.json(sanitized);
   } catch (err) {
     logger.error('Error updating SMTP account:', err);

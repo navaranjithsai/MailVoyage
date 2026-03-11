@@ -21,7 +21,11 @@ export const getProfile = async (req: Request, res: Response, next: NextFunction
 export const updateProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id, username, email } = req.body;
-    const currentUser = (req as any).user; // From auth middleware
+    const currentUser = req.user; // From auth middleware
+    
+    if (!currentUser) {
+      return next(new AppError('Unauthorized', 401));
+    }
     
     logger.info('Profile update requested', { 
       requestedId: id, 
@@ -40,7 +44,7 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
     }
 
     try {
-      const updatedUser = await userService.updateUserProfile(parseInt(id), { username, email });
+      await userService.updateUserProfile(parseInt(id), { username, email });
       
       // Generate new access token with updated information
       const newAccessToken = tokenService.generateAccessToken({ username, email });
@@ -60,15 +64,16 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
         message: 'Profile updated successfully',
         user: { id, username, email }
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.error('Error updating profile:', error);
       
       // Handle database constraint errors (unique violations)
-      if (error.message && error.message.includes('duplicate key value violates unique constraint')) {
-        if (error.message.includes('users_username_key')) {
+      const errMessage = error instanceof Error ? error.message : '';
+      if (errMessage.includes('duplicate key value violates unique constraint')) {
+        if (errMessage.includes('users_username_key')) {
           return next(new AppError('Username is already taken', 400, true, { username: 'This username is already taken' }));
         }
-        if (error.message.includes('users_email_key')) {
+        if (errMessage.includes('users_email_key')) {
           return next(new AppError('Email is already registered', 400, true, { email: 'This email is already registered' }));
         }
       }

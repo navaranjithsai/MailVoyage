@@ -52,6 +52,41 @@ interface EmailAccount {
 
 type FilterMode = 'all' | 'unread' | 'read' | 'starred' | 'attachments';
 
+interface ServerMailData {
+  id?: string | number;
+  uid: number;
+  mailbox?: string;
+  message_id?: string;
+  messageId?: string;
+  from_address?: string;
+  fromAddress?: string;
+  from_name?: string;
+  fromName?: string;
+  to_addresses?: string[];
+  toAddresses?: string[];
+  cc_addresses?: string[];
+  ccAddresses?: string[];
+  bcc_addresses?: string[];
+  bccAddresses?: string[];
+  subject?: string;
+  html_body?: string;
+  htmlBody?: string;
+  text_body?: string;
+  textBody?: string;
+  date?: string;
+  is_read?: boolean;
+  isRead?: boolean;
+  is_starred?: boolean;
+  isStarred?: boolean;
+  has_attachments?: boolean;
+  hasAttachments?: boolean;
+  attachments_metadata?: unknown;
+  attachmentsMetadata?: unknown;
+  labels?: string[];
+  created_at?: string;
+  createdAt?: string;
+}
+
 // ── Component ────────────────────────────────────────────────────────────
 
 const InboxPage: React.FC = () => {
@@ -245,6 +280,7 @@ const InboxPage: React.FC = () => {
         loadMails(1);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- currentPage and loadMobileMails intentionally excluded to avoid re-triggering on page navigation
   }, [selectedAccount, isMobile, loadMails]);
 
   // ── Mobile infinite scroll ───────────────────────────────────────────
@@ -371,22 +407,22 @@ const InboxPage: React.FC = () => {
    * Convert server response mails (camelCase from mapRowToInboxMail) to InboxMailRecord.
    * Handles both camelCase and snake_case for robustness.
    */
-  const mapServerMailToRecord = useCallback((m: any, accountCode: string): InboxMailRecord => ({
+  const mapServerMailToRecord = useCallback((m: ServerMailData, accountCode: string): InboxMailRecord => ({
     id: String(m.id ?? `${accountCode}:${m.uid}`),
     uid: m.uid,
     accountId: accountCode,
     mailbox: m.mailbox || 'INBOX',
-    messageId: m.message_id || m.messageId || null,
+    messageId: m.message_id || m.messageId || undefined,
     fromAddress: m.from_address || m.fromAddress || '',
     fromName: m.from_name || m.fromName || '',
     toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
-      ? (m.to_addresses || m.toAddresses)
-      : [m.to_addresses || m.toAddresses || ''],
+      ? (m.to_addresses || m.toAddresses) as string[]
+      : [m.to_addresses?.[0] || m.toAddresses?.[0] || ''],
     ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
-      ? (m.cc_addresses || m.ccAddresses)
+      ? (m.cc_addresses || m.ccAddresses) as string[]
       : [],
     bccAddresses: Array.isArray(m.bcc_addresses || m.bccAddresses)
-      ? (m.bcc_addresses || m.bccAddresses)
+      ? (m.bcc_addresses || m.bccAddresses) as string[]
       : [],
     subject: m.subject || '(No Subject)',
     htmlBody: m.html_body || m.htmlBody || null,
@@ -395,7 +431,7 @@ const InboxPage: React.FC = () => {
     isRead: m.is_read ?? m.isRead ?? false,
     isStarred: m.is_starred ?? m.isStarred ?? false,
     hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
-    attachmentsMetadata: m.attachments_metadata || m.attachmentsMetadata || null,
+    attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
     labels: m.labels || [],
     updatedAt: new Date().toISOString(),
     createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
@@ -422,7 +458,7 @@ const InboxPage: React.FC = () => {
       const fetchedMails = response?.data?.mails || response?.mails || [];
 
       if (fetchedMails.length > 0) {
-        const records = fetchedMails.map((m: any) =>
+        const records = fetchedMails.map((m: ServerMailData) =>
           mapServerMailToRecord(m, selectedAccount.accountCode)
         );
 
@@ -447,9 +483,9 @@ const InboxPage: React.FC = () => {
         await loadMails(currentPage);
       }
       await refreshEmails();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[InboxPage] Sync error:', err);
-      const msg = err?.message || 'Failed to sync emails from server';
+      const msg = err instanceof Error ? err.message : 'Failed to sync emails from server';
       setError(msg);
       toast.error(msg);
     } finally {
@@ -480,7 +516,7 @@ const InboxPage: React.FC = () => {
       await clearAccountInbox(selectedAccount.accountCode);
 
       if (fetchedMails.length > 0) {
-        const records = fetchedMails.map((m: any) =>
+        const records = fetchedMails.map((m: ServerMailData) =>
           mapServerMailToRecord(m, selectedAccount.accountCode)
         );
         await upsertInboxMails(records);
@@ -500,9 +536,9 @@ const InboxPage: React.FC = () => {
         await loadMails(currentPage);
       }
       await refreshEmails();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[InboxPage] Refresh from server error:', err);
-      const msg = err?.message || 'Failed to refresh from mail server';
+      const msg = err instanceof Error ? err.message : 'Failed to refresh from mail server';
       setError(msg);
       toast.error(msg);
     } finally {
@@ -581,11 +617,11 @@ const InboxPage: React.FC = () => {
 
       if (serverMails.length > 0) {
         // Look up existing Dexie IDs so we upsert over the same primary key
-        const uids = serverMails.map((m: any) => m.uid as number);
+        const uids = serverMails.map((m: ServerMailData) => m.uid);
         const existingIds = await getExistingMailIds(selectedAccount.accountCode, uids);
 
         // Convert to InboxMailRecord and upsert into Dexie (local-only storage)
-        const records: InboxMailRecord[] = serverMails.map((m: any) => ({
+        const records: InboxMailRecord[] = serverMails.map((m: ServerMailData) => ({
           id: existingIds.get(m.uid) ?? `${selectedAccount.accountCode}:${m.uid}`,
           uid: m.uid,
           accountId: selectedAccount.accountCode,
@@ -627,9 +663,9 @@ const InboxPage: React.FC = () => {
       }
 
       setServerSearchDepth(nextDepth);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[InboxPage] Server search error:', err);
-      const msg = err?.message || 'Failed to search on server';
+      const msg = err instanceof Error ? err.message : 'Failed to search on server';
       setServerSearchInfo(`Error: ${msg}`);
       toast.error(msg);
     } finally {
@@ -695,7 +731,7 @@ const InboxPage: React.FC = () => {
       setTotal(prev => prev - 1);
       toast.success('Email deleted');
       await refreshEmails();
-    } catch (err) {
+    } catch (_err) {
       toast.error('Failed to delete email');
     } finally {
       setMailToDelete(null);
@@ -712,7 +748,7 @@ const InboxPage: React.FC = () => {
       setSelectedIds([]);
       toast.success(`Deleted ${selectedIds.length} email(s)`);
       await refreshEmails();
-    } catch (err) {
+    } catch (_err) {
       toast.error('Failed to delete emails');
     }
   };

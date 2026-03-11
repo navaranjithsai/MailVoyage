@@ -40,8 +40,8 @@ const LoginPage: React.FC = () => {
         // Handle cases where user might not be in response, though API should ensure it
         toast.error('Login failed: No user data received.');
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Login failed. Please check your credentials.');
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Login failed. Please check your credentials.');
     }
   };
 

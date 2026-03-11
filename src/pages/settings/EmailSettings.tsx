@@ -72,7 +72,17 @@ interface TestResult {
   email: string;
   status: 'success' | 'error' | 'timeout';
   message: string;
-  details?: any;
+  details?: Record<string, unknown>;
+}
+
+interface SmtpAccount {
+  id: string;
+  email: string;
+  accountCode?: string;
+  host: string;
+  port: number | string;
+  security: 'SSL' | 'TLS' | 'STARTTLS' | 'PLAIN' | 'NONE' | string;
+  username?: string;
 }
 
 interface EmailSettingsProps {
@@ -81,14 +91,14 @@ interface EmailSettingsProps {
 
 const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   const [emailAccounts, setEmailAccounts] = useState<EmailAccount[]>([]);
-  const [smtpAccounts, setSmtpAccounts] = useState<any[]>([]);
+  const [smtpAccounts, setSmtpAccounts] = useState<SmtpAccount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAddSmtpModal, setShowAddSmtpModal] = useState(false);
   const [showEditSmtpModal, setShowEditSmtpModal] = useState(false);
-  const [editingSmtp, setEditingSmtp] = useState<any | null>(null);
+  const [editingSmtp, setEditingSmtp] = useState<SmtpAccount | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<EmailAccount | null>(null);
   const [showTestDialog, setShowTestDialog] = useState(false);
@@ -171,7 +181,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     }
   };
 
-  const saveSmtpAccountsToStorage = (accounts: any[]) => {
+  const saveSmtpAccountsToStorage = (accounts: SmtpAccount[]) => {
     try {
       localStorage.setItem('smtpAccounts', JSON.stringify(accounts));
     } catch (error) {
@@ -196,7 +206,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       saveEmailAccountsToStorage(emails);
       saveSmtpAccountsToStorage(smtp);
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Failed to fetch email accounts:', error);
       toast.error('Failed to fetch! Try again!');
     } finally {
@@ -210,7 +220,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
 
   const saveLastFailure = (
     account: Pick<EmailAccount, 'id' | 'accountCode' | 'email'>,
-    payload: { status: 'error' | 'timeout'; message: string; details?: any }
+    payload: { status: 'error' | 'timeout'; message: string; details?: Record<string, unknown> }
   ) => {
     try {
       const entry = {
@@ -227,7 +237,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   const clearLastFailure = (account: Pick<EmailAccount, 'id' | 'accountCode' | 'email'>) => {
     try {
       sessionStorage.removeItem(failKeyFor(account));
-    } catch (e) {
+    } catch (_e) {
       // noop
     }
   };
@@ -240,7 +250,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       const when = new Date(data.at);
       const whenStr = `${when.toLocaleDateString()} ${when.toLocaleTimeString()}`;
       return `Email: ${data.email}\nWhen: ${whenStr}\nStatus: ${data.status}\nMessage: ${data.message}`;
-    } catch (e) {
+    } catch (_e) {
       return '';
     }
   };
@@ -281,7 +291,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     setFormErrors({});
     
     try {
-      const requestData: any = {
+      const requestData: Record<string, string | number | boolean> = {
         email: addForm.email,
         password: addForm.password,
         autoconfig: !addForm.showManualSetup,
@@ -312,17 +322,18 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       resetAddForm();
       await fetchEmailAccounts(); // Refresh the list
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Failed to add email account:', error);
       
-      if (error.errors) {
-        setFormErrors(error.errors);
+      const err = error as { errors?: Record<string, string>; message?: string };
+      if (err.errors) {
+        setFormErrors(err.errors);
       } else {
-        setFormErrors({ general: error.message || 'Failed to add email account' });
+        setFormErrors({ general: err.message || 'Failed to add email account' });
       }
       
       // Show manual setup suggestion if autoconfig failed
-      if (!addForm.showManualSetup && error.message) {
+      if (!addForm.showManualSetup && err.message) {
         setFormErrors(prev => ({ ...prev, note: 'Try Manual setup' }));
       }
     } finally {
@@ -335,7 +346,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
     setFormErrors({});
     
     try {
-      const requestData: any = {
+      const requestData: Record<string, string | number | boolean> = {
         email: editForm.email,
         edit: true,
         incomingType: editForm.incomingType,
@@ -368,13 +379,14 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       setShowEditModal(false);
       await fetchEmailAccounts(); // Refresh the list
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Failed to update email account:', error);
       
-      if (error.errors) {
-        setFormErrors(error.errors);
+      const err = error as { errors?: Record<string, string>; message?: string };
+      if (err.errors) {
+        setFormErrors(err.errors);
       } else {
-        setFormErrors({ general: error.message || 'Failed to update email account' });
+        setFormErrors({ general: err.message || 'Failed to update email account' });
       }
     } finally {
       setIsSubmitting(false);
@@ -398,9 +410,9 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       setSelectedAccount(null);
       await fetchEmailAccounts(); // Refresh the list
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Failed to delete email account:', error);
-      toast.error(error.message || 'Failed to delete email account');
+      toast.error(error instanceof Error ? error.message : 'Failed to delete email account');
     } finally {
       setIsSubmitting(false);
     }
@@ -499,14 +511,15 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
         setPreviousTestContent(readLastFailure(testingAccount));
       }
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Test failed:', error);
       const updatedStatus = { ...testStatus, [testingAccount.id]: 'error' as const };
       saveTestStatus(updatedStatus);
-      setTestMessage(`❌ Test failed for ${testingAccount.email}: ${error.message || 'Unknown error'}`);
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      setTestMessage(`❌ Test failed for ${testingAccount.email}: ${errMsg}`);
       saveLastFailure(testingAccount, {
         status: 'error',
-        message: error.message || 'Unknown error',
+        message: errMsg,
       });
       setPreviousTestContent(readLastFailure(testingAccount));
     } finally {
@@ -575,9 +588,9 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
   // Refresh summary for next open
   setPreviousAllTestContent(readAllFailuresSummary(emailAccounts));
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Test all failed:', error);
-      setTestMessage(`❌ Test failed: ${error.message || 'Unknown error'}`);
+      setTestMessage(`❌ Test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setTimeout(() => {
         setIsTestingAll(false);
@@ -602,9 +615,9 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
       toast.success(`${account.email} is now your primary email`);
       await fetchEmailAccounts(); // Refresh the list
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Failed to set primary email:', error);
-      toast.error(error.message || 'Failed to set primary email');
+      toast.error(error instanceof Error ? error.message : 'Failed to set primary email');
     }
   };
 
@@ -777,7 +790,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
         {smtpAccounts.length > 0 && (
           <>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">SMTP Only</h3>
-            {smtpAccounts.map((acc: any) => (
+            {smtpAccounts.map((acc) => (
               <div key={acc.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                 <div className="flex-1">
                   <div className="flex items-center space-x-2">
@@ -797,10 +810,10 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                   <Button
                     onClick={async () => {
                       try {
-                        const r = await apiFetch(`/api/smtp-accounts/${acc.id}/test`, { method: 'POST' });
+                        const r = await apiFetch(`/api/smtp-accounts/${acc.id}/test`, { method: 'POST' }) as { success: boolean; message?: string };
                         if (r.success) toast.success('SMTP connection OK'); else toast.error(r.message || 'SMTP test failed');
-                      } catch (e: any) {
-                        toast.error(e.message || 'SMTP test failed');
+                      } catch (e: unknown) {
+                        toast.error(e instanceof Error ? e.message : 'SMTP test failed');
                       }
                     }}
                     variant="ghost"
@@ -816,7 +829,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         email: acc.email || '',
                         host: acc.host || '',
                         port: String(acc.port || ''),
-                        security: acc.security || 'SSL',
+                        security: (acc.security || 'SSL') as 'SSL'|'TLS'|'STARTTLS'|'PLAIN'|'NONE',
                         username: acc.username || acc.email || '',
                         password: '',
                       });
@@ -835,8 +848,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         await apiFetch(`/api/smtp-accounts/${acc.id}`, { method: 'DELETE' });
                         toast.success('SMTP account deleted');
                         await fetchEmailAccounts();
-                      } catch (e: any) {
-                        toast.error(e.message || 'Delete failed');
+                      } catch (e: unknown) {
+                        toast.error(e instanceof Error ? e.message : 'Delete failed');
                       }
                     }}
                     variant="ghost"
@@ -1041,7 +1054,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                           </label>
                           <select
                             value={addForm.incomingSecurity}
-                            onChange={(e) => setAddForm({ ...addForm, incomingSecurity: e.target.value as any })}
+                            onChange={(e) => setAddForm({ ...addForm, incomingSecurity: e.target.value as 'SSL' | 'STARTTLS' | 'NONE' })}
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                           >
                             <option value="NONE">None</option>
@@ -1080,7 +1093,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                           </label>
                           <select
                             value={addForm.outgoingSecurity}
-                            onChange={(e) => setAddForm({ ...addForm, outgoingSecurity: e.target.value as any })}
+                            onChange={(e) => setAddForm({ ...addForm, outgoingSecurity: e.target.value as 'SSL' | 'STARTTLS' | 'NONE' })}
                             className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                           >
                             <option value="SSL">SSL / TLS</option>
@@ -1189,7 +1202,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Security</label>
-                    <select value={smtpForm.security} onChange={(e)=>setSmtpForm({...smtpForm,security:e.target.value as any})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                    <select value={smtpForm.security} onChange={(e)=>setSmtpForm({...smtpForm,security:e.target.value as 'SSL'|'TLS'|'STARTTLS'|'PLAIN'|'NONE'})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                       <option value="SSL">SSL</option>
                       <option value="TLS">TLS</option>
                       <option value="STARTTLS">STARTTLS</option>
@@ -1245,8 +1258,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         setShowAddSmtpModal(false);
                         setSmtpForm({ email: '', host: '', port: '', security: 'SSL', username: '', password: '', showPassword: false });
                         await fetchEmailAccounts();
-                      } catch (e: any) {
-                        toast.error(e.message || 'Failed to add SMTP');
+                      } catch (e: unknown) {
+                        toast.error(e instanceof Error ? e.message : 'Failed to add SMTP');
                       } finally {
                         setIsSubmitting(false);
                       }
@@ -1299,7 +1312,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Security</label>
-                    <select value={smtpEditForm.security} onChange={(e)=>setSmtpEditForm({...smtpEditForm,security:e.target.value as any})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
+                    <select value={smtpEditForm.security} onChange={(e)=>setSmtpEditForm({...smtpEditForm,security:e.target.value as 'SSL'|'TLS'|'STARTTLS'|'PLAIN'|'NONE'})} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white">
                       <option value="SSL">SSL</option>
                       <option value="TLS">TLS</option>
                       <option value="STARTTLS">STARTTLS</option>
@@ -1324,7 +1337,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                     onClick={async ()=>{
                       setIsSubmitting(true);
                       try {
-                        const payload: any = {
+                        const payload: Record<string, string | number> = {
                           email: smtpEditForm.email,
                           host: smtpEditForm.host,
                           port: parseInt(smtpEditForm.port, 10),
@@ -1339,8 +1352,8 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         setShowEditSmtpModal(false);
                         setEditingSmtp(null);
                         await fetchEmailAccounts();
-                      } catch (e: any) {
-                        toast.error(e.message || 'Failed to update SMTP');
+                      } catch (e: unknown) {
+                        toast.error(e instanceof Error ? e.message : 'Failed to update SMTP');
                       } finally {
                         setIsSubmitting(false);
                       }
@@ -1499,7 +1512,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         </label>
                         <select
                           value={editForm.incomingSecurity}
-                          onChange={(e) => setEditForm({ ...editForm, incomingSecurity: e.target.value as any })}
+                          onChange={(e) => setEditForm({ ...editForm, incomingSecurity: e.target.value as 'SSL' | 'STARTTLS' | 'NONE' })}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                         >
                           <option value="NONE">None</option>
@@ -1537,7 +1550,7 @@ const EmailSettings: React.FC<EmailSettingsProps> = ({ isMobile }) => {
                         </label>
                         <select
                           value={editForm.outgoingSecurity}
-                          onChange={(e) => setEditForm({ ...editForm, outgoingSecurity: e.target.value as any })}
+                          onChange={(e) => setEditForm({ ...editForm, outgoingSecurity: e.target.value as 'SSL' | 'STARTTLS' | 'NONE' })}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                         >
                           <option value="SSL">SSL / TLS</option>

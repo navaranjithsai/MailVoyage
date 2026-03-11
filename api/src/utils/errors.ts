@@ -2,9 +2,9 @@ export class AppError extends Error {
   public readonly statusCode: number;
   public readonly status: string;
   public readonly isOperational: boolean;
-  public readonly meta?: Record<string, any>; // For additional error details (e.g., validation errors)
+  public readonly meta?: Record<string, unknown>; // For additional error details (e.g., validation errors)
 
-  constructor(message: string, statusCode: number, isOperational: boolean = true, meta?: Record<string, any>) {
+  constructor(message: string, statusCode: number, isOperational: boolean = true, meta?: Record<string, unknown>) {
     super(message);
 
     this.statusCode = statusCode;

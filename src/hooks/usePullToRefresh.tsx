@@ -19,6 +19,7 @@ interface UsePullToRefreshReturn {
 /**
  * Custom hook for pull-to-refresh functionality on mobile devices
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePullToRefresh({
   onRefresh,
   threshold = 80,
@@ -222,4 +223,5 @@ export function PullToRefreshIndicator({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export default usePullToRefresh;

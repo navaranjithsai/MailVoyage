@@ -11,14 +11,17 @@ import {
   Paperclip,
   X,
   Forward,
+  Reply,
   Clock,
-  ChevronDown
+  ChevronDown,
+  ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import { getSentMailsPaginated, deleteSentMails } from '@/lib/db';
 import { useSync } from '@/contexts/SyncContext';
+import { injectEmailStyles, sanitizeEmailHtml } from '@/lib/emailStyles';
 
 interface SentMail {
   id: string;
@@ -40,7 +43,7 @@ interface SentMail {
 
 const SentPage: React.FC = () => {
   const navigate = useNavigate();
-  const { triggerSync, syncState } = useSync();
+  const { triggerSentSync, syncState } = useSync();
   const [sentMails, setSentMails] = useState<SentMail[]>([]);
   const [selectedMails, setSelectedMails] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -63,6 +66,7 @@ const SentPage: React.FC = () => {
   
   useEffect(() => {
     isMountedRef.current = true;
+    injectEmailStyles();
     return () => { isMountedRef.current = false; };
   }, []);
 
@@ -100,10 +104,10 @@ const SentPage: React.FC = () => {
       setTotal(result.total);
       setCurrentPage(result.page);
       setError(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error loading sent mails:', err);
       if (isMountedRef.current) {
-        setError(err.message || 'Failed to load sent mails');
+        setError(err instanceof Error ? err.message : 'Failed to load sent mails');
       }
     } finally {
       if (isMountedRef.current) {
@@ -143,8 +147,8 @@ const SentPage: React.FC = () => {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      // Trigger delta sync which will update the local database
-      await triggerSync();
+      // Trigger sent-mails-only delta sync (not inbox/accounts)
+      await triggerSentSync();
       // Then reload from local database
       await loadSentMails(currentPage);
     } catch (err) {
@@ -172,7 +176,29 @@ const SentPage: React.FC = () => {
         type: 'forward',
         originalEmail: {
           subject: mail.subject,
-          content: mail.textBody || mail.htmlBody,
+          fromEmail: mail.fromEmail,
+          toEmails: mail.toEmails,
+          htmlBody: mail.htmlBody,
+          textBody: mail.textBody,
+          sentAt: mail.sentAt,
+        },
+      },
+    });
+  };
+
+  /** Reply to the mail */
+  const handleReply = (mail: SentMail) => {
+    navigate('/compose', {
+      state: {
+        type: 'reply',
+        originalEmail: {
+          subject: mail.subject,
+          senderEmail: mail.toEmails[0],
+          fromEmail: mail.fromEmail,
+          toEmails: mail.toEmails,
+          htmlBody: mail.htmlBody,
+          textBody: mail.textBody,
+          sentAt: mail.sentAt,
         },
       },
     });
@@ -489,7 +515,8 @@ const SentPage: React.FC = () => {
                         className="overflow-hidden border-l-4 border-l-blue-500 bg-gray-50 dark:bg-gray-900/50"
                       >
                         <div className="px-6 py-4">
-                          <div className="flex items-center justify-between">
+                          {/* Metadata row */}
+                          <div className="flex items-center justify-between mb-3">
                             {/* Left: Sent label + metadata */}
                             <div className="flex items-center gap-4 min-w-0 flex-1">
                               <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-medium shrink-0">
@@ -522,6 +549,15 @@ const SentPage: React.FC = () => {
                               <Button
                                 variant="outline"
                                 size="small"
+                                onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleReply(mail); }}
+                                className="flex items-center gap-1 text-xs"
+                              >
+                                <Reply size={14} />
+                                Reply
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="small"
                                 onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleForward(mail); }}
                                 className="flex items-center gap-1 text-xs"
                               >
@@ -543,6 +579,33 @@ const SentPage: React.FC = () => {
                                 <X size={16} />
                               </button>
                             </div>
+                          </div>
+
+                          {/* Email body preview */}
+                          <div className="mt-2 border-t border-gray-200 dark:border-gray-700 pt-3 relative">
+                            {mail.htmlBody ? (
+                              <div
+                                className="ck-content email-content max-w-none text-sm max-h-48 overflow-hidden"
+                                dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(mail.htmlBody) }}
+                              />
+                            ) : (
+                              <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-4 whitespace-pre-wrap">
+                                {getPreviewText(mail)}
+                              </p>
+                            )}
+                            {/* Fade-out gradient for long content */}
+                            <div className="absolute bottom-0 left-0 right-0 h-8 bg-linear-to-t from-gray-50 dark:from-gray-900/50 to-transparent pointer-events-none" />
+                          </div>
+
+                          {/* View full email link */}
+                          <div className="mt-2 flex justify-end">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleMailClick(mail); }}
+                              className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              <ExternalLink size={12} />
+                              View full email
+                            </button>
                           </div>
                         </div>
                       </motion.div>

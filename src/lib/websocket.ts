@@ -18,7 +18,7 @@ export interface SyncSignal {
   since?: string;
   message?: string;
   timestamp: string;
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
 }
 
 export interface WebSocketConfig {
@@ -305,7 +305,7 @@ class WebSocketClient {
         default:
           console.debug('[WebSocket] Unknown message type:', signal.type);
       }
-    } catch (error) {
+    } catch (_error) {
       console.warn('[WebSocket] Failed to parse message:', data);
     }
   }
@@ -416,7 +416,7 @@ class WebSocketClient {
   /**
    * Send message to server
    */
-  private send(data: any): void {
+  private send(data: Record<string, unknown>): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     }

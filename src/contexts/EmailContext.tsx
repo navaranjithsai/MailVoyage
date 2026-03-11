@@ -93,6 +93,7 @@ function formatSize(bytes: number): string {
 }
 
 /** Convert an InboxMailRecord (from Dexie) to the Email interface consumed by components. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function inboxRecordToEmail(record: InboxMailRecord): Email {
   const preview = record.textBody
     ? record.textBody.substring(0, 150)
@@ -234,7 +235,11 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const toggleEmailRead = useCallback(async (emailId: string) => {
     const email = emails.find(e => e.id === emailId);
     if (!email) return;
-    email.isRead ? await markAsUnread(emailId) : await markAsRead(emailId);
+    if (email.isRead) {
+      await markAsUnread(emailId);
+    } else {
+      await markAsRead(emailId);
+    }
   }, [emails, markAsRead, markAsUnread]);
 
   const deleteEmail = useCallback(async (emailId: string) => {
@@ -268,7 +273,11 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const toggleEmailStarred = useCallback(async (emailId: string) => {
     const email = emails.find(e => e.id === emailId);
     if (!email) return;
-    email.isStarred ? await unstarEmail(emailId) : await starEmail(emailId);
+    if (email.isStarred) {
+      await unstarEmail(emailId);
+    } else {
+      await starEmail(emailId);
+    }
   }, [emails, starEmail, unstarEmail]);
 
   const addEmail = useCallback((emailData: Omit<Email, 'id' | 'timestamp'>) => {
@@ -312,6 +321,7 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useEmail = (): EmailContextType => {
   const context = useContext(EmailContext);
   if (context === undefined) {

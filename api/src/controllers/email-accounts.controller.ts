@@ -22,12 +22,12 @@ export const getEmailAccounts = async (req: Request, res: Response) => {
 
     // Don't return passwords in the response
     const sanitizedAccounts = accounts.map(account => {
-      const { password, outgoingPassword, ...sanitized } = account;
+      const { password: _password, outgoingPassword: _outgoingPassword, ...sanitized } = account;
       return sanitized;
     });
 
     const sanitizedSmtp = smtpAccounts.map(acc => {
-      const { password, ...rest } = acc as any;
+      const { password: _password, ...rest } = acc;
       return { ...rest, smtpOnly: true };
     });
 
@@ -51,7 +51,7 @@ export const getEmailAccount = async (req: Request, res: Response) => {
     }
     
     // Don't return passwords in the response
-    const { password, outgoingPassword, ...sanitizedAccount } = account;
+    const { password: _password, outgoingPassword: _outgoingPassword, ...sanitizedAccount } = account;
     
     res.json(sanitizedAccount);
   } catch (error) {
@@ -72,7 +72,7 @@ export const addEmailAccount = async (req: Request, res: Response) => {
     const newAccount = await emailAccountsService.createEmailAccount(accountData);
     
     // Don't return password in the response
-    const { password, outgoingPassword, ...sanitizedAccount } = newAccount;
+    const { password: _password, outgoingPassword: _outgoingPassword, ...sanitizedAccount } = newAccount;
     
     res.status(201).json(sanitizedAccount);
   } catch (error) {
@@ -101,7 +101,7 @@ export const updateEmailAccount = async (req: Request, res: Response) => {
     }
     
     // Don't return password in the response
-    const { password, outgoingPassword, ...sanitizedAccount } = updatedAccount;
+    const { password: _password, outgoingPassword: _outgoingPassword, ...sanitizedAccount } = updatedAccount;
     
     res.json(sanitizedAccount);
   } catch (error) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, easeOut } from 'framer-motion';
 import { Send, Paperclip, X, Save, Eye, ChevronDown, FileEdit, Check } from 'lucide-react';
 import Button from '@/components/ui/Button';
@@ -74,8 +74,17 @@ const ComposePage: React.FC = () => {
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
   const [isDraftLoaded, setIsDraftLoaded] = useState(false);
 
+  // Track compose mode for header title
+  const composeMode = useMemo(() => {
+    const state = location.state as { type?: string } | null;
+    if (currentDraftId) return 'draft';
+    if (state?.type === 'reply') return 'reply';
+    if (state?.type === 'forward') return 'forward';
+    return 'compose';
+  }, [location.state, currentDraftId]);
+
   const editorHostRef = useRef<HTMLDivElement | null>(null);
-  const editorRef = useRef<any>(null);
+  const editorRef = useRef<ClassicEditor | null>(null);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedContentRef = useRef<string>('');
 
@@ -95,7 +104,7 @@ const ComposePage: React.FC = () => {
       // Load email accounts
       if (emailAccountsStr) {
         const emailAccounts = JSON.parse(emailAccountsStr);
-        emailAccounts.forEach((acc: any) => {
+        emailAccounts.forEach((acc: { id: string; email: string; accountCode: string; isPrimary?: boolean }) => {
           accounts.push({
             id: acc.id,
             email: acc.email,
@@ -109,7 +118,7 @@ const ComposePage: React.FC = () => {
       // Load SMTP-only accounts
       if (smtpAccountsStr) {
         const smtpAccounts = JSON.parse(smtpAccountsStr);
-        smtpAccounts.forEach((acc: any) => {
+        smtpAccounts.forEach((acc: { id: string; email: string; accountCode: string }) => {
           accounts.push({
             id: acc.id,
             email: acc.email,
@@ -130,17 +139,72 @@ const ComposePage: React.FC = () => {
     }
   }, []);
 
-  // Load draft data if navigating from drafts page
+  /**
+   * Build a quoted original-message block (like Gmail / Outlook).
+   * Returns an HTML string with a horizontal rule and metadata header.
+   */
+  const buildQuotedBlock = useCallback((
+    composeType: 'reply' | 'forward',
+    orig: Record<string, unknown>
+  ): string => {
+    const from      = (orig.senderEmail || orig.sender || orig.fromEmail || '') as string;
+    const fromName  = (orig.senderName || '') as string;
+    const toField   = Array.isArray(orig.toEmails)
+      ? (orig.toEmails as string[]).join(', ')
+      : (orig.recipient || orig.to || '') as string;
+    const subj      = (orig.subject || '') as string;
+
+    // Prefer htmlBody → content → textBody
+    const body = (orig.htmlBody || orig.content || orig.textBody || '') as string;
+    const isHtml = /<[a-z][\s\S]*>/i.test(body);
+    const bodyHtml = isHtml ? body : `<pre style="white-space:pre-wrap;font-family:inherit;">${body}</pre>`;
+
+    // Date: try sentAt → time → date → timestamp
+    let dateStr = '';
+    const rawDate = (orig.sentAt || orig.time || orig.date) as string | undefined;
+    if (rawDate) {
+      const d = new Date(rawDate);
+      dateStr = isNaN(d.getTime()) ? String(rawDate) : d.toLocaleString([], {
+        weekday: 'short', year: 'numeric', month: 'short',
+        day: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    } else if (orig.timestamp) {
+      const d = new Date(orig.timestamp as string | number);
+      if (!isNaN(d.getTime())) dateStr = d.toLocaleString();
+    }
+
+    const label = composeType === 'reply' ? 'Original Message' : 'Forwarded Message';
+    const fromDisplay = fromName ? `${fromName} &lt;${from}&gt;` : from;
+
+    return [
+      '<br/><br/>',
+      `<div style="border-top:1px solid #ccc;padding-top:12px;margin-top:12px;color:#555;font-size:13px;">`,
+      `<p style="margin:0 0 4px;"><strong>---------- ${label} ----------</strong></p>`,
+      from   ? `<p style="margin:0 0 2px;"><strong>From:</strong> ${fromDisplay}</p>` : '',
+      dateStr ? `<p style="margin:0 0 2px;"><strong>Date:</strong> ${dateStr}</p>` : '',
+      subj   ? `<p style="margin:0 0 2px;"><strong>Subject:</strong> ${subj}</p>` : '',
+      toField ? `<p style="margin:0 0 8px;"><strong>To:</strong> ${toField}</p>` : '',
+      '</div>',
+      '<blockquote style="margin:8px 0 0 0;padding:0 0 0 12px;border-left:3px solid #ccc;">',
+      bodyHtml,
+      '</blockquote>',
+    ].join('\n');
+  }, []);
+
+  // Load draft OR reply/forward data from navigation state
   useEffect(() => {
-    const state = location.state as { 
-      draftId?: string; 
-      fromDraft?: boolean; 
+    const state = location.state as {
+      draftId?: string;
+      fromDraft?: boolean;
       draftData?: EmailDraft;
-      type?: string;
-      originalEmail?: any;
+      type?: 'reply' | 'forward';
+      originalEmail?: Record<string, unknown>;
     } | null;
-    
-    if (state?.fromDraft && state?.draftData) {
+
+    if (!state) return;
+
+    // ── 1. Draft loading ─────────────────────────────────────────────────
+    if (state.fromDraft && state.draftData) {
       const draft = state.draftData;
       setCurrentDraftId(draft.id);
       setTo(draft.to || '');
@@ -149,12 +213,10 @@ const ComposePage: React.FC = () => {
       setSubject(draft.subject || '');
       setContent(draft.htmlContent || '');
       setCharCount(draft.charCount || 0);
-      
-      // Set CC/BCC visibility based on content
+
       if (draft.cc) setShowCc(true);
       if (draft.bcc) setShowBcc(true);
-      
-      // Convert draft attachments to component format
+
       if (draft.attachments && draft.attachments.length > 0) {
         const convertedAttachments: Attachment[] = draft.attachments.map(att => ({
           id: att.id,
@@ -166,22 +228,51 @@ const ComposePage: React.FC = () => {
         }));
         setAttachments(convertedAttachments);
       }
-      
-      // Set from account if it exists
+
       if (draft.fromAccountId && availableAccounts.length > 0) {
         const account = availableAccounts.find(acc => acc.id === draft.fromAccountId);
-        if (account) {
-          setFromAccount(account);
-        }
+        if (account) setFromAccount(account);
       }
-      
+
       setIsDraftLoaded(true);
       lastSavedContentRef.current = draft.htmlContent || '';
-      
-      // Clear location state to prevent re-loading on refresh
+      window.history.replaceState({}, document.title);
+      return; // Draft takes priority — skip reply/forward
+    }
+
+    // ── 2. Reply / Forward ───────────────────────────────────────────────
+    if (state.type && state.originalEmail) {
+      const orig = state.originalEmail;
+      const origSubject = (orig.subject || '') as string;
+
+      if (state.type === 'reply') {
+        // Pre-fill To with the original sender
+        const replyTo = (orig.senderEmail || orig.sender || orig.fromEmail || '') as string;
+        setTo(replyTo);
+
+        // Subject: add "Re:" prefix if not already present
+        const reSubject = /^re:/i.test(origSubject)
+          ? origSubject
+          : `Re: ${origSubject}`;
+        setSubject(reSubject);
+      } else if (state.type === 'forward') {
+        // Forward: leave To empty, user fills in
+        setTo('');
+
+        const fwdSubject = /^fwd?:/i.test(origSubject)
+          ? origSubject
+          : `Fwd: ${origSubject}`;
+        setSubject(fwdSubject);
+      }
+
+      // Build quoted original message block
+      const quotedHtml = buildQuotedBlock(state.type, orig);
+      setContent(quotedHtml);
+      setIsDraftLoaded(true); // Triggers editor.setData()
+
       window.history.replaceState({}, document.title);
     }
-  }, [location.state, availableAccounts]);
+  }, [location.state, availableAccounts, buildQuotedBlock]);
 
   // Track unsaved changes
   useEffect(() => {
@@ -195,9 +286,10 @@ const ComposePage: React.FC = () => {
 
   // Cleanup auto-save timer on unmount
   useEffect(() => {
+    const timerRef = autoSaveTimerRef;
     return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
       }
     };
   }, []);
@@ -216,7 +308,7 @@ const ComposePage: React.FC = () => {
     let cancelled = false;
     host.innerHTML = '';
 
-    const config: any = {
+    const config: Record<string, unknown> = {
       licenseKey: 'GPL',
       plugins: [
         Essentials, Paragraph, Autoformat, PasteFromOffice,
@@ -270,12 +362,12 @@ const ComposePage: React.FC = () => {
       },
       mention: { feeds: [] },
       wordCount: {
-        onUpdate: (stats: any) => !cancelled && setCharCount(stats.characters)
+        onUpdate: (stats: { characters: number }) => !cancelled && setCharCount(stats.characters)
       }
     };
 
     ClassicEditor.create(host, config)
-      .then((editor: any) => {
+      .then((editor) => {
         if (cancelled) {
           editor.destroy().catch(() => {});
           return;
@@ -292,7 +384,7 @@ const ComposePage: React.FC = () => {
           }
         });
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         console.error('CKEditor init error:', err);
       });
 
@@ -305,6 +397,7 @@ const ComposePage: React.FC = () => {
       }
       if (host) host.innerHTML = '';
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- CKEditor instance created once on mount; content is set via ref
   }, []);
 
   // Use DOMPurify in the browser to sanitize preview/sent HTML.
@@ -406,9 +499,9 @@ const ComposePage: React.FC = () => {
         navigate('/sent');
       }, 1500);
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error sending email:', error);
-      toast.error(error.message || 'Failed to send email');
+      toast.error(error instanceof Error ? error.message : 'Failed to send email');
     } finally {
       setIsSending(false);
     }
@@ -454,7 +547,7 @@ const ComposePage: React.FC = () => {
         setDraftSaved(false);
       }, 3000);
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error saving draft:', error);
       toast.error('Failed to save draft');
     } finally {
@@ -521,9 +614,12 @@ const ComposePage: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center space-x-3">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                {currentDraftId ? 'Edit Draft' : 'Compose Email'}
+                {composeMode === 'draft' ? 'Edit Draft'
+                  : composeMode === 'reply' ? 'Reply'
+                  : composeMode === 'forward' ? 'Forward'
+                  : 'Compose Email'}
               </h1>
-              {currentDraftId && (
+              {composeMode === 'draft' && (
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
                   <FileEdit className="w-3 h-3 mr-1" />
                   Draft

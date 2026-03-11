@@ -147,7 +147,7 @@ export function isEncryptedData(value: string): boolean {
 /**
  * Encrypt sensitive fields of an inbox mail record before storing in IndexedDB.
  */
-export async function encryptMailRecord<T extends Record<string, any>>(
+export async function encryptMailRecord<T extends object>(
   record: T,
   fieldsToEncrypt: (keyof T)[]
 ): Promise<T> {
@@ -155,7 +155,7 @@ export async function encryptMailRecord<T extends Record<string, any>>(
   for (const field of fieldsToEncrypt) {
     const value = encrypted[field];
     if (typeof value === 'string' && value.length > 0) {
-      (encrypted as any)[field] = await encryptData(value);
+      (encrypted as Record<string, unknown>)[field as string] = await encryptData(value);
     }
   }
   return encrypted;
@@ -164,7 +164,7 @@ export async function encryptMailRecord<T extends Record<string, any>>(
 /**
  * Decrypt sensitive fields of an inbox mail record after reading from IndexedDB.
  */
-export async function decryptMailRecord<T extends Record<string, any>>(
+export async function decryptMailRecord<T extends object>(
   record: T,
   fieldsToDecrypt: (keyof T)[]
 ): Promise<T> {
@@ -172,7 +172,7 @@ export async function decryptMailRecord<T extends Record<string, any>>(
   for (const field of fieldsToDecrypt) {
     const value = decrypted[field];
     if (typeof value === 'string' && isEncryptedData(value)) {
-      (decrypted as any)[field] = await decryptData(value);
+      (decrypted as Record<string, unknown>)[field as string] = await decryptData(value);
     }
   }
   return decrypted;

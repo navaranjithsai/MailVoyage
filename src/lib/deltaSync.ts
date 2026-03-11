@@ -50,6 +50,62 @@ type SyncStateListener = (state: SyncState) => void;
 type SyncTable = 'sent_mails' | 'inbox_mails' | 'email_accounts' | 'smtp_accounts';
 type TokenRefreshCallback = () => Promise<string | null>;
 
+/** Shape of a raw sent mail from the API */
+interface ApiSentMail {
+  id: string;
+  threadId: string;
+  fromEmail: string;
+  toEmails: string[];
+  cc: string[] | null;
+  bcc: string[] | null;
+  subject: string;
+  htmlBody: string | null;
+  textBody: string | null;
+  attachmentsMetadata: unknown;
+  messageId: string | null;
+  status: string;
+  sentAt: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+/** Shape of a raw inbox mail from the API (supports snake_case and camelCase) */
+interface ApiInboxMail {
+  id?: string | number;
+  uid?: number;
+  account_code?: string;
+  accountCode?: string;
+  accountId?: string;
+  mailbox?: string;
+  message_id?: string;
+  messageId?: string;
+  from_address?: string;
+  fromAddress?: string;
+  from_name?: string;
+  fromName?: string;
+  to_addresses?: string | string[];
+  toAddresses?: string | string[];
+  cc_addresses?: string | string[];
+  ccAddresses?: string | string[];
+  subject?: string;
+  html_body?: string | null;
+  htmlBody?: string | null;
+  text_body?: string | null;
+  textBody?: string | null;
+  date?: string;
+  is_read?: boolean;
+  isRead?: boolean;
+  is_starred?: boolean;
+  isStarred?: boolean;
+  has_attachments?: boolean;
+  hasAttachments?: boolean;
+  attachments_metadata?: unknown;
+  attachmentsMetadata?: unknown;
+  labels?: string[];
+  created_at?: string;
+  createdAt?: string;
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -275,6 +331,30 @@ class DeltaSyncManager {
   }
 
   /**
+   * Sync only sent mails (used by SentPage refresh)
+   */
+  async syncSentMailsOnly(): Promise<DeltaSyncResult> {
+    const now = Date.now();
+    const timeSinceLastSync = now - this.lastManualSyncTime;
+
+    if (timeSinceLastSync < MIN_SYNC_INTERVAL_MS && this.lastManualSyncTime > 0) {
+      const waitTime = Math.ceil((MIN_SYNC_INTERVAL_MS - timeSinceLastSync) / 1000);
+      console.info(`[DeltaSync] Rate limited - wait ${waitTime}s before next sync`);
+      return {
+        success: false,
+        tables: [],
+        updated: 0,
+        deleted: 0,
+        error: `Please wait ${waitTime} seconds before syncing again`,
+      };
+    }
+
+    this.lastManualSyncTime = now;
+    console.info('[DeltaSync] Sent-mails-only sync triggered');
+    return executeDeltaSync(['sent_mails']);
+  }
+
+  /**
    * Force full sync (ignore checkpoints)
    */
   async fullSync(): Promise<DeltaSyncResult> {
@@ -393,7 +473,8 @@ class DeltaSyncManager {
     }
 
     if (signal.type === 'settings_updated') {
-      console.info(`[DeltaSync] Settings updated: ${signal.data?.changedKeys?.join(', ')}`);
+      const changedKeys = signal.data?.changedKeys;
+      console.info(`[DeltaSync] Settings updated: ${Array.isArray(changedKeys) ? changedKeys.join(', ') : ''}`);
       window.dispatchEvent(new CustomEvent('settings:updated', { detail: signal.data }));
     }
   };
@@ -532,17 +613,19 @@ async function executeDeltaSync(
       }
 
       switch (table) {
-        case 'sent_mails':
+        case 'sent_mails': {
           const sentResult = await syncSentMails(since);
           result.updated += sentResult.updated;
           result.deleted += sentResult.deleted;
           break;
+        }
 
-        case 'inbox_mails':
+        case 'inbox_mails': {
           const inboxResult = await syncInboxMails(since);
           result.updated += inboxResult.updated;
           result.deleted += inboxResult.deleted;
           break;
+        }
 
         case 'email_accounts':
         case 'smtp_accounts':
@@ -573,14 +656,14 @@ async function executeDeltaSync(
     console.info(`[DeltaSync] Sync complete: ${result.updated} updated, ${result.deleted} deleted`);
     return result;
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[DeltaSync] Sync failed:', error);
     result.success = false;
-    result.error = error.message;
+    result.error = error instanceof Error ? error.message : String(error);
     
     // Set error but do NOT update lastSync time
     deltaSyncManager.updateState({ isSyncing: false });
-    deltaSyncManager.setSyncError(error.message || 'Sync failed');
+    deltaSyncManager.setSyncError(error instanceof Error ? error.message : 'Sync failed');
     
     return result;
   }
@@ -600,9 +683,11 @@ async function syncSentMails(since?: string): Promise<{ updated: number; deleted
     }
 
     const response = await apiFetch(url);
+    const resObj = response as Record<string, unknown>;
+    const resData = resObj?.data as Record<string, unknown> | undefined;
     
-    if (response.success && response.data?.mails) {
-      const mails: SentMailRecord[] = response.data.mails.map((mail: any) => ({
+    if (resObj.success && resData?.mails) {
+      const mails: SentMailRecord[] = (resData.mails as ApiSentMail[]).map((mail) => ({
         id: mail.id,
         threadId: mail.threadId,
         fromEmail: mail.fromEmail,
@@ -612,12 +697,12 @@ async function syncSentMails(since?: string): Promise<{ updated: number; deleted
         subject: mail.subject,
         htmlBody: mail.htmlBody,
         textBody: mail.textBody,
-        attachmentsMetadata: mail.attachmentsMetadata,
+        attachmentsMetadata: mail.attachmentsMetadata as SentMailRecord['attachmentsMetadata'],
         messageId: mail.messageId,
-        status: mail.status,
+        status: mail.status as SentMailRecord['status'],
         sentAt: mail.sentAt,
         createdAt: mail.createdAt,
-        updatedAt: mail.updatedAt || mail.sentAt
+        updatedAt: mail.updatedAt || mail.sentAt,
       }));
 
       // Upsert to IndexedDB
@@ -662,19 +747,21 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
         const res = await apiFetch(
           `/api/inbox/cached?accountCode=${encodeURIComponent(acc.accountCode)}`
         );
+        const resObj = res as Record<string, unknown>;
+        const dataObj = resObj?.data as Record<string, unknown> | undefined;
 
-        const serverMails = res?.data?.mails || res?.mails || [];
+        const serverMails = ((dataObj?.mails || resObj?.mails || []) as ApiInboxMail[]);
         if (serverMails.length) {
-          const mails: InboxMailRecord[] = serverMails.map((m: any) => ({
+          const mails: InboxMailRecord[] = serverMails.map((m) => ({
             id: String(m.id ?? `${m.account_code || acc.accountCode}:${m.uid}`),
-            uid: m.uid,
+            uid: m.uid ?? 0,
             accountId: m.account_code || acc.accountCode,
             mailbox: m.mailbox || 'INBOX',
             messageId: m.message_id || m.messageId,
             fromAddress: m.from_address || m.fromAddress || '',
             fromName: m.from_name || m.fromName || '',
-            toAddresses: Array.isArray(m.to_addresses || m.toAddresses) ? (m.to_addresses || m.toAddresses) : [],
-            ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses) ? (m.cc_addresses || m.ccAddresses) : [],
+            toAddresses: (Array.isArray(m.to_addresses || m.toAddresses) ? (m.to_addresses || m.toAddresses) : []) as string[],
+            ccAddresses: (Array.isArray(m.cc_addresses || m.ccAddresses) ? (m.cc_addresses || m.ccAddresses) : []) as string[],
             bccAddresses: [],
             subject: m.subject || '(No Subject)',
             htmlBody: m.html_body || m.htmlBody || null,
@@ -683,7 +770,7 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
             isRead: m.is_read ?? m.isRead ?? false,
             isStarred: m.is_starred ?? m.isStarred ?? false,
             hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
-            attachmentsMetadata: m.attachments_metadata || m.attachmentsMetadata || null,
+            attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
             labels: m.labels || [],
             syncedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -719,9 +806,10 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
 async function syncAccounts(): Promise<void> {
   try {
     const response = await apiFetch('/api/email-accounts');
+    const resObj = response as Record<string, unknown>;
     
-    const emailAccounts = Array.isArray(response) ? response : (response.emailAccounts || []);
-    const smtpAccounts = Array.isArray(response) ? [] : (response.smtpAccounts || []);
+    const emailAccounts = (Array.isArray(response) ? response : (resObj.emailAccounts || [])) as unknown[];
+    const smtpAccounts = (Array.isArray(response) ? [] : (resObj.smtpAccounts || [])) as unknown[];
     
     localStorage.setItem('emailAccounts', JSON.stringify(emailAccounts));
     localStorage.setItem('smtpAccounts', JSON.stringify(smtpAccounts));

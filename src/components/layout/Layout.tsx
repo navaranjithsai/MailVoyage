@@ -47,6 +47,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     if (canUseFlowbar) {
       const savedPreference = localStorage.getItem(STORAGE_KEYS.FLOWBAR_ENABLED);
       if (savedPreference === 'true') {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- sync from localStorage on capability change
         setIsFlowbarEnabled(true);
       }
     }
@@ -62,6 +63,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Disable flowbar if screen becomes too small
   useEffect(() => {
     if (!isDesktopWidth() && isFlowbarEnabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync flowbar state from screen size constraint
       setIsFlowbarEnabled(false);
     }
   }, [isFlowbarEnabled]);

@@ -96,14 +96,14 @@ export interface PendingSync {
   type: 'create' | 'update' | 'delete';
   table: string;
   recordId: string;
-  data?: any;
+  data?: unknown;
   createdAt: string;
   retries: number;
 }
 
 export interface CacheMetadata {
   key: string;
-  value: any;
+  value: unknown;
   expiresAt?: string;
 }
 
@@ -317,7 +317,7 @@ export async function cleanupNumericKeyedMails(): Promise<number> {
   const allKeys = await db.inboxMails.toCollection().primaryKeys();
   const numericKeys = allKeys.filter(k => typeof k === 'number');
   if (numericKeys.length > 0) {
-    await db.inboxMails.bulkDelete(numericKeys as any);
+    await db.inboxMails.bulkDelete(numericKeys as unknown as string[]);
     console.log(`[DB] Cleaned up ${numericKeys.length} numeric-keyed duplicate inbox mails`);
   }
   return numericKeys.length;
@@ -345,7 +345,7 @@ async function decryptInboxMail(mail: InboxMailRecord): Promise<InboxMailRecord 
   const decrypted = await decryptMailRecord(mail, ENCRYPTED_MAIL_FIELDS);
   // If any field still starts with the encryption prefix, the key is stale
   for (const field of ENCRYPTED_MAIL_FIELDS) {
-    const val = (decrypted as any)[field];
+    const val = decrypted[field];
     if (typeof val === 'string' && isEncryptedData(val)) {
       return null; // Stale — caller should discard
     }
@@ -683,7 +683,7 @@ export async function addToPendingSync(
   type: PendingSync['type'],
   table: string,
   recordId: string,
-  data?: any
+  data?: unknown
 ): Promise<void> {
   await db.pendingSync.put({
     id: `${table}_${recordId}_${Date.now()}`,
@@ -733,7 +733,7 @@ export async function clearPendingSync(): Promise<void> {
  */
 export async function setCacheValue(
   key: string,
-  value: any,
+  value: unknown,
   ttlMs?: number
 ): Promise<void> {
   await ensureOpen();
@@ -747,7 +747,7 @@ export async function setCacheValue(
 /**
  * Get a cache value (returns null if expired)
  */
-export async function getCacheValue<T = any>(key: string): Promise<T | null> {
+export async function getCacheValue<T = unknown>(key: string): Promise<T | null> {
   await ensureOpen();
   const entry = await db.cacheMetadata.get(key);
   if (!entry) return null;
@@ -814,7 +814,7 @@ export async function getStorageBreakdown(): Promise<{
   // --- IndexedDB: estimate by serialising a sample and multiplying ---
   const tables: Record<string, { count: number; bytes: number }> = {};
 
-  const estimateTable = async (table: Table<any, any>, name: string) => {
+  const estimateTable = async <T, K>(table: Table<T, K>, name: string) => {
     const count = await table.count();
     if (count === 0) {
       tables[name] = { count: 0, bytes: 0 };

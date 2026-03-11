@@ -178,7 +178,7 @@ export const performCompleteLogout = async (): Promise<void> => {
     let dbFullyDeleted = false;
     try {
       dbFullyDeleted = await deleteIndexedDB();
-    } catch (dbError) {
+    } catch (_dbError) {
       console.warn('⚠️ Could not delete IndexedDB, falling back to clearing stores');
     }
     // If any database deletion was blocked/failed, clear stores as fallback

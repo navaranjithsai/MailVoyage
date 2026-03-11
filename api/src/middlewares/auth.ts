@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 
 // Extend Express Request type to include user payload from token
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Express augmentation requires namespace syntax
   namespace Express {
     interface Request {
       user?: { id: string; username: string; email: string }; // Payload with id, username and email
@@ -65,9 +66,12 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       username: decoded.username, 
       email: decoded.email 
     };
+    logger.info(`Auth: Token validated for user ${decoded.username} (${decoded.email}) - ${req.method} ${req.path}`);
     next();
-  } catch (error: any) {
-    logger.warn(`Auth: Token verification failed - ${error.name}: ${error.message}`);
+  } catch (error: unknown) {
+    const errName = error instanceof Error ? error.name : 'UnknownError';
+    const errMessage = error instanceof Error ? error.message : String(error);
+    logger.warn(`Auth: Token verification failed - ${errName}: ${errMessage}`);
     // Clear the invalid/expired cookie
     res.cookie('authToken', '', {
       httpOnly: true,

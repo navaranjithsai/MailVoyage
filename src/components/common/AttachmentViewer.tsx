@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, 
@@ -50,6 +50,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string>('');
+  const blobUrlRef = useRef<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +59,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
   // Generate blob URL when attachment changes
   useEffect(() => {
     if (!currentAttachment?.content) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync loading/error state from attachment data
       setError('No content available for this attachment');
       setIsLoading(false);
       return;
@@ -69,6 +71,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
     try {
       const url = base64ToBlobUrl(currentAttachment.content, currentAttachment.contentType);
       if (url) {
+        blobUrlRef.current = url;
         setBlobUrl(url);
         setIsLoading(false);
       } else {
@@ -83,8 +86,9 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
 
     // Cleanup blob URL on unmount or when attachment changes
     return () => {
-      if (blobUrl) {
-        revokeBlobUrl(blobUrl);
+      if (blobUrlRef.current) {
+        revokeBlobUrl(blobUrlRef.current);
+        blobUrlRef.current = '';
       }
     };
   }, [currentAttachment]);
@@ -92,9 +96,18 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
   // Reset index when modal opens
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync index from props when modal opens
       setCurrentIndex(initialIndex);
     }
   }, [isOpen, initialIndex]);
+
+  const navigatePrev = useCallback(() => {
+    setCurrentIndex(prev => (prev > 0 ? prev - 1 : attachments.length - 1));
+  }, [attachments.length]);
+
+  const navigateNext = useCallback(() => {
+    setCurrentIndex(prev => (prev < attachments.length - 1 ? prev + 1 : 0));
+  }, [attachments.length]);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -124,15 +137,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isFullscreen, currentIndex, attachments.length]);
-
-  const navigatePrev = useCallback(() => {
-    setCurrentIndex(prev => (prev > 0 ? prev - 1 : attachments.length - 1));
-  }, [attachments.length]);
-
-  const navigateNext = useCallback(() => {
-    setCurrentIndex(prev => (prev < attachments.length - 1 ? prev + 1 : 0));
-  }, [attachments.length]);
+  }, [isOpen, isFullscreen, navigatePrev, navigateNext, onClose]);
 
   const handleDownload = () => {
     if (currentAttachment?.content) {

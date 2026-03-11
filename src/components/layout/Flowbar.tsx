@@ -18,7 +18,7 @@ import logoSvg from '@/assets/logo.svg';
 interface FlowbarItem {
   id: string;
   label: string;
-  icon: React.ComponentType<any>;
+  icon: React.ComponentType<{ className?: string }>;
   path: string;
   badge?: number;
 }

@@ -11,7 +11,7 @@ import { toast } from '@/lib/toast';
 import AttachmentViewer, { AttachmentData } from '@/components/common/AttachmentViewer';
 
 // Global map to track in-progress fetches - prevents duplicate API calls across mounts
-const fetchInProgress = new Map<string, Promise<any>>();
+const fetchInProgress = new Map<string, Promise<SentMailDetail | null>>();
 
 // Import CKEditor styles for consistent rendering
 import 'ckeditor5/ckeditor5.css';
@@ -143,8 +143,9 @@ const EmailPage: React.FC = () => {
           };
           
           // Get all images to enable navigation
-          if (sentMail?.htmlBody) {
-            const allImages = extractBase64Images(sentMail.htmlBody);
+          const htmlSource = sentMail?.htmlBody || email?.content;
+          if (htmlSource && /<img/i.test(htmlSource)) {
+            const allImages = extractBase64Images(htmlSource);
             // Find the index of this image by matching content
             const imageIndex = allImages.findIndex(img => img.content === base64Content);
             
@@ -165,7 +166,7 @@ const EmailPage: React.FC = () => {
         }
       }
     }
-  }, [sentMail?.htmlBody, extractBase64Images]);
+  }, [sentMail?.htmlBody, email?.content, extractBase64Images]);
 
   useEffect(() => {
     // Skip if no ID is provided
@@ -191,7 +192,7 @@ const EmailPage: React.FC = () => {
         try {
           // First, check the local Dexie database (populated by delta sync)
           const cachedMail = await getSentMailByThreadId(id!);
-          
+
           if (cachedMail) {
             // Map SentMailRecord to SentMailDetail
             return {
@@ -216,14 +217,14 @@ const EmailPage: React.FC = () => {
               createdAt: cachedMail.createdAt
             } as SentMailDetail;
           }
-          
+
           // No cache available, fetch from API
           const response = await apiFetch(`/api/sent-mails/thread/${id}`);
-          
+
           if (response.success && response.data) {
             return response.data as SentMailDetail;
           }
-          
+
           return null;
         } finally {
           // Clean up the in-progress tracker
@@ -322,15 +323,18 @@ const EmailPage: React.FC = () => {
   };
 
   const handleReply = () => {
-    // Navigate to compose page with reply context
     if (sentMail) {
       navigate('/compose', { 
         state: { 
           type: 'reply', 
           originalEmail: {
             subject: sentMail.subject,
-            senderEmail: sentMail.toEmails[0],
-            content: sentMail.textBody || sentMail.htmlBody,
+            senderEmail: sentMail.toEmails[0], // reply goes to original recipient
+            fromEmail: sentMail.fromEmail,
+            toEmails: sentMail.toEmails,
+            htmlBody: sentMail.htmlBody,
+            textBody: sentMail.textBody,
+            sentAt: sentMail.sentAt,
           }
         } 
       });
@@ -338,21 +342,33 @@ const EmailPage: React.FC = () => {
       navigate('/compose', { 
         state: { 
           type: 'reply', 
-          originalEmail: email 
+          originalEmail: {
+            subject: email.subject,
+            sender: email.sender,
+            senderName: email.senderName,
+            senderEmail: email.senderEmail,
+            recipient: email.recipient,
+            content: email.content,
+            time: email.time,
+            timestamp: email.timestamp,
+          }
         } 
       });
     }
   };
 
   const handleForward = () => {
-    // Navigate to compose page with forward context
     if (sentMail) {
       navigate('/compose', { 
         state: { 
           type: 'forward', 
           originalEmail: {
             subject: sentMail.subject,
-            content: sentMail.textBody || sentMail.htmlBody,
+            fromEmail: sentMail.fromEmail,
+            toEmails: sentMail.toEmails,
+            htmlBody: sentMail.htmlBody,
+            textBody: sentMail.textBody,
+            sentAt: sentMail.sentAt,
           }
         } 
       });
@@ -360,7 +376,16 @@ const EmailPage: React.FC = () => {
       navigate('/compose', { 
         state: { 
           type: 'forward', 
-          originalEmail: email 
+          originalEmail: {
+            subject: email.subject,
+            sender: email.sender,
+            senderName: email.senderName,
+            senderEmail: email.senderEmail,
+            recipient: email.recipient,
+            content: email.content,
+            time: email.time,
+            timestamp: email.timestamp,
+          }
         } 
       });
     }
@@ -658,22 +683,30 @@ const EmailPage: React.FC = () => {
               {sentMail.htmlBody ? (
                 <div 
                   ref={emailContentRef}
-                  className="ck-content email-content"
+                  className="ck-content email-content max-w-none prose dark:prose-invert prose-sm sm:prose-base"
                   onClick={handleInlineImageClick}
                   dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(sentMail.htmlBody) }}
                 />
+              ) : sentMail.textBody ? (
+                <div className="ck-content email-content max-w-none">
+                  <div className="whitespace-pre-wrap font-sans text-gray-900 dark:text-gray-100 leading-relaxed text-base">
+                    {sentMail.textBody}
+                  </div>
+                </div>
               ) : (
-                <div className="ck-content email-content">
-                  <pre className="whitespace-pre-wrap font-sans text-gray-900 dark:text-gray-100 leading-relaxed">
-                    {sentMail.textBody || '(No content)'}
-                  </pre>
+                <div className="text-center py-8 text-gray-400 dark:text-gray-500 italic">
+                  (No content)
                 </div>
               )}
             </div>
 
             {/* Action Footer */}
             <div className="p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 rounded-b-lg">
-              <div className="flex items-center justify-end">
+              <div className="flex items-center justify-end gap-3">
+                <Button variant="outline" onClick={handleReply} className="flex items-center gap-2">
+                  <Reply size={16} />
+                  Reply
+                </Button>
                 <Button variant="outline" onClick={handleForward} className="flex items-center gap-2">
                   <Forward size={16} />
                   Forward
@@ -854,7 +887,7 @@ const EmailPage: React.FC = () => {
             </div>
 
             {/* Attachments */}
-            {email.hasAttachments && email.attachments && (
+            {email.hasAttachments && email.attachments && email.attachments.length > 0 && (
               <div className="mt-4">
                 <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1">
                   <Paperclip size={14} />
@@ -875,13 +908,11 @@ const EmailPage: React.FC = () => {
                             {attachment.name}
                           </p>
                           <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {attachment.size}
+                            {attachment.size} &middot; {attachment.type.split('/')[1]?.toUpperCase() || attachment.type}
                           </p>
                         </div>
                       </div>
-                      <Button variant="outline" size="small">
-                        Download
-                      </Button>
+                      <span className="text-xs text-gray-400 italic">Stored on server</span>
                     </div>
                   ))}
                 </div>
@@ -891,16 +922,22 @@ const EmailPage: React.FC = () => {
 
           {/* Email Body */}
           <div className="p-6">
-            {email.content && (email.content.includes('<') && email.content.includes('>')) ? (
-              <div 
-                className="ck-content email-content max-w-none"
+            {email.content && /<[a-z][\s\S]*>/i.test(email.content) ? (
+              <div
+                ref={emailContentRef}
+                className="ck-content email-content max-w-none prose dark:prose-invert prose-sm sm:prose-base"
+                onClick={handleInlineImageClick}
                 dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(email.content) }}
               />
-            ) : (
+            ) : email.content ? (
               <div className="ck-content email-content max-w-none">
-                <pre className="whitespace-pre-wrap font-sans text-gray-900 dark:text-gray-100 leading-relaxed">
-                  {email.content || '(No content)'}
-                </pre>
+                <div className="whitespace-pre-wrap font-sans text-gray-900 dark:text-gray-100 leading-relaxed text-base">
+                  {email.content}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400 dark:text-gray-500 italic">
+                (No content)
               </div>
             )}
           </div>

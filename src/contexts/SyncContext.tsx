@@ -40,6 +40,9 @@ export interface SyncContextValue {
   
   /** Trigger full sync (ignore checkpoints) */
   triggerFullSync: () => Promise<DeltaSyncResult>;
+
+  /** Trigger sent-mails-only sync */
+  triggerSentSync: () => Promise<DeltaSyncResult>;
   
   /** Refresh WebSocket connection */
   refreshConnection: () => Promise<void>;
@@ -155,14 +158,15 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
   const triggerSync = useCallback(async (): Promise<DeltaSyncResult> => {
     try {
       return await deltaSyncManager.manualSync();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('[SyncContext] Manual sync failed:', error);
       return {
         success: false,
         tables: [],
         updated: 0,
         deleted: 0,
-        error: error.message
+        error: message
       };
     }
   }, []);
@@ -171,14 +175,32 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
   const triggerFullSync = useCallback(async (): Promise<DeltaSyncResult> => {
     try {
       return await deltaSyncManager.fullSync();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       console.error('[SyncContext] Full sync failed:', error);
       return {
         success: false,
         tables: [],
         updated: 0,
         deleted: 0,
-        error: error.message
+        error: message
+      };
+    }
+  }, []);
+
+  // Sent-mails-only sync trigger
+  const triggerSentSync = useCallback(async (): Promise<DeltaSyncResult> => {
+    try {
+      return await deltaSyncManager.syncSentMailsOnly();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[SyncContext] Sent sync failed:', error);
+      return {
+        success: false,
+        tables: [],
+        updated: 0,
+        deleted: 0,
+        error: message
       };
     }
   }, []);
@@ -207,8 +229,9 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     isSyncing,
     triggerSync,
     triggerFullSync,
+    triggerSentSync,
     refreshConnection
-  }), [syncState, isRealTimeActive, isSyncing, triggerSync, triggerFullSync, refreshConnection]);
+  }), [syncState, isRealTimeActive, isSyncing, triggerSync, triggerFullSync, triggerSentSync, refreshConnection]);
 
   return (
     <SyncContext.Provider value={value}>
@@ -221,6 +244,7 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
 // Hook
 // ============================================================================
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSync(): SyncContextValue {
   const context = useContext(SyncContext);
   
@@ -241,6 +265,7 @@ export function useSync(): SyncContextValue {
       isSyncing: false,
       triggerSync: async () => ({ success: false, tables: [], updated: 0, deleted: 0, error: 'No SyncProvider' }),
       triggerFullSync: async () => ({ success: false, tables: [], updated: 0, deleted: 0, error: 'No SyncProvider' }),
+      triggerSentSync: async () => ({ success: false, tables: [], updated: 0, deleted: 0, error: 'No SyncProvider' }),
       refreshConnection: async () => {}
     };
   }
@@ -255,6 +280,7 @@ export function useSync(): SyncContextValue {
 /**
  * Simple hook for connection status only
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useConnectionStatus(): {
   isOnline: boolean;
   isRealTime: boolean;

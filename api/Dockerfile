@@ -1,25 +1,23 @@
 # ──────────────────────────────────────────────────────────────
-# MailVoyage API — Production Dockerfile  
-# Multi-stage build: base → deps → build → production
+# MailVoyage API — Production Dockerfile
+# Multi-stage build: deps → build → production
+# Uses Chainguard images (zero known CVEs)
 # ──────────────────────────────────────────────────────────────
 
-# ── Base stage ────────────────────────────────────────────────
-FROM node:22-alpine AS base
+# ── Dependencies stage ────────────────────────────────────────
+# latest-dev includes npm and shell, needed for installing + building
+FROM cgr.dev/chainguard/node:latest-dev AS deps
 
 WORKDIR /app
-
-# Update Alpine packages to remove known CVEs
-RUN apk update && apk upgrade --no-cache
-
-# ── Dependencies stage ────────────────────────────────────────
-FROM base AS deps
 
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts \
     && npm cache clean --force
 
 # ── Build stage ───────────────────────────────────────────────
-FROM base AS builder
+FROM cgr.dev/chainguard/node:latest-dev AS builder
+
+WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -29,7 +27,8 @@ COPY . .
 RUN npm run build:only
 
 # ── Production stage ──────────────────────────────────────────
-FROM base AS production
+# Distroless: no shell, no package manager — minimal attack surface
+FROM cgr.dev/chainguard/node:latest AS production
 
 # OCI metadata labels
 LABEL org.opencontainers.image.title="MailVoyage API" \
@@ -40,14 +39,14 @@ LABEL org.opencontainers.image.title="MailVoyage API" \
 
 ENV NODE_ENV=production
 
+WORKDIR /app
+
 # Copy only production artifacts
 COPY --from=builder /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
-# Run as non-root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-USER appuser
+# Chainguard images run as non-root (uid 65532) by default
 
 ARG PORT=3001
 ENV PORT=${PORT}

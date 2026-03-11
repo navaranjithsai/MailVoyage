@@ -31,7 +31,7 @@ export const getMailServerConfig = async (req: Request, res: Response, next: Nex
 // Send mail using account credentials
 export const sendMail = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const user = (req as any).user;
+    const user = req.user;
     
     if (!user || !user.id) {
       logger.error('User not authenticated or missing user ID');

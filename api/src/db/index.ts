@@ -9,7 +9,7 @@ const pool = new Pool({
   // Add other pool options if needed, e.g., ssl: { rejectUnauthorized: false } for some cloud providers
 });
 
-pool.on('error', (err, client) => {
+pool.on('error', (err, _client) => {
   logger.error('Unexpected error on idle PostgreSQL client', { error: err });
   process.exit(-1); // Exit if the pool encounters a critical error
 });

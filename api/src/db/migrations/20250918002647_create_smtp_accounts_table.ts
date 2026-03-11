@@ -29,7 +29,7 @@ export async function up(knex: Knex): Promise<void> {
   }
 }
 
-export async function down(knex: Knex): Promise<void> {
+export async function down(_knex: Knex): Promise<void> {
   // No-op safe down. Do not drop in case this was applied historically on a live DB.
   // If needed: await knex.schema.dropTableIfExists('smtp_accounts');
 }

@@ -796,9 +796,9 @@ export const injectEmailStyles = (): void => {
   try {
     // Import dynamically to avoid bundling issues when code not required
     attachCodeBlockEnhancements();
-  } catch (err) {
+  } catch (_err) {
     // If it fails (e.g., during SSR), just ignore
-    // console.error('Attach code block JS failed:', err);
+    // console.error('Attach code block JS failed:', _err);
   }
 };
 
@@ -976,7 +976,7 @@ export const attachCodeBlockEnhancements = (rootSelector = 'body') => {
       } else {
         throw new Error('Clipboard API unavailable');
       }
-    } catch (err) {
+    } catch (_err) {
       // Fallback
       const textarea = document.createElement('textarea');
       textarea.value = text;

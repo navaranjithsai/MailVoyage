@@ -62,18 +62,21 @@ const SearchBar: React.FC<SearchBarProps> = ({
   // Update internal state when external props change (for controlled mode)
   useEffect(() => {
     if (controlled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync from controlled props
       setSearchQuery(initialQuery);
     }
   }, [initialQuery, controlled]);
 
   useEffect(() => {
     if (controlled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync from controlled props
       setFilters(initialFilters);
     }
   }, [initialFilters, controlled]);
 
   useEffect(() => {
     if (controlled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync from controlled props
       setShowFilters(externalShowFilters);
     }
   }, [externalShowFilters, controlled]);
@@ -146,7 +149,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
     }
   };
 
-  const handleFilterChange = (key: keyof SearchFilters, value: any) => {
+  const handleFilterChange = (key: keyof SearchFilters, value: SearchFilters[keyof SearchFilters]) => {
     const newFilters = { ...filters, [key]: value };
     setFilters(newFilters);
     onFilter?.(newFilters);

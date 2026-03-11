@@ -55,10 +55,22 @@ export interface SentMail {
   threadId: string;
   fromEmail: string;
   toEmails: string[];
+  cc?: string[] | null;
+  bcc?: string[] | null;
   subject: string;
+  htmlBody?: string | null;
   textBody: string | null;
+  attachmentsMetadata?: Array<{
+    filename: string;
+    contentType: string;
+    size: number;
+    content?: string;
+  }> | null;
+  messageId?: string | null;
   sentAt: string;
   status: 'pending' | 'sent' | 'failed';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface FetchResult<T> {
@@ -81,8 +93,45 @@ export interface SentMailsResult {
 }
 
 export interface InboxResult {
-  mails: any[];
+  mails: unknown[];
   total: number;
+}
+
+/** Shape of a raw inbox mail from the API (supports snake_case and camelCase) */
+interface ApiInboxMail {
+  id?: string | number;
+  uid?: number;
+  account_code?: string;
+  accountCode?: string;
+  accountId?: string;
+  mailbox?: string;
+  message_id?: string;
+  messageId?: string;
+  from_address?: string;
+  fromAddress?: string;
+  from_name?: string;
+  fromName?: string;
+  to_addresses?: string | string[];
+  toAddresses?: string | string[];
+  cc_addresses?: string | string[];
+  ccAddresses?: string | string[];
+  subject?: string;
+  html_body?: string | null;
+  htmlBody?: string | null;
+  text_body?: string | null;
+  textBody?: string | null;
+  date?: string;
+  is_read?: boolean;
+  isRead?: boolean;
+  is_starred?: boolean;
+  isStarred?: boolean;
+  has_attachments?: boolean;
+  hasAttachments?: boolean;
+  attachments_metadata?: unknown;
+  attachmentsMetadata?: unknown;
+  labels?: string[];
+  created_at?: string;
+  createdAt?: string;
 }
 
 export interface SettingsResult {
@@ -130,14 +179,15 @@ export async function fetchEmailAccounts(): Promise<FetchResult<EmailAccountsRes
     const response = await apiFetch('/api/email-accounts', {
       method: 'GET',
     });
+    const resObj = response as Record<string, unknown>;
     
     // Handle different response formats
-    const emailAccounts = Array.isArray(response) 
+    const emailAccounts = (Array.isArray(response) 
       ? response 
-      : (response.emailAccounts || []);
-    const smtpAccounts = Array.isArray(response) 
+      : (resObj.emailAccounts || [])) as EmailAccount[];
+    const smtpAccounts = (Array.isArray(response) 
       ? [] 
-      : (response.smtpAccounts || []);
+      : (resObj.smtpAccounts || [])) as SmtpAccount[];
     
     // Save to localStorage
     localStorage.setItem('emailAccounts', JSON.stringify(emailAccounts));
@@ -152,11 +202,11 @@ export async function fetchEmailAccounts(): Promise<FetchResult<EmailAccountsRes
       success: true,
       data: { emailAccounts, smtpAccounts }
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('❌ Failed to fetch email accounts:', error);
     return {
       success: false,
-      error: error.message || 'Failed to fetch email accounts'
+      error: error instanceof Error ? error.message : 'Failed to fetch email accounts'
     };
   }
 }
@@ -173,27 +223,29 @@ export async function fetchSentMails(
   try {
     console.log(`🔄 Fetching sent mails (page ${page})...`);
     const response = await apiFetch(`/api/sent-mails?page=${page}&limit=${limit}`);
+    const resObj = response as Record<string, unknown>;
     
-    if (response.success && response.data) {
-      const data: SentMailsResult = response.data;
+    if (resObj.success && resObj.data) {
+      const data: SentMailsResult = resObj.data as SentMailsResult;
       
-      // Cache the data in Dexie
+      // Cache the data in Dexie (preserve all fields from API response)
       if (data.mails && data.mails.length > 0) {
         const sentMailRecords = data.mails.map(mail => ({
           id: mail.id,
           threadId: mail.threadId,
           fromEmail: mail.fromEmail,
           toEmails: mail.toEmails,
-          cc: null,
-          bcc: null,
+          cc: mail.cc || null,
+          bcc: mail.bcc || null,
           subject: mail.subject,
-          htmlBody: null,
-          textBody: mail.textBody,
-          attachmentsMetadata: null,
-          messageId: null,
+          htmlBody: mail.htmlBody || null,
+          textBody: mail.textBody || null,
+          attachmentsMetadata: mail.attachmentsMetadata || null,
+          messageId: mail.messageId || null,
           status: mail.status,
           sentAt: mail.sentAt,
-          createdAt: mail.sentAt,
+          createdAt: mail.createdAt || mail.sentAt,
+          updatedAt: mail.updatedAt || mail.sentAt,
           syncedAt: new Date().toISOString()
         }));
         await addOrUpdateSentMails(sentMailRecords);
@@ -214,11 +266,11 @@ export async function fetchSentMails(
       success: false,
       error: 'Invalid response format'
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('❌ Failed to fetch sent mails:', error);
     return {
       success: false,
-      error: error.message || 'Failed to fetch sent mails'
+      error: error instanceof Error ? error.message : 'Failed to fetch sent mails'
     };
   }
 }
@@ -242,7 +294,7 @@ export async function fetchInboxMails(
     }
 
     const accounts: Array<{ accountCode: string }> = JSON.parse(emailAccountsStr);
-    let allMails: any[] = [];
+    let allMails: ApiInboxMail[] = [];
 
     // Step 2: For each account, get cached mails from server DB
     for (const acc of accounts) {
@@ -250,7 +302,9 @@ export async function fetchInboxMails(
         const res = await apiFetch(
           `/api/inbox/cached?accountCode=${encodeURIComponent(acc.accountCode)}`
         );
-        const mails = res?.data?.mails || res?.mails || [];
+        const resObj = res as Record<string, unknown>;
+        const dataObj = resObj?.data as Record<string, unknown> | undefined;
+        const mails = ((dataObj?.mails || resObj?.mails || []) as ApiInboxMail[]);
         if (mails.length) {
           allMails = allMails.concat(mails);
         }
@@ -261,20 +315,20 @@ export async function fetchInboxMails(
 
     // Step 3: Save to local Dexie (encrypted)
     if (allMails.length > 0) {
-      const records: InboxMailRecord[] = allMails.map((m: any) => ({
+      const records: InboxMailRecord[] = allMails.map((m) => ({
         id: String(m.id ?? `${m.account_code || m.accountCode || m.accountId}:${m.uid}`),
-        uid: m.uid,
+        uid: m.uid ?? 0,
         accountId: m.account_code || m.accountCode || m.accountId || '',
         mailbox: m.mailbox || 'INBOX',
         messageId: m.message_id || m.messageId,
         fromAddress: m.from_address || m.fromAddress || '',
         fromName: m.from_name || m.fromName || '',
-        toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
+        toAddresses: (Array.isArray(m.to_addresses || m.toAddresses)
           ? (m.to_addresses || m.toAddresses)
-          : [m.to_addresses || m.toAddresses || ''],
-        ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
+          : [m.to_addresses || m.toAddresses || '']) as string[],
+        ccAddresses: (Array.isArray(m.cc_addresses || m.ccAddresses)
           ? (m.cc_addresses || m.ccAddresses)
-          : [],
+          : []) as string[],
         bccAddresses: [],
         subject: m.subject || '(No Subject)',
         htmlBody: m.html_body || m.htmlBody || null,
@@ -283,7 +337,7 @@ export async function fetchInboxMails(
         isRead: m.is_read ?? m.isRead ?? false,
         isStarred: m.is_starred ?? m.isStarred ?? false,
         hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
-        attachmentsMetadata: m.attachments_metadata || m.attachmentsMetadata || null,
+        attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
         labels: m.labels || [],
         syncedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -307,11 +361,11 @@ export async function fetchInboxMails(
         total: allMails.length,
       },
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('❌ Failed to fetch inbox mails:', error);
     return {
       success: false,
-      error: error.message || 'Failed to fetch inbox mails',
+      error: error instanceof Error ? error.message : 'Failed to fetch inbox mails',
     };
   }
 }
@@ -365,13 +419,15 @@ export async function fetchInboxSettings(): Promise<FetchResult<SettingsResult>>
   try {
     console.log('🔄 Fetching inbox settings...');
     const res = await apiFetch('/api/inbox/settings');
-    const limit = res?.data?.inboxCacheLimit ?? res?.inboxCacheLimit ?? 15;
+    const resObj = res as Record<string, unknown>;
+    const dataObj = resObj?.data as Record<string, unknown> | undefined;
+    const limit = (dataObj?.inboxCacheLimit ?? resObj?.inboxCacheLimit ?? 15) as number;
     localStorage.setItem('inbox_cache_limit', String(limit));
     console.log('✅ Inbox settings fetched: cacheLimit =', limit);
     return { success: true, data: { inboxCacheLimit: limit } };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('❌ Failed to fetch inbox settings:', error);
-    return { success: false, error: error.message || 'Failed to fetch inbox settings' };
+    return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch inbox settings' };
   }
 }
 
@@ -461,7 +517,7 @@ export async function fetchAll(
 
     return results;
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error in fetchAll:', error);
     onProgress?.({ step: 'complete', message: 'Sync failed' });
     return results;

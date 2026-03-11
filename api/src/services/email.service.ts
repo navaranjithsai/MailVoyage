@@ -132,13 +132,14 @@ export const sendOTPEmail = async (email: string, username: string, otp: string)
     });
 
     await transporter.sendMail(mailOptions);
-    logger.info(`OTP email sent successfully to ${email}`);  } catch (error: any) {
+    logger.info(`OTP email sent successfully to ${email}`);  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string; response?: string; command?: string; stack?: string };
     logger.error('Error sending OTP email:', {
-      message: error.message,
-      code: error.code,
-      response: error.response,
-      command: error.command,
-      stack: error.stack,
+      message: err.message ?? String(error),
+      code: err.code,
+      response: err.response,
+      command: err.command,
+      stack: err.stack,
     });
     throw new AppError('Failed to send OTP email', 500, false);
   }
@@ -155,11 +156,12 @@ export const testSMTPConnection = async (): Promise<boolean> => {
     await transporter.verify();
     logger.info('SMTP connection test successful');
     return true;
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string; response?: string };
     logger.error('SMTP connection test failed:', {
-      message: error.message,
-      code: error.code,
-      response: error.response,
+      message: err.message ?? String(error),
+      code: err.code,
+      response: err.response,
     });
     return false;
   }

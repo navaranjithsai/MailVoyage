@@ -29,48 +29,27 @@ interface EmailAccount {
   updatedAt?: Date;
 }
 
-// Database field mapping (camelCase to snake_case)
-const mapToDb = (data: Partial<EmailAccount>) => ({
-  user_id: data.userId,
-  email: data.email,
-  password: data.password,
-  is_primary: data.isPrimary,
-  incoming_type: data.incomingType,
-  incoming_host: data.incomingHost,
-  incoming_port: data.incomingPort,
-  incoming_username: data.incomingUsername,
-  incoming_security: data.incomingSecurity,
-  outgoing_host: data.outgoingHost,
-  outgoing_port: data.outgoingPort,
-  outgoing_username: data.outgoingUsername,
-  outgoing_password: data.outgoingPassword,
-  outgoing_security: data.outgoingSecurity,
-  is_active: data.isActive,
-  created_at: data.createdAt,
-  updated_at: data.updatedAt
-});
-
 // Database field mapping (snake_case to camelCase)
-const mapFromDb = (data: any): EmailAccount => ({
-  id: data.id,
-  userId: data.user_id,
-  email: data.email,
-  password: data.password,
-  accountCode: data.account_code,
-  isPrimary: data.is_primary,
-  incomingType: data.incoming_type,
-  incomingHost: data.incoming_host,
-  incomingPort: data.incoming_port,
-  incomingUsername: data.incoming_username,
-  incomingSecurity: data.incoming_security,
-  outgoingHost: data.outgoing_host,
-  outgoingPort: data.outgoing_port,
-  outgoingUsername: data.outgoing_username,
-  outgoingPassword: data.outgoing_password,
-  outgoingSecurity: data.outgoing_security,
-  isActive: data.is_active,
-  createdAt: data.created_at,
-  updatedAt: data.updated_at
+const mapFromDb = (data: Record<string, unknown>): EmailAccount => ({
+  id: data.id as string,
+  userId: data.user_id as string,
+  email: data.email as string,
+  password: data.password as string,
+  accountCode: data.account_code as string,
+  isPrimary: data.is_primary as boolean,
+  incomingType: data.incoming_type as 'IMAP' | 'POP3',
+  incomingHost: data.incoming_host as string,
+  incomingPort: data.incoming_port as number,
+  incomingUsername: data.incoming_username as string,
+  incomingSecurity: data.incoming_security as 'SSL' | 'STARTTLS' | 'NONE',
+  outgoingHost: data.outgoing_host as string,
+  outgoingPort: data.outgoing_port as number,
+  outgoingUsername: data.outgoing_username as string,
+  outgoingPassword: data.outgoing_password as string,
+  outgoingSecurity: data.outgoing_security as 'SSL' | 'STARTTLS' | 'NONE',
+  isActive: data.is_active as boolean,
+  createdAt: data.created_at as Date,
+  updatedAt: data.updated_at as Date
 });
 
 // Generate a 3-character alphanumeric account code
@@ -269,7 +248,7 @@ export const updateEmailAccount = async (accountId: string, userId: string, upda
     
     // Build update query dynamically
     const updateFields: string[] = [];
-    const updateValues: any[] = [];
+    const updateValues: unknown[] = [];
     let paramCount = 1;
     
     // Handle passwords (store as provided to allow connectivity testing)
@@ -461,13 +440,13 @@ const parseThunderbirdAutoconfig = (xmlText: string): AutoConfig | null => {
     const incomingServerRegex = /<incomingServer[^>]*type="([^"]*)"[^>]*>(.*?)<\/incomingServer>/gs;
     const outgoingServerRegex = /<outgoingServer[^>]*type="([^"]*)"[^>]*>(.*?)<\/outgoingServer>/gs;
 
-    let incomingConfig: any = null;
-    let outgoingConfig: any = null;
+    let incomingConfig: { type: string; hostname: string; port: number; socketType: string } | null = null;
+    let outgoingConfig: { hostname: string; port: number; socketType: string } | null = null;
 
     // Parse incoming servers - prioritize POP3 over IMAP
     let incomingMatch;
-    const pop3Configs: any[] = [];
-    const imapConfigs: any[] = [];
+    const pop3Configs: Array<{ type: string; hostname: string; port: number; socketType: string }> = [];
+    const imapConfigs: Array<{ type: string; hostname: string; port: number; socketType: string }> = [];
 
     while ((incomingMatch = incomingServerRegex.exec(xmlText)) !== null) {
       const serverType = incomingMatch[1];
@@ -644,8 +623,8 @@ async function testImap(opts: { host: string; port: number; secure: boolean; sta
     // ImapFlow negotiates STARTTLS automatically when server requires
     // noop login sufficient
   } finally {
-    try { await client.logout(); } catch {}
-    try { await client.close(); } catch {}
+    try { await client.logout(); } catch { /* best-effort cleanup */ }
+    try { await client.close(); } catch { /* best-effort cleanup */ }
   }
 }
 
@@ -663,8 +642,8 @@ async function testPop3(opts: { host: string; port: number; secure: boolean; sta
 
     const cleanup = () => {
       socket.removeAllListeners();
-      try { socket.end(); } catch {}
-      try { socket.destroy(); } catch {}
+      try { socket.end(); } catch { /* best-effort cleanup */ }
+      try { socket.destroy(); } catch { /* best-effort cleanup */ }
     };
 
     const fail = (err: Error) => {
