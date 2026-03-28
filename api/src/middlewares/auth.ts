@@ -39,7 +39,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         expires: new Date(0),
-        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+        sameSite: 'strict',
         path: '/',
       });
       return next(new AppError('Unauthorized: Invalid token structure', 401));
@@ -55,7 +55,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         expires: new Date(0),
-        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+        sameSite: 'strict',
         path: '/',
       });
       return next(new AppError('Unauthorized: User not found', 401));
@@ -77,7 +77,7 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       httpOnly: true,
       secure: config.nodeEnv === 'production',
       expires: new Date(0),
-      sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+      sameSite: 'strict',
       path: '/',
     });
 

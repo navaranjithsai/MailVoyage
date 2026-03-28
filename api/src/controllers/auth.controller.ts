@@ -7,6 +7,51 @@ import { AppError } from '../utils/errors.js';
 import { testSMTPConnection } from '../services/email.service.js';
 import jwt from 'jsonwebtoken';
 
+const getHeaderValue = (value: string | string[] | undefined): string | undefined => {
+  if (!value) return undefined;
+  return Array.isArray(value) ? value[0] : value;
+};
+
+const getHostName = (value: string): string | null => {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+};
+
+const enforcePasswordResetRequestGuards = (req: Request): string => {
+  const tabSessionId = getHeaderValue(req.headers['x-tab-session-id']);
+  const appClient = getHeaderValue(req.headers['x-mailvoyage-client']);
+  const requestHost = getHeaderValue(req.headers.host)?.split(':')[0];
+  const origin = getHeaderValue(req.headers.origin);
+  const referer = getHeaderValue(req.headers.referer);
+  const secFetchSite = getHeaderValue(req.headers['sec-fetch-site']);
+
+  if (!tabSessionId || !/^tab_[A-Za-z0-9_]+$/.test(tabSessionId)) {
+    throw new AppError('Forbidden', 403, true, { general: 'Missing or invalid tab session ID.' });
+  }
+
+  if (appClient !== 'mailvoyage-web') {
+    throw new AppError('Forbidden', 403, true, { general: 'Invalid client identifier.' });
+  }
+
+  if (!requestHost) {
+    throw new AppError('Forbidden', 403, true, { general: 'Missing request host.' });
+  }
+
+  const sourceHost = origin ? getHostName(origin) : referer ? getHostName(referer) : null;
+  if (!sourceHost || sourceHost !== requestHost) {
+    throw new AppError('Forbidden', 403, true, { general: 'Cross-site password reset requests are blocked.' });
+  }
+
+  if (secFetchSite && !['same-origin', 'same-site', 'none'].includes(secFetchSite)) {
+    throw new AppError('Forbidden', 403, true, { general: 'Cross-site password reset requests are blocked.' });
+  }
+
+  return tabSessionId;
+};
+
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { username, email, password } = req.body;
@@ -27,7 +72,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
       httpOnly: true,
       secure: config.nodeEnv === 'production',
       maxAge: config.jwtCookieExpiresIn, // Use centralized config for cookie expiry
-      sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+      sameSite: 'strict',
       path: '/',
     });
 
@@ -46,7 +91,7 @@ export const logout = async (req: Request, res: Response, next: NextFunction) =>
       httpOnly: true,
       secure: config.nodeEnv === 'production',
       expires: new Date(0),
-      sameSite: config.nodeEnv === 'production' ? 'none' : 'lax', // Ensure correct sameSite
+      sameSite: 'strict',
       path: '/', // Ensure path is specified for robust clearing
     });
     // It's good practice to also send a response confirming logout.
@@ -62,8 +107,9 @@ export const logout = async (req: Request, res: Response, next: NextFunction) =>
 
 export const forgotPassword = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const tabSessionId = enforcePasswordResetRequestGuards(req);
     const { username, email } = req.body;
-    const result = await authService.requestPasswordReset(username, email);
+    const result = await authService.requestPasswordReset(username, email, tabSessionId);
     res.status(200).json(result);
   } catch (error) {
     logger.error('Forgot password error:', error);
@@ -73,8 +119,15 @@ export const forgotPassword = async (req: Request, res: Response, next: NextFunc
 
 export const resetPassword = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { username, newPassword } = req.body;
-    const result = await authService.resetPasswordWithToken(username, newPassword);
+    const tabSessionId = enforcePasswordResetRequestGuards(req);
+    const { username, newPassword, otp, resetChallenge } = req.body;
+    const result = await authService.resetPasswordWithToken(
+      username,
+      newPassword,
+      otp,
+      resetChallenge,
+      tabSessionId
+    );
     res.status(200).json(result);
   } catch (error) {
     logger.error('Reset password error:', error);
@@ -96,7 +149,7 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
           httpOnly: true,
           secure: config.nodeEnv === 'production',
           expires: new Date(0),
-          sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+          sameSite: 'strict',
           path: '/',
         });
         return next(new AppError('Unauthorized: User not found', 401));
@@ -109,7 +162,7 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
           httpOnly: true,
           secure: config.nodeEnv === 'production',
           expires: new Date(0),
-          sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+          sameSite: 'strict',
           path: '/',
         });
         return next(new AppError('Unauthorized: User data mismatch', 401));
@@ -126,7 +179,7 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         expires: new Date(0),
-        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+        sameSite: 'strict',
         path: '/',
       });
       next(new AppError('Internal Server Error during token validation', 500));
@@ -143,7 +196,7 @@ export const validateToken = async (req: Request, res: Response, next: NextFunct
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         expires: new Date(0),
-        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+        sameSite: 'strict',
         path: '/',
       });
     return next(new AppError('Unauthorized: Invalid session', 401));

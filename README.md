@@ -12,6 +12,14 @@
 
 MailVoyage is a modern, developer-friendly email client designed to simplify email management and testing. It provides a unified platform for sending, receiving, and testing emails across multiple providers, all in one place. Built with React, TypeScript, and Vite, MailVoyage is optimized for performance, scalability, and ease of use. The application supports serverless deployments, making it ideal for integration with platforms like Vercel.
 
+## Documentation and Wiki
+
+For complete setup, architecture notes, deployment guides, known issues, and roadmap updates, check the project Wiki:
+
+- https://github.com/navaranjithsai/MailVoyage/wiki
+
+The README is the quick-start overview. The Wiki is the source for deeper and continuously updated documentation.
+
 
 ## Recent Commits
 
@@ -44,7 +52,7 @@ MailVoyage is a modern, developer-friendly email client designed to simplify ema
 ### For Users
 - **Unified Inbox**: Manage emails from multiple providers in one place.
 - **Email Sending**: Send emails with attachments, priority settings, and advanced formatting.
-- **Folder Management**: Create, list, and organize email folders.
+- **Offline-first Experience**: Read cached inbox data, queue actions offline, and sync when connectivity returns.
 - **Dark Mode**: Enjoy a modern UI with light and dark theme support.
 
 ## Tech Stack
@@ -54,7 +62,7 @@ MailVoyage is a modern, developer-friendly email client designed to simplify ema
 - **Validation**: Zod 4 for schema validation
 - **Real-time**: WebSocket (ws) for live sync
 - **Security**: AES-256-GCM client-side encryption (Web Crypto API), HttpOnly cookie JWT
-- **Deployment**: Vercel for serverless backend and frontend hosting
+- **Deployment**: Docker, Docker Compose, and Vercel (with serverless limitations)
 
 ---
 
@@ -175,8 +183,22 @@ The inbox cache limit controls how many emails are kept per email account:
   ```
 
 3. Set up environment variables:
-  - Create `.env` files in `api` directory.
-  - Refer to `.env.example` for required variables.
+  - Create `api/.env` from `api/.env.example` and fill in required values.
+  - Keep secrets only in `api/.env` (this file is git-ignored).
+  - Keep `api/.env.example` committed so contributors know required variables.
+
+  Example:
+  ```bash
+  # macOS / Linux
+  cp api/.env.example api/.env
+  ```
+
+  ```powershell
+  # Windows PowerShell
+  Copy-Item api/.env.example api/.env
+  ```
+
+  > Important: API config expects `JWT_COOKIE_EXPIRES_IN` (uppercase).
 
 4. Start the development server:
   ```bash
@@ -206,13 +228,14 @@ docker run -d -p 80:80 mailvoyage
 Run both frontend and API together:
 
 ```bash
-# Copy and configure environment variables
-cp api/.env.example api/.env
-# Edit api/.env with your database credentials, JWT secret, etc.
+# Create root-level .env for docker-compose variable interpolation
+# (DATABASE_URL, JWT_SECRET, PWD_SECRET, HOST_ADDRESS, CORS_ORIGIN, etc.)
 
 # Start all services
 docker compose -f docker-compose.prod.yml up -d
 ```
+
+> Compose note: this repo's compose file now uses API-native keys (`HOST_ADDRESS`, `PWD_SECRET`) to match runtime config directly.
 
 ### CI/CD — Local Build + Automatic Release Pipeline
 
@@ -286,6 +309,8 @@ MailVoyage also supports serverless deployment on Vercel:
 2. Configure environment variables in the Vercel dashboard.
 3. Deploy the frontend and backend as separate projects or as a monorepo.
 
+Note: WebSocket-based real-time sync is not available on Vercel serverless runtime. The app automatically falls back to manual refresh/sync behavior.
+
 ---
 
 ## API Endpoints
@@ -297,6 +322,9 @@ MailVoyage also supports serverless deployment on Vercel:
 | `POST` | `/api/auth/login` | Log in |
 | `POST` | `/api/auth/logout` | Log out |
 | `POST` | `/api/auth/forgot-password` | Request password reset |
+| `POST` | `/api/auth/reset-password` | Reset password using OTP + challenge |
+| `GET`  | `/api/auth/validate-token` | Validate active session token |
+| `POST` | `/api/auth/test-smtp` | Test SMTP connectivity |
 | `GET`  | `/api/auth/ws-token` | Get WebSocket token |
 
 ### Email Accounts
@@ -313,6 +341,7 @@ MailVoyage also supports serverless deployment on Vercel:
 | `GET`  | `/api/inbox/cached` | Get cached mails from server DB (fast) |
 | `GET`  | `/api/inbox/fetch` | Fetch mails directly from mail server |
 | `POST` | `/api/inbox/sync` | Fetch from IMAP/POP3 + update server cache |
+| `POST` | `/api/inbox/search` | Search mailbox on server (IMAP search) |
 | `GET`  | `/api/inbox/accounts` | List email accounts for dropdown |
 | `GET`  | `/api/inbox/settings` | Get inbox settings (cache limit) |
 | `PUT`  | `/api/inbox/settings` | Update inbox settings |
@@ -326,7 +355,17 @@ MailVoyage also supports serverless deployment on Vercel:
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET`  | `/api/sent-mails` | List sent mails (paginated) |
-| `GET`  | `/api/sent-mails/thread/:id` | Get a specific sent mail |
+| `GET`  | `/api/sent-mails/thread/:threadId` | Get sent mail by thread ID |
+| `GET`  | `/api/sent-mails/:id` | Get sent mail by ID |
+
+### Mail Routes (Scaffold/Partial)
+The following routes exist but are currently scaffold or partial implementations and may return placeholder responses:
+
+- `POST /api/mail/config`
+- `GET /api/mail/config`
+- `GET /api/mail/fetch`
+- `GET /api/mail/folders`
+- `POST /api/mail/folders`
 
 ---
 

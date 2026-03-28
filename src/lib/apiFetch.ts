@@ -9,11 +9,32 @@
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const apiFetch = async (endpoint: string, options: RequestInit = {}): Promise<any> => {
+  const getOrCreateTabSessionId = (): string | null => {
+    if (typeof window === 'undefined') return null;
+
+    try {
+      let tabSessionId = sessionStorage.getItem('tabSessionId');
+      if (!tabSessionId) {
+        tabSessionId = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+        sessionStorage.setItem('tabSessionId', tabSessionId);
+      }
+      return tabSessionId;
+    } catch {
+      return null;
+    }
+  };
+
   // Token is now handled by HttpOnly cookie, no need to get from localStorage for Authorization header.
   // const token = localStorage.getItem('authToken'); 
   const defaultHeaders: HeadersInit = {
     'Content-Type': 'application/json',
+    'X-MailVoyage-Client': 'mailvoyage-web',
   };
+
+  const tabSessionId = getOrCreateTabSessionId();
+  if (tabSessionId) {
+    defaultHeaders['X-Tab-Session-Id'] = tabSessionId;
+  }
 
   // Remove manual Authorization header and custom username header
   // if (token) {

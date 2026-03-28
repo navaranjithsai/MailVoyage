@@ -4,6 +4,9 @@ import pool from '../db/index.js'; // Adjusted path and extension
 import { AppError } from '../utils/errors.js'; // Custom error class
 import { logger } from '../utils/logger.js';
 import { generateOTP, hashOTP, sendOTPEmail } from './email.service.js';
+import jwt from 'jsonwebtoken';
+import { config } from '../utils/config.js';
+import crypto from 'crypto';
 
 // Placeholder for user type/interface (ideally from models)
 interface User {
@@ -12,6 +15,72 @@ interface User {
   email: string;
   password_hash: string;
 }
+
+interface PasswordResetChallengePayload {
+  purpose: 'password-reset';
+  username: string;
+  hashedOTP: string;
+  nonce: string;
+  tabSessionId: string;
+  iat?: number;
+  exp?: number;
+}
+
+const PASSWORD_RESET_CHALLENGE_TTL_SECONDS = 10 * 60;
+
+const timingSafeEqualString = (a: string, b: string): boolean => {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+};
+
+const createPasswordResetChallenge = (
+  username: string,
+  hashedOTP: string,
+  tabSessionId: string
+): { token: string; expiresAt: string; nonce: string } => {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const token = jwt.sign(
+    {
+      purpose: 'password-reset',
+      username,
+      hashedOTP,
+      nonce,
+      tabSessionId,
+    } satisfies PasswordResetChallengePayload,
+    config.jwtSecret,
+    { expiresIn: `${PASSWORD_RESET_CHALLENGE_TTL_SECONDS}s` }
+  );
+
+  return {
+    token,
+    expiresAt: new Date(Date.now() + PASSWORD_RESET_CHALLENGE_TTL_SECONDS * 1000).toISOString(),
+    nonce,
+  };
+};
+
+const verifyPasswordResetChallenge = (token: string): PasswordResetChallengePayload => {
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret) as PasswordResetChallengePayload;
+
+    if (!decoded || decoded.purpose !== 'password-reset') {
+      throw new AppError('Unauthorized', 401, true, { general: 'Invalid password reset challenge.' });
+    }
+
+    if (!decoded.username || !decoded.hashedOTP || !decoded.nonce || !decoded.tabSessionId) {
+      throw new AppError('Unauthorized', 401, true, { general: 'Malformed password reset challenge.' });
+    }
+
+    return decoded;
+  } catch (error: unknown) {
+    if (error instanceof AppError) throw error;
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new AppError('Unauthorized', 401, true, { general: 'Password reset challenge expired. Request a new OTP.' });
+    }
+    throw new AppError('Unauthorized', 401, true, { general: 'Invalid password reset challenge.' });
+  }
+};
 
 export const registerUser = async (username: string, email: string, password: string) => {
   const client = await pool.connect();
@@ -94,7 +163,7 @@ export const loginUser = async (email: string, password: string) => {
 /**
  * Verify username and email belong to the same user and send OTP
  */
-export const requestPasswordReset = async (username: string, email: string) => {
+export const requestPasswordReset = async (username: string, email: string, tabSessionId: string) => {
   const client = await pool.connect();
   try {
     // Find user by both username and email to ensure they belong to the same user
@@ -116,6 +185,9 @@ export const requestPasswordReset = async (username: string, email: string) => {
     
     // Hash OTP with username
     const hashedOTP = hashOTP(otp, username);
+
+    // Create short-lived signed challenge bound to this tab session
+    const challenge = createPasswordResetChallenge(username, hashedOTP, tabSessionId);
     
     // Send OTP email
     await sendOTPEmail(email, username, otp);
@@ -125,7 +197,10 @@ export const requestPasswordReset = async (username: string, email: string) => {
     return {
       message: 'OTP sent to your email address',
       hashedOTP, // Send hashed OTP back to client for verification
-      username: user.username // Send username back for frontend state
+      username: user.username, // Send username back for frontend state
+      resetChallenge: challenge.token,
+      resetChallengeExpiresAt: challenge.expiresAt,
+      nonce: challenge.nonce,
     };
   } catch (err: unknown) {
     logger.error('Error during password reset request:', err);
@@ -141,9 +216,30 @@ export const requestPasswordReset = async (username: string, email: string) => {
 /**
  * Update password
  */
-export const resetPasswordWithToken = async (username: string, newPassword: string) => {
+export const resetPasswordWithToken = async (
+  username: string,
+  newPassword: string,
+  otp: string,
+  resetChallenge: string,
+  tabSessionId: string
+) => {
   const client = await pool.connect();
   try {
+    const challenge = verifyPasswordResetChallenge(resetChallenge);
+
+    if (challenge.username !== username) {
+      throw new AppError('Unauthorized', 401, true, { general: 'Challenge username mismatch.' });
+    }
+
+    if (challenge.tabSessionId !== tabSessionId) {
+      throw new AppError('Unauthorized', 401, true, { general: 'Challenge is bound to a different browser tab.' });
+    }
+
+    const incomingOtpHash = hashOTP(otp, username);
+    if (!timingSafeEqualString(challenge.hashedOTP, incomingOtpHash)) {
+      throw new AppError('Unauthorized', 401, true, { general: 'Invalid OTP.' });
+    }
+
     // Find user by username
     const userRes = await client.query(
       'SELECT id, username, email FROM users WHERE username = $1',

@@ -19,6 +19,8 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
+  otp: z.string().length(6, 'OTP must be 6 characters').regex(/^[A-Za-z0-9]{6}$/, 'OTP must be alphanumeric'),
+  resetChallenge: z.string().min(20, 'Reset challenge is required'),
   newPassword: z.string().min(8, 'New password must be at least 8 characters'),
 });
 

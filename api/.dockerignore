@@ -1,0 +1,12 @@
+# Dependencies and build artifacts
+node_modules
+dist
+
+# VCS metadata
+.git
+.gitignore
+
+# Environment files (keep examples tracked)
+.env
+.env.*
+!.env.example

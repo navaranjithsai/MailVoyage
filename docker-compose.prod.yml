@@ -45,8 +45,8 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
-      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - HOST_ADDRESS=${HOST_ADDRESS:-localhost}
+      - PWD_SECRET=${PWD_SECRET}
     ports:
       - "${API_PORT:-3001}:3001"
     networks:

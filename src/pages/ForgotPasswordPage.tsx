@@ -51,6 +51,8 @@ const ForgotPasswordPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [serverHashedOTP, setServerHashedOTP] = useState<string>('');
+  const [resetChallenge, setResetChallenge] = useState<string>('');
+  const [resetChallengeExpiresAt, setResetChallengeExpiresAt] = useState<number | null>(null);
   const [savedUsername, setSavedUsername] = useState<string>('');
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -104,6 +106,12 @@ const ForgotPasswordPage: React.FC = () => {
       // Store the hashed OTP and username for step 2
       setServerHashedOTP(response.hashedOTP);
       setSavedUsername(response.username);
+      setResetChallenge(response.resetChallenge || '');
+      setResetChallengeExpiresAt(
+        response.resetChallengeExpiresAt
+          ? new Date(response.resetChallengeExpiresAt).getTime()
+          : null
+      );
       
       // Proceed to step 2
       setCurrentStep(2);
@@ -142,6 +150,15 @@ const ForgotPasswordPage: React.FC = () => {
 
     setIsLoading(true);
     try {
+      if (resetChallengeExpiresAt && Date.now() > resetChallengeExpiresAt) {
+        step2Form.setError('otp', {
+          type: 'manual',
+          message: 'OTP challenge expired. Go back and request a new OTP.'
+        });
+        toast.error('OTP challenge expired');
+        return;
+      }
+
       // Hash the entered OTP with saved username
       const clientHashedOTP = await hashOTP(otp, savedUsername);
       
@@ -185,6 +202,22 @@ const ForgotPasswordPage: React.FC = () => {
       return;
     }
 
+    if (!resetChallenge) {
+      step2Form.setError('otp', {
+        type: 'manual',
+        message: 'Missing password reset challenge. Request a new OTP.'
+      });
+      return;
+    }
+
+    if (resetChallengeExpiresAt && Date.now() > resetChallengeExpiresAt) {
+      step2Form.setError('otp', {
+        type: 'manual',
+        message: 'OTP challenge expired. Request a new OTP.'
+      });
+      return;
+    }
+
     setIsLoading(true);
     try {
       await apiFetch('/api/auth/reset-password', {
@@ -192,6 +225,8 @@ const ForgotPasswordPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: savedUsername,
+          otp: data.otp,
+          resetChallenge,
           newPassword: data.newPassword
         }),
       });
@@ -215,6 +250,8 @@ const ForgotPasswordPage: React.FC = () => {
     setCurrentStep(1);
     setOtpVerified(false);
     setServerHashedOTP('');
+    setResetChallenge('');
+    setResetChallengeExpiresAt(null);
     setSavedUsername('');
     step2Form.reset();
   };
