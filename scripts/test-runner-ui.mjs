@@ -35,11 +35,18 @@ function renderMenu() {
 
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: 'inherit',
-    });
+    const isWindows = process.platform === 'win32';
+    const child = isWindows
+      ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `${command} ${args.join(' ')}`], {
+          cwd: process.cwd(),
+          env: process.env,
+          stdio: 'inherit',
+        })
+      : spawn(command, args, {
+          cwd: process.cwd(),
+          env: process.env,
+          stdio: 'inherit',
+        });
 
     child.on('error', reject);
     child.on('exit', (code) => {
