@@ -1,0 +1,33 @@
+name: Documentation update
+description: Report unclear or outdated docs/wiki content
+labels:
+  - documentation
+title: "docs: "
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: Affected doc/page
+      description: Which file or wiki page needs update?
+      placeholder: README.md or Wiki page URL
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is wrong or missing?
+      placeholder: Describe the gap clearly
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Suggested correction
+      placeholder: Proposed text or structure
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-check
+      options:
+        - label: I checked if this is already covered elsewhere in docs/wiki.
+          required: true

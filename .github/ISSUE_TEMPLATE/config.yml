@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and Help (Discussions)
+    url: https://github.com/navaranjithsai/MailVoyage/discussions
+    about: Ask setup, usage, and troubleshooting questions here.
+  - name: Security Vulnerability Report
+    url: https://github.com/navaranjithsai/MailVoyage/security/advisories/new
+    about: Report security issues privately. Do not open public issues.

@@ -1,7 +1,7 @@
 {
   "name": "mailvoyage",
   "description": "MailVoyage - A modern email client with offline-first architecture",
-  "version": "2026.2.3",
+  "version": "2026.3.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,7 +19,22 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"No tests configured yet\"",
+    "test": "npm run test:unit && npm run test:api",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --coverage --config vitest.config.ts",
+    "test:api": "npm --prefix api run test",
+    "test:phase1": "vitest run --config vitest.config.ts tests/phase1 --passWithNoTests",
+    "test:phase2": "vitest run --config vitest.config.ts tests/phase2 --passWithNoTests",
+    "test:phase3": "npm --prefix api run test:phase3",
+    "test:phase4": "npm --prefix api run test:phase4",
+    "test:phase5:web": "vitest run --config vitest.config.ts tests/phase5 --passWithNoTests",
+    "test:phase5:api": "npm --prefix api run test:phase5",
+    "test:phase5": "npm run test:phase5:web && npm run test:phase5:api",
+    "test:all:phases": "npm run test:phase1 && npm run test:phase2 && npm run test:phase3 && npm run test:phase4 && npm run test:phase5",
+    "test:coverage:all": "npm run test:coverage && npm --prefix api run test:coverage",
+    "test:clean": "rimraf coverage .vitest api/coverage api/.vitest",
+    "test:ui": "node scripts/test-runner-ui.mjs",
     "install:api": "npm --prefix api install",
     "install:all": "npm install && npm run install:api",
     "start:api": "npm --prefix api run start",
@@ -55,6 +70,7 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^5.1.2",
+    "@vitest/coverage-v8": "^4.1.2",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.2",
     "eslint": "^9.22.0",
@@ -66,6 +82,7 @@
     "terser": "^5.46.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.26.1",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.1.2"
   }
 }

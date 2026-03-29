@@ -27,6 +27,15 @@ on:
         required: false
         type: boolean
         default: true
+      test_profile:
+        description: 'Test profile to run (quick/full/coverage)'
+        required: true
+        type: choice
+        default: quick
+        options:
+          - quick
+          - full
+          - coverage
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -105,6 +114,57 @@ jobs:
             echo "| \`$(basename $f)\` | ${SIZE} |" >> $GITHUB_STEP_SUMMARY
           done
 
+  # ── Frontend Tests ──────────────────────────────────────────
+  frontend-tests:
+    name: Tests (Frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests (profile)
+        run: |
+          case "${{ inputs.test_profile }}" in
+            quick)
+              npm run test:unit
+              ;;
+            full)
+              npm run test:phase1
+              npm run test:phase2
+              npm run test:phase5:web
+              ;;
+            coverage)
+              npm run test:phase1
+              npm run test:phase2
+              npm run test:phase5:web
+              npm run test:coverage
+              ;;
+            *)
+              echo "Unknown test profile: ${{ inputs.test_profile }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload frontend coverage artifact
+        if: ${{ always() && inputs.test_profile == 'coverage' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend-${{ github.run_id }}
+          path: coverage/frontend
+          if-no-files-found: warn
+
+      - name: Cleanup frontend test artifacts
+        if: always()
+        run: rimraf coverage .vitest
+
   # ── API Type Check ───────────────────────────────────────────
   api-typecheck:
     name: Type Check (API)
@@ -167,11 +227,63 @@ jobs:
       - name: Build API
         run: npm run --prefix api build:only
 
+  # ── API Tests ───────────────────────────────────────────────
+  api-tests:
+    name: Tests (API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API dependencies
+        run: npm ci --prefix api
+
+      - name: Run API tests (profile)
+        run: |
+          case "${{ inputs.test_profile }}" in
+            quick)
+              npm run --prefix api test
+              ;;
+            full)
+              npm run --prefix api test:phase3
+              npm run --prefix api test:phase4
+              npm run --prefix api test:phase5
+              ;;
+            coverage)
+              npm run --prefix api test:phase3
+              npm run --prefix api test:phase4
+              npm run --prefix api test:phase5
+              npm run --prefix api test:coverage
+              ;;
+            *)
+              echo "Unknown test profile: ${{ inputs.test_profile }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload API coverage artifact
+        if: ${{ always() && inputs.test_profile == 'coverage' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-api-${{ github.run_id }}
+          path: api/coverage/api
+          if-no-files-found: warn
+
+      - name: Cleanup API test artifacts
+        if: always()
+        run: npm run --prefix api test:clean
+
   # ── Summary Gate ─────────────────────────────────────────────
   ci-passed:
     name: CI Passed
     if: always()
-    needs: [lint, typecheck, build, api-typecheck, api-build]
+    needs: [lint, typecheck, build, frontend-tests, api-typecheck, api-build, api-tests]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs
@@ -179,14 +291,18 @@ jobs:
           echo "Lint:           ${{ needs.lint.result }}"
           echo "Typecheck:      ${{ needs.typecheck.result }}"
           echo "Build:          ${{ needs.build.result }}"
+          echo "Frontend Tests: ${{ needs.frontend-tests.result }}"
           echo "API Typecheck:  ${{ needs.api-typecheck.result }}"
           echo "API Build:      ${{ needs.api-build.result }}"
+          echo "API Tests:      ${{ needs.api-tests.result }}"
 
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.typecheck.result }}" != "success" ]] || \
              [[ "${{ needs.build.result }}" != "success" ]] || \
+             [[ "${{ needs.frontend-tests.result }}" != "success" ]] || \
              [[ "${{ needs.api-typecheck.result }}" != "success" ]] || \
-             [[ "${{ needs.api-build.result }}" != "success" ]]; then
+             [[ "${{ needs.api-build.result }}" != "success" ]] || \
+             [[ "${{ needs.api-tests.result }}" != "success" ]]; then
             echo "❌ One or more CI checks failed"
             exit 1
           fi

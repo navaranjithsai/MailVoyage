@@ -1,0 +1,73 @@
+name: Feature request
+description: Suggest a new feature or enhancement
+labels:
+  - enhancement
+title: "feat: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Clear problem statements help us prioritize better.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve?
+      placeholder: As a user/developer, I struggle with ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should MailVoyage do?
+      placeholder: Add ... with ... behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workaround or alternative approach?
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Primary impact area
+      options:
+        - UX/UI
+        - Performance
+        - Security
+        - Developer Experience
+        - Email Provider Setup
+        - Offline/Sync
+        - Deployment/DevOps
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: api-cost
+    attributes:
+      label: API cost impact (best guess)
+      description: MailVoyage is local-first and API-cost aware
+      options:
+        - Reduces API calls
+        - Neutral / no significant change
+        - Increases API calls slightly
+        - Increases API calls significantly
+        - Not sure
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria (optional)
+      description: How do we know this is done?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-check
+      options:
+        - label: I searched existing issues/discussions.
+          required: true

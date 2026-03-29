@@ -280,8 +280,26 @@ Build number auto-increments per month from existing git tags.
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | **Docker Publish** (`docker-publish.yml`) | Push to main | Tag, build Docker image, publish to Docker Hub, GitHub Release |
-| **CI** (`ci.yml`) | Manual (`workflow_dispatch`) | Lint, type-check, build verification (frontend + API) |
+| **CI** (`ci.yml`) | Manual (`workflow_dispatch`) | Lint, type-check, build verification + profile-based tests (frontend + API) |
 | **CodeQL** (`codeql.yml`) | Manual (`workflow_dispatch`) | Security vulnerability scanning |
+
+#### Test Running (Local + Manual CI)
+
+- Quick local check: `npm run test`
+- Interactive selector (phase menu): `npm run test:ui`
+- Phase runs: `npm run test:phase1` through `npm run test:phase5`
+- Combined phase run: `npm run test:all:phases`
+- Coverage run (frontend + API): `npm run test:coverage:all`
+
+Manual CI test runs support `test_profile` values:
+
+- `quick`: fast default checks
+- `full`: all test phases
+- `coverage`: full phases + coverage reports + artifact upload
+
+For the full non-invasive testing model and command matrix, see:
+
+- Wiki: https://github.com/navaranjithsai/MailVoyage/wiki/Testing-and-QA
 
 > **Note:** CI and CodeQL are manual during active development to conserve GitHub Actions minutes.
 > Dependabot is configured via GitHub Settings (not a workflow file).
@@ -427,11 +445,20 @@ We welcome contributions to MailVoyage! To get started:
 2. Create a new branch for your feature or bug fix.
 3. Submit a pull request with a detailed description.
 
+Please review these project guides before opening a PR:
+
+- [Contributing Guide](CONTRIBUTING.md)
+- [Support Guide](SUPPORT.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+
 ## License
 MailVoyage is open-source and licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 ## Contact
 For questions or support, start a discussion in the Discussion tab.
+
+For security vulnerabilities, do not open a public issue. Use private reporting via [GitHub Security Advisories](https://github.com/navaranjithsai/MailVoyage/security/advisories/new).
 
 ---
 <p style="text-align:center;"><strong>Tech4File - Simplifying Tech for Developers and Users</strong>
