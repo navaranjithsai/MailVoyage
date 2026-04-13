@@ -2,6 +2,8 @@
 
 # MailVoyage - Modern Email Client for Developers and Users
 
+![Docker Pulls](https://img.shields.io/docker/pulls/navaranjithsai/mailvoyage)
+[![GitHub Total Clones](https://img.shields.io/badge/dynamic/json?color=success&label=Clones&query=%24.clones.total_count&url=https%3A%2F%2Fgist.githubusercontent.com%2Fnavaranjithsai%2F67a85ef027cb66937c5f1b17b1436e8d%2Fraw%2Ftraffic.json&logo=github)](https://github.com/navaranjithsai/MailVoyage)
 [![GitHub license](https://img.shields.io/github/license/navaranjithsai/MailVoyage
 )](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)

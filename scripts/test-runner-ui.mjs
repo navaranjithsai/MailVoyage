@@ -60,6 +60,30 @@ function runCommand(command, args) {
   });
 }
 
+function printFailureContext(error, command, args) {
+  console.error(error instanceof Error ? error.message : String(error));
+
+  const cmd = `${command} ${args.join(' ')}`;
+  console.error(`Environment: platform=${process.platform}, node=${process.version}`);
+  console.error(`Command: ${cmd}`);
+
+  if (process.platform === 'win32') {
+    console.error(`ComSpec: ${process.env.ComSpec || 'cmd.exe'}`);
+  }
+
+  if (error && typeof error === 'object') {
+    const details = [];
+    if ('code' in error && error.code) details.push(`code=${error.code}`);
+    if ('errno' in error && error.errno) details.push(`errno=${error.errno}`);
+    if ('syscall' in error && error.syscall) details.push(`syscall=${error.syscall}`);
+    if ('path' in error && error.path) details.push(`path=${error.path}`);
+
+    if (details.length > 0) {
+      console.error(`Failure details: ${details.join(', ')}`);
+    }
+  }
+}
+
 async function main() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -89,7 +113,7 @@ async function main() {
         console.log('Run completed successfully.');
       } catch (error) {
         console.error('Run failed.');
-        console.error(error instanceof Error ? error.message : String(error));
+        printFailureContext(error, selected.command[0], selected.command[1]);
       }
     }
   } finally {
@@ -98,6 +122,11 @@ async function main() {
 }
 
 main().catch((error) => {
+  if (error instanceof Error && error.message === 'readline was closed') {
+    process.exitCode = 0;
+    return;
+  }
+
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });
