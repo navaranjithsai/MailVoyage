@@ -1,7 +1,7 @@
 {
   "name": "mailvoyage",
   "description": "MailVoyage - A modern email client with offline-first architecture",
-  "version": "2026.3.3",
+  "version": "2026.4.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -46,9 +46,9 @@
     "prerelease": "echo '\n🚀  Starting MailVoyage release build...\n'"
   },
   "dependencies": {
-    "@ckeditor/ckeditor5-react": "^11.0.0",
+    "@ckeditor/ckeditor5-react": "^11.1.2",
     "@tailwindcss/vite": "^4.0.0",
-    "ckeditor5": "^47.4.0",
+    "ckeditor5": "^48.0.1",
     "dexie": "^4.2.1",
     "dompurify": "^3.2.7",
     "framer-motion": "^12.9.2",
@@ -66,7 +66,7 @@
     "@tailwindcss/postcss": "^4.1.4",
     "@types/dompurify": "^3.0.5",
     "@types/imapflow": "^1.0.21",
-    "@types/node": "^25.0.9",
+    "@types/node": "^25.6.0",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^5.1.2",
@@ -80,8 +80,8 @@
     "postcss": "^8.5.3",
     "tailwindcss": "^4.0.0",
     "terser": "^5.46.0",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.26.1",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.2",
     "vite": "^7.3.1",
     "vitest": "^4.1.2"
   }

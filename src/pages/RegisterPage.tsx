@@ -26,7 +26,7 @@ const RegisterPage: React.FC = () => {
   const [passwordFocused, setPasswordFocused] = useState(false);
   const navigate = useNavigate();
 
-  // eslint-disable-next-line react-hooks/incompatible-library -- react-hook-form is compatible with current React version
+   
   const passwordValue = watch('password', '');
 
   const togglePasswordVisibility = () => setShowPassword((v) => !v);

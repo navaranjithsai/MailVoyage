@@ -1,6 +1,7 @@
 # Ignoring unused files
 idea.prompt
 API_MIGRATION_GUIDE.md
+API_ROUTER_AUDIT_REPORT.md
 TODO.md
 
 # Logs
@@ -16,6 +17,12 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Test artifacts
+coverage/
+api/coverage/
+.vitest/
+api/.vitest/
 
 # Environment files (keep examples tracked)
 .env

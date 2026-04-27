@@ -1,6 +1,6 @@
 {
   "name": "mailvoyage-api",
-  "version": "2026.3.3",
+  "version": "2026.4.1",
   "description": "Backend API for MailVoyage - Email client REST API with WebSocket support",
   "main": "dist/index.js",
   "type": "module",
@@ -34,6 +34,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/qrcode": "^1.5.6",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -48,6 +49,7 @@
     "node-pop3": "^0.11.0",
     "nodemailer": "^8.0.1",
     "pg": "^8.15.6",
+    "qrcode": "^1.5.4",
     "winston": "^3.19.0",
     "ws": "^8.18.3",
     "zod": "^4.3.6"
@@ -61,7 +63,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/mailparser": "^3.4.4",
     "@types/morgan": "^1.9.9",
-    "@types/node": "^25.0.9",
+    "@types/node": "^25.6.0",
     "@types/nodemailer": "^7.0.9",
     "@types/pg": "^8.11.14",
     "@types/supertest": "^7.2.0",
@@ -71,7 +73,7 @@
     "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.2",
     "vitest": "^4.1.2"
   }
 }

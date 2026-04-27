@@ -12,6 +12,43 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'), // Basic check, actual validation is via bcrypt
 });
 
+export const loginTwoFactorVerifySchema = z.object({
+  twoFactorToken: z.string().min(20, 'Two-factor token is required'),
+  code: z.string().regex(/^\d{6}$/, 'Authenticator code must be 6 digits'),
+});
+
+export const loginTwoFactorOtpRequestSchema = z.object({
+  twoFactorToken: z.string().min(20, 'Two-factor token is required'),
+});
+
+export const loginTwoFactorOtpVerifySchema = z.object({
+  twoFactorToken: z.string().min(20, 'Two-factor token is required'),
+  otpChallengeToken: z.string().min(20, 'OTP challenge token is required'),
+  code: z.string().length(6, 'OTP must be 6 characters').regex(/^[A-Za-z0-9]{6}$/, 'OTP must be alphanumeric'),
+});
+
+export const loginTwoFactorRecoveryVerifySchema = z.object({
+  twoFactorToken: z.string().min(20, 'Two-factor token is required'),
+  recoveryCode: z.string().min(6, 'Recovery code is required'),
+});
+
+export const twoFactorSetupInitSchema = z.object({
+  currentPassword: z.string().min(8, 'Current password must be at least 8 characters').optional(),
+});
+
+export const twoFactorSetupVerifySchema = z.object({
+  setupToken: z.string().min(20, 'Setup token is required'),
+  code: z.string().regex(/^\d{6}$/, 'Authenticator code must be 6 digits'),
+});
+
+export const twoFactorDisableSchema = z.object({
+  currentPassword: z.string().min(8, 'Current password must be at least 8 characters'),
+});
+
+export const twoFactorRecoveryRegenerateSchema = z.object({
+  currentPassword: z.string().min(8, 'Current password must be at least 8 characters'),
+});
+
 export const forgotPasswordSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
   email: z.string().email('Invalid email address'),
@@ -30,6 +67,35 @@ export const updateUserSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
   email: z.string().email('Invalid email address'),
 }).strict(); // Disallow extra fields
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Current password is required'),
+    newPassword: z
+      .string()
+      .min(8, 'New password must be at least 8 characters')
+      .regex(/[A-Z]/, 'New password must include at least one uppercase letter')
+      .regex(/[a-z]/, 'New password must include at least one lowercase letter')
+      .regex(/[^A-Za-z0-9]/, 'New password must include at least one special character'),
+    confirmPassword: z.string().min(1, 'Confirm password is required'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.newPassword !== data.confirmPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['confirmPassword'],
+        message: 'Confirm password does not match',
+      });
+    }
+
+    if (data.currentPassword === data.newPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newPassword'],
+        message: 'New password must be different from current password',
+      });
+    }
+  });
 
 export const updatePreferencesSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),

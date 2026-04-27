@@ -1061,7 +1061,7 @@ const DashboardPage: React.FC = () => {
         </section>
 
         {/* Debug Section (Development only) */}
-        {process.env.NODE_ENV === 'development' && (
+        {import.meta.env.DEV && (
           <section className="mb-8">
             <motion.div
               initial={{ opacity: 0, y: 20 }}

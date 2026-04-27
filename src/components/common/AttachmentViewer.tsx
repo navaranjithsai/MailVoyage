@@ -59,7 +59,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
   // Generate blob URL when attachment changes
   useEffect(() => {
     if (!currentAttachment?.content) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync loading/error state from attachment data
+       
       setError('No content available for this attachment');
       setIsLoading(false);
       return;
@@ -96,7 +96,7 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
   // Reset index when modal opens
   useEffect(() => {
     if (isOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync index from props when modal opens
+       
       setCurrentIndex(initialIndex);
     }
   }, [isOpen, initialIndex]);

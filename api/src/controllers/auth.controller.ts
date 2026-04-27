@@ -52,6 +52,26 @@ const enforcePasswordResetRequestGuards = (req: Request): string => {
   return tabSessionId;
 };
 
+const setAuthCookie = (res: Response, token: string): void => {
+  res.cookie('authToken', token, {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    maxAge: config.jwtCookieExpiresIn,
+    sameSite: 'strict',
+    path: '/',
+  });
+};
+
+const clearAuthCookie = (res: Response): void => {
+  res.cookie('authToken', '', {
+    httpOnly: true,
+    secure: config.nodeEnv === 'production',
+    expires: new Date(0),
+    sameSite: 'strict',
+    path: '/',
+  });
+};
+
 export const register = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { username, email, password } = req.body;
@@ -66,20 +86,148 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
 export const login = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, password } = req.body;
-    const result = await authService.loginUser(email, password);
+    const result = await authService.loginUser(email, password, req.ip || 'unknown');
 
-    res.cookie('authToken', result.token, {
-      httpOnly: true,
-      secure: config.nodeEnv === 'production',
-      maxAge: config.jwtCookieExpiresIn, // Use centralized config for cookie expiry
-      sameSite: 'strict',
-      path: '/',
-    });
+    if (result.requiresTwoFactor) {
+      return res.status(200).json(result);
+    }
 
-    // User object from authService.loginUser already contains id, username, email
-    res.status(200).json({ user: result.user, message: 'Login successful' });
+    setAuthCookie(res, result.token);
+    res.status(200).json({ user: result.user, message: result.message });
   } catch (error) {
     logger.error('Login error:', error);
+    next(error);
+  }
+};
+
+export const loginTwoFactorVerify = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { twoFactorToken, code } = req.body;
+    const result = await authService.verifyLoginTwoFactorAuthenticator(twoFactorToken, code, req.ip || 'unknown');
+    setAuthCookie(res, result.token);
+    res.status(200).json({ user: result.user, message: result.message });
+  } catch (error) {
+    logger.error('2FA authenticator verification error:', error);
+    next(error);
+  }
+};
+
+export const requestLoginTwoFactorOtp = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { twoFactorToken } = req.body;
+    const result = await authService.requestLoginTwoFactorOtp(twoFactorToken, req.ip || 'unknown');
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error('2FA OTP request error:', error);
+    next(error);
+  }
+};
+
+export const verifyLoginTwoFactorOtp = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { twoFactorToken, otpChallengeToken, code } = req.body;
+    const result = await authService.verifyLoginTwoFactorOtp(
+      twoFactorToken,
+      otpChallengeToken,
+      code,
+      req.ip || 'unknown'
+    );
+
+    setAuthCookie(res, result.token);
+    res.status(200).json({ user: result.user, message: result.message });
+  } catch (error) {
+    logger.error('2FA OTP verification error:', error);
+    next(error);
+  }
+};
+
+export const verifyLoginTwoFactorRecoveryCode = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { twoFactorToken, recoveryCode } = req.body;
+    const result = await authService.verifyLoginTwoFactorRecoveryCode(
+      twoFactorToken,
+      recoveryCode,
+      req.ip || 'unknown'
+    );
+
+    setAuthCookie(res, result.token);
+    res.status(200).json({ user: result.user, message: result.message });
+  } catch (error) {
+    logger.error('2FA recovery code verification error:', error);
+    next(error);
+  }
+};
+
+export const getTwoFactorStatus = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.id) {
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    const result = await authService.getTwoFactorStatusForUser(Number(req.user.id));
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error('Get 2FA status error:', error);
+    next(error);
+  }
+};
+
+export const initTwoFactorSetup = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.id) {
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    const { currentPassword } = req.body;
+    const result = await authService.initTwoFactorSetupForUser(Number(req.user.id), currentPassword);
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error('Init 2FA setup error:', error);
+    next(error);
+  }
+};
+
+export const verifyTwoFactorSetup = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.id) {
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    const { setupToken, code } = req.body;
+    const result = await authService.verifyTwoFactorSetupForUser(Number(req.user.id), setupToken, code);
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error('Verify 2FA setup error:', error);
+    next(error);
+  }
+};
+
+export const disableTwoFactor = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.id) {
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    const { currentPassword } = req.body;
+    await authService.disableTwoFactorForUser(Number(req.user.id), currentPassword);
+    res.status(200).json({ enabled: false, message: 'Two-factor authentication disabled' });
+  } catch (error) {
+    logger.error('Disable 2FA error:', error);
+    next(error);
+  }
+};
+
+export const regenerateTwoFactorRecoveryCodes = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.id) {
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    const { currentPassword } = req.body;
+    const result = await authService.regenerateTwoFactorRecoveryCodesForUser(Number(req.user.id), currentPassword);
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error('Regenerate 2FA recovery codes error:', error);
     next(error);
   }
 };
@@ -87,13 +235,7 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
 export const logout = async (req: Request, res: Response, next: NextFunction) => {
   // This endpoint does not need authenticateToken middleware
   try {
-    res.cookie('authToken', '', {
-      httpOnly: true,
-      secure: config.nodeEnv === 'production',
-      expires: new Date(0),
-      sameSite: 'strict',
-      path: '/', // Ensure path is specified for robust clearing
-    });
+    clearAuthCookie(res);
     // It's good practice to also send a response confirming logout.
     res.status(200).json({ message: 'Logout successful' });
   } catch (error) {

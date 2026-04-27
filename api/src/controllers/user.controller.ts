@@ -86,6 +86,32 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
   }
 };
 
+export const changePassword = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const currentUser = req.user;
+
+    if (!currentUser) {
+      return next(new AppError('Unauthorized', 401));
+    }
+
+    const userId = Number(currentUser.id);
+    if (!Number.isFinite(userId)) {
+      return next(new AppError('Invalid authenticated user id', 400));
+    }
+
+    const { currentPassword, newPassword } = req.body;
+    const result = await userService.changeUserPassword(userId, currentPassword, newPassword);
+
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error instanceof AppError) {
+      return next(error);
+    }
+    logger.error('Unexpected error in changePassword:', error);
+    return next(new AppError('Failed to update password due to server error', 500));
+  }
+};
+
 // Placeholder: Get user preferences
 export const getPreferences = async (req: Request, res: Response, next: NextFunction) => {
   try {

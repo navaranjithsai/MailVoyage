@@ -3,32 +3,30 @@ import { config } from './config.js';
 
 // Format: enc.v1$<iv_b64>:<tag_b64>:<cipher_b64>
 const PREFIX = 'enc.v1$';
+const TOTP_PREFIX = 'enc.totp.v1$';
 
-const getKey = (): Buffer => {
+const getPwdKey = (): Buffer => {
   // Derive a 32-byte key from PWD_SECRET using SHA-256
   // Note: For higher security, consider using scrypt with a static app salt.
   return crypto.createHash('sha256').update(config.pwdSecret).digest();
 };
 
-export const isEncrypted = (val: unknown): val is string =>
-  typeof val === 'string' && val.startsWith(PREFIX);
+const getTotpKey = (): Buffer =>
+  crypto.createHash('sha256').update(config.twoFactor.encryptionKey).digest();
 
-export function encrypt(plain: string): string {
-  const key = getKey();
-  const iv = crypto.randomBytes(12); // GCM recommended IV length
+const encryptWithKeyAndPrefix = (plain: string, key: Buffer, prefix: string): string => {
+  const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  const out = `${PREFIX}${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
-  return out;
-}
+  return `${prefix}${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+};
 
-export function decrypt(payload: string): string {
-  if (!isEncrypted(payload)) {
+const decryptWithKeyAndPrefix = (payload: string, key: Buffer, prefix: string): string => {
+  if (!payload.startsWith(prefix)) {
     throw new Error('Value is not in encrypted format');
   }
-  const key = getKey();
-  const body = payload.substring(PREFIX.length);
+  const body = payload.substring(prefix.length);
   const [ivB64, tagB64, dataB64] = body.split(':');
   if (!ivB64 || !tagB64 || !dataB64) {
     throw new Error('Invalid encrypted payload');
@@ -38,8 +36,21 @@ export function decrypt(payload: string): string {
   const data = Buffer.from(dataB64, 'base64');
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(tag);
-  const dec = Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
-  return dec;
+  return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+};
+
+export const isEncrypted = (val: unknown): val is string =>
+  typeof val === 'string' && val.startsWith(PREFIX);
+
+export const isTotpEncrypted = (val: unknown): val is string =>
+  typeof val === 'string' && val.startsWith(TOTP_PREFIX);
+
+export function encrypt(plain: string): string {
+  return encryptWithKeyAndPrefix(plain, getPwdKey(), PREFIX);
+}
+
+export function decrypt(payload: string): string {
+  return decryptWithKeyAndPrefix(payload, getPwdKey(), PREFIX);
 }
 
 export function tryDecrypt(value: string | null | undefined): string | null | undefined {
@@ -50,4 +61,12 @@ export function tryDecrypt(value: string | null | undefined): string | null | un
   } catch {
     return null; // decryption failed; treat as missing
   }
+}
+
+export function encryptTotpSecret(plain: string): string {
+  return encryptWithKeyAndPrefix(plain, getTotpKey(), TOTP_PREFIX);
+}
+
+export function decryptTotpSecret(payload: string): string {
+  return decryptWithKeyAndPrefix(payload, getTotpKey(), TOTP_PREFIX);
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Mail, 
@@ -15,6 +15,7 @@ import {
   Loader2 
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import { OtpClassicInput } from '@/components/ui/OtpCodeInput';
 import { ThemeSwitcherCapsule as ThemeSwitcher } from '@/components/common/ThemeSwitcherCapsule';
 import { apiFetch } from '@/lib/apiFetch';
 import { toast } from '@/lib/toast';
@@ -334,6 +335,7 @@ const ForgotPasswordPage: React.FC = () => {
                             minLength: { value: 3, message: 'Username must be at least 3 characters' }
                           })}
                           type="text"
+                          autoComplete="username"
                           className={`
                             w-full pl-11 pr-4 py-3 border rounded-lg transition-colors duration-200
                             bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100
@@ -369,6 +371,7 @@ const ForgotPasswordPage: React.FC = () => {
                         <input
                           {...step1Form.register('email', emailValidation)}
                           type="email"
+                          autoComplete="email"
                           className={`
                             w-full pl-11 pr-4 py-3 border rounded-lg transition-colors duration-200
                             bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100
@@ -439,31 +442,37 @@ const ForgotPasswordPage: React.FC = () => {
                       </label>
                       <div className="space-y-3">
                         <div className={`relative ${showInlineVerify ? 'flex gap-2' : ''}`}>
-                          <input
-                            autoComplete="otp"
-                            {...step2Form.register('otp', {
+                          <Controller
+                            name="otp"
+                            control={step2Form.control}
+                            defaultValue=""
+                            rules={{
                               required: 'OTP is required',
                               minLength: { value: 6, message: 'OTP must be 6 characters' },
-                              maxLength: { value: 6, message: 'OTP must be 6 characters' }
-                            })}
-                            id="otp-input"
-                            type="text"
-                            maxLength={6}
-                            className={`
-                              ${showInlineVerify ? 'flex-1' : 'w-full'} px-4 py-3 border rounded-lg transition-colors duration-200
-                              bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100
-                              placeholder-gray-500 dark:placeholder-gray-400
-                              focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400
-                              text-center font-mono text-lg tracking-widest
-                              ${step2Form.formState.errors.otp 
-                                ? 'border-red-500 dark:border-red-400' 
-                                : otpVerified
-                                ? 'border-green-500 dark:border-green-400'
-                                : 'border-gray-300 dark:border-gray-600'
-                              }
-                            `}
-                            placeholder="000000"
-                            disabled={isLoading || otpVerified}
+                              maxLength: { value: 6, message: 'OTP must be 6 characters' },
+                            }}
+                            render={({ field }) => (
+                              <OtpClassicInput
+                                id="otp-input"
+                                name={field.name}
+                                value={field.value ?? ''}
+                                onChange={field.onChange}
+                                onBlur={field.onBlur}
+                                mode="alphanumeric"
+                                length={6}
+                                autoComplete="one-time-code"
+                                state={
+                                  step2Form.formState.errors.otp
+                                    ? 'error'
+                                    : otpVerified
+                                      ? 'success'
+                                      : 'default'
+                                }
+                                className={showInlineVerify ? 'flex-1' : 'w-full'}
+                                placeholder="000000"
+                                disabled={isLoading || otpVerified}
+                              />
+                            )}
                           />
                           
                           {/* Inline Verify Button (for wider screens) */}

@@ -146,6 +146,76 @@ export const sendOTPEmail = async (email: string, username: string, otp: string)
 };
 
 /**
+ * Send OTP email for 2FA login fallback.
+ */
+export const sendTwoFactorLoginOTPEmail = async (
+  email: string,
+  username: string,
+  otp: string
+): Promise<void> => {
+  try {
+    logger.info(`Attempting to send 2FA OTP email to ${email} for user ${username}`);
+
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: `"${config.smtp.fromName}" <${config.smtp.fromEmail}>`,
+      to: email,
+      subject: 'Your MailVoyage login verification code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9fafb;">
+          <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <h1 style="color: #1f2937; margin: 0 0 20px 0; font-size: 24px; text-align: center;">Two-factor verification</h1>
+            <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">Hello ${username},</p>
+            <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">
+              Use this one-time code to complete your sign-in:
+            </p>
+            <div style="text-align: center; margin: 30px 0;">
+              <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; border: 2px dashed #d1d5db;">
+                <span style="font-size: 32px; font-weight: bold; color: #1f2937; letter-spacing: 4px; font-family: monospace;">
+                  ${otp}
+                </span>
+              </div>
+              <p style="color: #6b7280; margin: 10px 0 0 0; font-size: 14px;">
+                This code expires in ${Math.max(1, Math.floor(config.twoFactor.otpTokenTtlSec / 60))} minutes.
+              </p>
+            </div>
+            <p style="color: #4b5563; margin: 0; font-size: 14px;">
+              If you did not try to sign in, you can safely ignore this email.
+            </p>
+          </div>
+        </div>
+      `,
+      text: `
+        Two-factor verification - MailVoyage
+
+        Hello ${username},
+
+        Use this one-time code to complete your sign-in:
+        ${otp}
+
+        This code expires in ${Math.max(1, Math.floor(config.twoFactor.otpTokenTtlSec / 60))} minutes.
+
+        If you did not try to sign in, you can safely ignore this email.
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+    logger.info(`2FA OTP email sent successfully to ${email}`);
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string; response?: string; command?: string; stack?: string };
+    logger.error('Error sending 2FA OTP email:', {
+      message: err.message ?? String(error),
+      code: err.code,
+      response: err.response,
+      command: err.command,
+      stack: err.stack,
+    });
+    throw new AppError('Failed to send OTP email', 500, false);
+  }
+};
+
+/**
  * Test SMTP connection
  */
 export const testSMTPConnection = async (): Promise<boolean> => {

@@ -7,6 +7,29 @@ import { generateOTP, hashOTP, sendOTPEmail } from './email.service.js';
 import jwt from 'jsonwebtoken';
 import { config } from '../utils/config.js';
 import crypto from 'crypto';
+import {
+  clearRateLimitState,
+  recordRateLimitFailure,
+  assertWithinRateLimit,
+} from './auth-rate-limit.service.js';
+import {
+  createTwoFactorLoginChallenge,
+  disableTwoFactor,
+  getTwoFactorStatus,
+  initTwoFactorSetup,
+  regenerateRecoveryCodes,
+  requestTwoFactorLoginOtp,
+  verifyTwoFactorAuthenticatorLogin,
+  verifyTwoFactorLoginOtp,
+  verifyTwoFactorRecoveryCodeLogin,
+  verifyTwoFactorSetup,
+  type TwoFactorLoginChallenge,
+  type TwoFactorOtpRequestResult,
+  type TwoFactorRecoveryCodesResult,
+  type TwoFactorSetupInitResult,
+  type TwoFactorSetupVerifyResult,
+  type TwoFactorStatus,
+} from './two-factor.service.js';
 
 // Placeholder for user type/interface (ideally from models)
 interface User {
@@ -15,6 +38,17 @@ interface User {
   email: string;
   password_hash: string;
 }
+
+type AuthenticatedUser = Pick<User, 'id' | 'username' | 'email'>;
+
+export interface LoginSuccessResult {
+  requiresTwoFactor: false;
+  token: string;
+  user: AuthenticatedUser;
+  message: string;
+}
+
+export type LoginResult = LoginSuccessResult | TwoFactorLoginChallenge;
 
 interface PasswordResetChallengePayload {
   purpose: 'password-reset';
@@ -118,46 +152,154 @@ export const registerUser = async (username: string, email: string, password: st
   }
 };
 
-export const loginUser = async (email: string, password: string) => {
-  const client = await pool.connect();
-  try {
-    // Fetch user
-    const userRes = await client.query<User>('SELECT id, username, email, password_hash FROM users WHERE email=$1', [email]);
-    if (!userRes.rowCount) {
-      throw new AppError('Unauthorized', 401, true, { general: 'Invalid email or password.' });
-    }
-    const user = userRes.rows[0];
+const toAuthenticatedUser = (user: User): AuthenticatedUser => ({
+  id: user.id,
+  username: user.username,
+  email: user.email,
+});
 
-    // Verify password
-    const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) {
-      throw new AppError('Unauthorized', 401, true, { general: 'Invalid email or password.' });
-    }
+const createLoginSuccessResult = (user: AuthenticatedUser): LoginSuccessResult => {
+  const token = tokenService.generateAccessToken({
+    username: user.username,
+    email: user.email,
+  });
 
-    // Generate tokens with username and email in the payload
-    const accessToken = tokenService.generateAccessToken({
-      // userId: user.id, // Removed userId from token payload
-      username: user.username,
-      email: user.email
+  return {
+    requiresTwoFactor: false,
+    token,
+    user,
+    message: 'Login successful',
+  };
+};
+
+const passwordLoginIdentity = (email: string, ipAddress: string) => ({
+  scope: 'login-password',
+  subjectKey: email,
+  ipAddress,
+});
+
+const handlePasswordLoginFailure = async (email: string, ipAddress: string): Promise<void> => {
+  const failure = await recordRateLimitFailure(passwordLoginIdentity(email, ipAddress), config.authRateLimit);
+  if (failure.locked) {
+    throw new AppError('Too many login attempts. Please try again later.', 429, true, {
+      retryAfterSec: failure.retryAfterSec,
     });
-    // const refreshToken = tokenService.generateRefreshToken({ userId: user.id }); // If using refresh tokens
+  }
+};
+
+export const loginUser = async (email: string, password: string, ipAddress = 'unknown'): Promise<LoginResult> => {
+  const client = await pool.connect();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    await assertWithinRateLimit(
+      passwordLoginIdentity(normalizedEmail, ipAddress),
+      config.authRateLimit,
+      'Too many login attempts. Please try again later.'
+    );
+
+    const userRes = await client.query<User>(
+      `SELECT id, username, email, password_hash
+       FROM users
+       WHERE LOWER(email) = LOWER($1)`,
+      [normalizedEmail]
+    );
+
+    if (!userRes.rowCount) {
+      await handlePasswordLoginFailure(normalizedEmail, ipAddress);
+      throw new AppError('Unauthorized', 401, true, { general: 'Invalid email or password.' });
+    }
+
+    const user = userRes.rows[0];
+    const match = await bcrypt.compare(password, user.password_hash);
+
+    if (!match) {
+      await handlePasswordLoginFailure(normalizedEmail, ipAddress);
+      throw new AppError('Unauthorized', 401, true, { general: 'Invalid email or password.' });
+    }
+
+    await clearRateLimitState(passwordLoginIdentity(normalizedEmail, ipAddress));
+
+    const twoFactorStatus = await getTwoFactorStatus(user.id);
+    if (twoFactorStatus.enabled) {
+      logger.info(`Password phase complete, 2FA required for ${user.email}`);
+      return createTwoFactorLoginChallenge(toAuthenticatedUser(user));
+    }
 
     logger.info(`User logged in: ${user.email}`);
-    // Return token (for cookie setting by controller) and user info (excluding password)
-    // User ID is still returned in the user object for frontend use, just not in the JWT payload.
-    return {
-      token: accessToken,
-      // refreshToken: refreshToken, // If using refresh tokens
-      user: { id: user.id, username: user.username, email: user.email }
-    };
-  } catch (err: unknown) { // Catch specific errors if possible
+    return createLoginSuccessResult(toAuthenticatedUser(user));
+  } catch (err: unknown) {
     logger.error('Error during login:', err);
-    // Re-throw specific AppErrors or a generic one
     if (err instanceof AppError) throw err;
     throw new AppError('Internal Server Error', 500, false, { general: 'Could not log in user.' });
   } finally {
     client.release();
   }
+};
+
+export const verifyLoginTwoFactorAuthenticator = async (
+  twoFactorToken: string,
+  code: string,
+  ipAddress = 'unknown'
+): Promise<LoginSuccessResult> => {
+  const user = await verifyTwoFactorAuthenticatorLogin(twoFactorToken, code, ipAddress);
+  return createLoginSuccessResult(user);
+};
+
+export const requestLoginTwoFactorOtp = async (
+  twoFactorToken: string,
+  ipAddress = 'unknown'
+): Promise<TwoFactorOtpRequestResult> => {
+  return requestTwoFactorLoginOtp(twoFactorToken, ipAddress);
+};
+
+export const verifyLoginTwoFactorOtp = async (
+  twoFactorToken: string,
+  otpChallengeToken: string,
+  code: string,
+  ipAddress = 'unknown'
+): Promise<LoginSuccessResult> => {
+  const user = await verifyTwoFactorLoginOtp(twoFactorToken, otpChallengeToken, code, ipAddress);
+  return createLoginSuccessResult(user);
+};
+
+export const verifyLoginTwoFactorRecoveryCode = async (
+  twoFactorToken: string,
+  recoveryCode: string,
+  ipAddress = 'unknown'
+): Promise<LoginSuccessResult> => {
+  const user = await verifyTwoFactorRecoveryCodeLogin(twoFactorToken, recoveryCode, ipAddress);
+  return createLoginSuccessResult(user);
+};
+
+export const getTwoFactorStatusForUser = async (userId: number): Promise<TwoFactorStatus> => {
+  return getTwoFactorStatus(userId);
+};
+
+export const initTwoFactorSetupForUser = async (
+  userId: number,
+  currentPassword?: string
+): Promise<TwoFactorSetupInitResult> => {
+  return initTwoFactorSetup(userId, currentPassword);
+};
+
+export const verifyTwoFactorSetupForUser = async (
+  userId: number,
+  setupToken: string,
+  code: string
+): Promise<TwoFactorSetupVerifyResult> => {
+  return verifyTwoFactorSetup(userId, setupToken, code);
+};
+
+export const disableTwoFactorForUser = async (userId: number, currentPassword: string): Promise<void> => {
+  await disableTwoFactor(userId, currentPassword);
+};
+
+export const regenerateTwoFactorRecoveryCodesForUser = async (
+  userId: number,
+  currentPassword: string
+): Promise<TwoFactorRecoveryCodesResult> => {
+  return regenerateRecoveryCodes(userId, currentPassword);
 };
 
 /**

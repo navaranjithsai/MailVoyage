@@ -2,6 +2,7 @@ import dotenvSafe from 'dotenv-safe';
 import path from 'path';
 import { z } from 'zod';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 // Derive __dirname in ES module scope
 const __filename = fileURLToPath(import.meta.url);
@@ -40,6 +41,16 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM_NAME: z.string().optional(),
   SMTP_FROM_EMAIL: z.string().email().optional(),
+  TOTP_ENCRYPTION_KEY: z.string().min(32).optional(),
+  TWO_FACTOR_ISSUER: z.string().min(2).default('MailVoyage'),
+  TWO_FACTOR_LOGIN_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(300),
+  TWO_FACTOR_SETUP_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(600),
+  TWO_FACTOR_OTP_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(600),
+  TWO_FACTOR_OTP_RESEND_INTERVAL_SEC: z.coerce.number().int().positive().default(30),
+  TWO_FACTOR_RECOVERY_CODE_COUNT: z.coerce.number().int().min(5).max(20).default(10),
+  AUTH_RATE_LIMIT_WINDOW_SEC: z.coerce.number().int().positive().default(900),
+  AUTH_RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  AUTH_RATE_LIMIT_LOCK_SEC: z.coerce.number().int().positive().default(300),
 }).superRefine((data, ctx) => {
   if (!data.DATABASE_URL) {
     const pgParamsProvided = data.PG_HOST && data.PG_PORT && data.PG_USER && data.PG_DATABASE;
@@ -63,6 +74,10 @@ if (!parsedEnv.success) {
   console.error(`Please check your .env file at "${envPath}" against the example at "${envExamplePath}".`);
   throw new Error('Invalid environment variables. Halting application.');
 }
+
+const derivedTotpEncryptionKey = parsedEnv.data.TOTP_ENCRYPTION_KEY
+  ? parsedEnv.data.TOTP_ENCRYPTION_KEY
+  : crypto.createHash('sha256').update(parsedEnv.data.JWT_SECRET).digest('hex');
 
 // Export validated and typed config object
 export const config = {
@@ -93,5 +108,19 @@ export const config = {
     pass: parsedEnv.data.SMTP_PASS,
     fromName: parsedEnv.data.SMTP_FROM_NAME || 'MailVoyage',
     fromEmail: parsedEnv.data.SMTP_FROM_EMAIL || parsedEnv.data.SMTP_USER,
+  },
+  twoFactor: {
+    issuer: parsedEnv.data.TWO_FACTOR_ISSUER,
+    encryptionKey: derivedTotpEncryptionKey,
+    loginTokenTtlSec: parsedEnv.data.TWO_FACTOR_LOGIN_TOKEN_TTL_SEC,
+    setupTokenTtlSec: parsedEnv.data.TWO_FACTOR_SETUP_TOKEN_TTL_SEC,
+    otpTokenTtlSec: parsedEnv.data.TWO_FACTOR_OTP_TOKEN_TTL_SEC,
+    otpResendIntervalSec: parsedEnv.data.TWO_FACTOR_OTP_RESEND_INTERVAL_SEC,
+    recoveryCodeCount: parsedEnv.data.TWO_FACTOR_RECOVERY_CODE_COUNT,
+  },
+  authRateLimit: {
+    windowSec: parsedEnv.data.AUTH_RATE_LIMIT_WINDOW_SEC,
+    maxAttempts: parsedEnv.data.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+    lockSec: parsedEnv.data.AUTH_RATE_LIMIT_LOCK_SEC,
   },
 };

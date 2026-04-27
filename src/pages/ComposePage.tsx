@@ -50,6 +50,14 @@ interface EmailAccount {
   type: 'email' | 'smtp';
 }
 
+interface ComposeLocationState {
+  draftId?: string;
+  fromDraft?: boolean;
+  draftData?: EmailDraft;
+  type?: 'reply' | 'forward';
+  originalEmail?: Record<string, unknown>;
+}
+
 const ComposePage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,7 +80,6 @@ const ComposePage: React.FC = () => {
   
   // Draft state
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
-  const [isDraftLoaded, setIsDraftLoaded] = useState(false);
 
   // Track compose mode for header title
   const composeMode = useMemo(() => {
@@ -85,8 +92,12 @@ const ComposePage: React.FC = () => {
 
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<ClassicEditor | null>(null);
-  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedContentRef = useRef<string>('');
+  const latestContentRef = useRef<string>('');
+  const pendingEditorDataRef = useRef<string | null>(null);
+  const appliedLocationKeyRef = useRef<string | null>(null);
+  const pendingDraftFromAccountIdRef = useRef<string | null>(null);
 
   // Inject shared email styles
   useEffect(() => {
@@ -139,6 +150,51 @@ const ComposePage: React.FC = () => {
     }
   }, []);
 
+  const pushContentToEditor = useCallback((nextContent: string) => {
+    latestContentRef.current = nextContent;
+    setContent(nextContent);
+
+    if (editorRef.current) {
+      editorRef.current.setData(nextContent);
+      pendingEditorDataRef.current = null;
+      return;
+    }
+
+    pendingEditorDataRef.current = nextContent;
+  }, []);
+
+  const escapeHtml = useCallback((value: string): string => {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }, []);
+
+  const normalizeQuotedBodyHtml = useCallback(
+    (rawBody: string): string => {
+      if (!rawBody.trim()) {
+        return '<p></p>';
+      }
+
+      const isHtml = /<[a-z][\s\S]*>/i.test(rawBody);
+      if (!isHtml) {
+        return `<pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(rawBody)}</pre>`;
+      }
+
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(rawBody, 'text/html');
+        const extracted = (doc.body?.innerHTML || rawBody).trim();
+        return extracted.replace(/\scontenteditable=("[^"]*"|'[^']*')/gi, '');
+      } catch {
+        return rawBody.replace(/\scontenteditable=("[^"]*"|'[^']*')/gi, '');
+      }
+    },
+    [escapeHtml]
+  );
+
   /**
    * Build a quoted original-message block (like Gmail / Outlook).
    * Returns an HTML string with a horizontal rule and metadata header.
@@ -156,8 +212,7 @@ const ComposePage: React.FC = () => {
 
     // Prefer htmlBody → content → textBody
     const body = (orig.htmlBody || orig.content || orig.textBody || '') as string;
-    const isHtml = /<[a-z][\s\S]*>/i.test(body);
-    const bodyHtml = isHtml ? body : `<pre style="white-space:pre-wrap;font-family:inherit;">${body}</pre>`;
+    const bodyHtml = normalizeQuotedBodyHtml(body);
 
     // Date: try sentAt → time → date → timestamp
     let dateStr = '';
@@ -177,7 +232,7 @@ const ComposePage: React.FC = () => {
     const fromDisplay = fromName ? `${fromName} &lt;${from}&gt;` : from;
 
     return [
-      '<br/><br/>',
+      '<p><br></p>',
       `<div style="border-top:1px solid #ccc;padding-top:12px;margin-top:12px;color:#555;font-size:13px;">`,
       `<p style="margin:0 0 4px;"><strong>---------- ${label} ----------</strong></p>`,
       from   ? `<p style="margin:0 0 2px;"><strong>From:</strong> ${fromDisplay}</p>` : '',
@@ -189,19 +244,39 @@ const ComposePage: React.FC = () => {
       bodyHtml,
       '</blockquote>',
     ].join('\n');
-  }, []);
+  }, [normalizeQuotedBodyHtml]);
+
+  // Keep latest content in sync for editor initialization race conditions.
+  useEffect(() => {
+    latestContentRef.current = content;
+  }, [content]);
+
+  // Resolve draft sender account once accounts list becomes available.
+  useEffect(() => {
+    if (!pendingDraftFromAccountIdRef.current || availableAccounts.length === 0) {
+      return;
+    }
+
+    const account = availableAccounts.find((acc) => acc.id === pendingDraftFromAccountIdRef.current);
+    if (account) {
+      setFromAccount(account);
+    }
+
+    pendingDraftFromAccountIdRef.current = null;
+  }, [availableAccounts]);
 
   // Load draft OR reply/forward data from navigation state
   useEffect(() => {
-    const state = location.state as {
-      draftId?: string;
-      fromDraft?: boolean;
-      draftData?: EmailDraft;
-      type?: 'reply' | 'forward';
-      originalEmail?: Record<string, unknown>;
-    } | null;
+    const state = location.state as ComposeLocationState | null;
 
     if (!state) return;
+
+    // Apply navigation payload only once per navigation entry.
+    if (appliedLocationKeyRef.current === location.key) {
+      return;
+    }
+
+    appliedLocationKeyRef.current = location.key;
 
     // ── 1. Draft loading ─────────────────────────────────────────────────
     if (state.fromDraft && state.draftData) {
@@ -211,7 +286,7 @@ const ComposePage: React.FC = () => {
       setCc(draft.cc || '');
       setBcc(draft.bcc || '');
       setSubject(draft.subject || '');
-      setContent(draft.htmlContent || '');
+      pushContentToEditor(draft.htmlContent || '');
       setCharCount(draft.charCount || 0);
 
       if (draft.cc) setShowCc(true);
@@ -229,14 +304,16 @@ const ComposePage: React.FC = () => {
         setAttachments(convertedAttachments);
       }
 
-      if (draft.fromAccountId && availableAccounts.length > 0) {
+      if (draft.fromAccountId) {
         const account = availableAccounts.find(acc => acc.id === draft.fromAccountId);
-        if (account) setFromAccount(account);
+        if (account) {
+          setFromAccount(account);
+        } else {
+          pendingDraftFromAccountIdRef.current = draft.fromAccountId;
+        }
       }
 
-      setIsDraftLoaded(true);
       lastSavedContentRef.current = draft.htmlContent || '';
-      window.history.replaceState({}, document.title);
       return; // Draft takes priority — skip reply/forward
     }
 
@@ -267,12 +344,9 @@ const ComposePage: React.FC = () => {
 
       // Build quoted original message block
       const quotedHtml = buildQuotedBlock(state.type, orig);
-      setContent(quotedHtml);
-      setIsDraftLoaded(true); // Triggers editor.setData()
-
-      window.history.replaceState({}, document.title);
+      pushContentToEditor(quotedHtml);
     }
-  }, [location.state, availableAccounts, buildQuotedBlock]);
+  }, [location.key, location.state, availableAccounts, buildQuotedBlock, pushContentToEditor]);
 
   // Track unsaved changes
   useEffect(() => {
@@ -293,14 +367,6 @@ const ComposePage: React.FC = () => {
       }
     };
   }, []);
-
-  // Sync editor content when draft is loaded
-  useEffect(() => {
-    if (isDraftLoaded && editorRef.current && content) {
-      editorRef.current.setData(content);
-      setIsDraftLoaded(false); // Reset flag after syncing
-    }
-  }, [isDraftLoaded, content]);
 
   useEffect(() => {
     const host = editorHostRef.current;
@@ -375,12 +441,28 @@ const ComposePage: React.FC = () => {
 
         editorRef.current = editor;
 
-        // Set initial content if available (including from draft)
-        if (content) editor.setData(content);
+        // Set initial content if available (including from draft/reply/forward).
+        const initialContent = pendingEditorDataRef.current ?? latestContentRef.current;
+        if (initialContent) {
+          editor.setData(initialContent);
+          pendingEditorDataRef.current = null;
+
+          if (composeMode === 'reply' || composeMode === 'forward') {
+            editor.editing.view.focus();
+            editor.model.change((writer) => {
+              const root = editor.model.document.getRoot();
+              if (root) {
+                writer.setSelection(root, 0);
+              }
+            });
+          }
+        }
 
         editor.model.document.on('change:data', () => {
           if (!cancelled) {
-            setContent(editor.getData());
+            const nextData = editor.getData();
+            latestContentRef.current = nextData;
+            setContent(nextData);
           }
         });
       })
@@ -489,10 +571,9 @@ const ComposePage: React.FC = () => {
       setCc(''); 
       setBcc(''); 
       setSubject(''); 
-      setContent(''); 
+      pushContentToEditor('');
       setAttachments([]); 
       setCharCount(0);
-      editorRef.current?.setData('');
       
       // Navigate to sent folder
       setTimeout(() => {

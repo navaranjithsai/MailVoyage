@@ -13,9 +13,9 @@ import {
   Upload,
   Trash2,
   Save,
+  CheckCircle,
   Eye,
-  EyeOff,
-  CheckCircle
+  EyeOff
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
@@ -27,6 +27,7 @@ import { isMobileTabletWidth } from '@/lib/navigation';
 import { apiFetch } from '@/lib/apiFetch';
 import * as validators from '@/lib/validators';
 import EmailSettings from './settings/EmailSettings';
+import TwoFactorSettings from './settings/TwoFactorSettings';
 
 interface SettingsSection {
   id: string;
@@ -41,7 +42,6 @@ const SettingsPage: React.FC = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [pendingSection, setPendingSection] = useState<string | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateSuccess, setUpdateSuccess] = useState(false);
   const [profileErrors, setProfileErrors] = useState<{username?: string; email?: string}>({});
@@ -208,11 +208,95 @@ const SettingsPage: React.FC = () => {
   });
 
   const [security, setSecurity] = useState({
-    twoFactorEnabled: false,
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
   });
+  const [securityErrors, setSecurityErrors] = useState<{
+    currentPassword?: string;
+    newPassword?: string;
+    confirmPassword?: string;
+  }>({});
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isPasswordUpdating, setIsPasswordUpdating] = useState(false);
+
+  const handleSecurityFieldChange = (
+    field: 'currentPassword' | 'newPassword' | 'confirmPassword',
+    value: string
+  ) => {
+    setSecurity(prev => ({ ...prev, [field]: value }));
+    setSecurityErrors(prev => ({ ...prev, [field]: undefined }));
+    setHasUnsavedChanges(true);
+  };
+
+  const handlePasswordUpdate = async () => {
+    const nextErrors: { currentPassword?: string; newPassword?: string; confirmPassword?: string } = {};
+
+    if (!security.currentPassword) {
+      nextErrors.currentPassword = 'Current password is required';
+    }
+
+    if (!security.newPassword) {
+      nextErrors.newPassword = 'New password is required';
+    } else {
+      const failedRule = validators.passwordRules.find(rule => !rule.test(security.newPassword));
+      if (failedRule) {
+        nextErrors.newPassword = failedRule.label;
+      }
+      if (security.currentPassword && security.currentPassword === security.newPassword) {
+        nextErrors.newPassword = 'New password must be different from current password';
+      }
+    }
+
+    if (!security.confirmPassword) {
+      nextErrors.confirmPassword = 'Confirm password is required';
+    } else if (security.newPassword !== security.confirmPassword) {
+      nextErrors.confirmPassword = 'Confirm password does not match';
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setSecurityErrors(nextErrors);
+      return;
+    }
+
+    setIsPasswordUpdating(true);
+    try {
+      const response = (await apiFetch('/api/users/password', {
+        method: 'PUT',
+        body: JSON.stringify({
+          currentPassword: security.currentPassword,
+          newPassword: security.newPassword,
+          confirmPassword: security.confirmPassword,
+        }),
+      })) as { message?: string };
+
+      setSecurity({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+      });
+      setSecurityErrors({});
+      setShowCurrentPassword(false);
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
+      setHasUnsavedChanges(false);
+      toast.success(response.message || 'Password updated successfully!');
+    } catch (error: unknown) {
+      const err = error as {
+        errors?: { currentPassword?: string; newPassword?: string; confirmPassword?: string };
+        message?: string;
+      };
+      if (err.errors) {
+        setSecurityErrors(err.errors);
+      } else {
+        toast.error(err.message || 'Failed to update password');
+      }
+    } finally {
+      setIsPasswordUpdating(false);
+    }
+  };
 
   const settingsSections: SettingsSection[] = [
     { id: 'profile', label: 'Profile', icon: User },
@@ -377,71 +461,101 @@ const SettingsPage: React.FC = () => {
     security: (
       <motion.div variants={sectionVariants} initial="initial" animate="animate" className="space-y-6">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Security Settings</h2>
-        
-        <div className="space-y-6">
-          <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-600 rounded-lg">
-            <div>
-              <p className="font-medium text-gray-900 dark:text-white">Two-Factor Authentication</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Add an extra layer of security to your account
-              </p>
-            </div>
-            <Button variant={security.twoFactorEnabled ? "primary" : "outline"}>
-              {security.twoFactorEnabled ? "Enabled" : "Enable"}
-            </Button>
+
+        <TwoFactorSettings />
+
+        <div className="p-4 border border-gray-200 dark:border-gray-600 rounded-lg space-y-4">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white">Change Password</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Update your account password by confirming your current password.
+            </p>
           </div>
 
-          <div className="space-y-4">
-            <h3 className="font-medium text-gray-900 dark:text-white">Change Password</h3>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Current Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={security.currentPassword}
-                  onChange={(e) => { setSecurity({...security, currentPassword: e.target.value}); setHasUnsavedChanges(true); }}
-                  className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-gray-400" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-gray-400" />
-                  )}
-                </button>
-              </div>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                New Password
-              </label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Current Password
+            </label>
+            <div className="relative">
               <input
-                type="password"
+                type={showCurrentPassword ? 'text' : 'password'}
+                value={security.currentPassword}
+                onChange={(e) => handleSecurityFieldChange('currentPassword', e.target.value)}
+                className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+              />
+              <button
+                type="button"
+                onClick={() => setShowCurrentPassword(prev => !prev)}
+                className="absolute inset-y-0 right-0 px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                aria-label={showCurrentPassword ? 'Hide current password' : 'Show current password'}
+              >
+                {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {securityErrors.currentPassword && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{securityErrors.currentPassword}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              New Password
+            </label>
+            <div className="relative">
+              <input
+                type={showNewPassword ? 'text' : 'password'}
                 value={security.newPassword}
-                onChange={(e) => { setSecurity({...security, newPassword: e.target.value}); setHasUnsavedChanges(true); }}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                onChange={(e) => handleSecurityFieldChange('newPassword', e.target.value)}
+                className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
               />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword(prev => !prev)}
+                className="absolute inset-y-0 right-0 px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                aria-label={showNewPassword ? 'Hide new password' : 'Show new password'}
+              >
+                {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Confirm New Password
-              </label>
+            {securityErrors.newPassword && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{securityErrors.newPassword}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Confirm New Password
+            </label>
+            <div className="relative">
               <input
-                type="password"
+                type={showConfirmPassword ? 'text' : 'password'}
                 value={security.confirmPassword}
-                onChange={(e) => { setSecurity({...security, confirmPassword: e.target.value}); setHasUnsavedChanges(true); }}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                onChange={(e) => handleSecurityFieldChange('confirmPassword', e.target.value)}
+                className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
               />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(prev => !prev)}
+                className="absolute inset-y-0 right-0 px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+              >
+                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
+            {securityErrors.confirmPassword && (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{securityErrors.confirmPassword}</p>
+            )}
+          </div>
+
+          <div className="pt-2">
+            <Button
+              onClick={handlePasswordUpdate}
+              disabled={isPasswordUpdating}
+              className="flex items-center space-x-2"
+            >
+              <Save className="w-4 h-4" />
+              <span>{isPasswordUpdating ? 'Updating Password...' : 'Update Password'}</span>
+            </Button>
           </div>
         </div>
       </motion.div>
@@ -612,7 +726,7 @@ const SettingsPage: React.FC = () => {
                   >
                     {sectionMap[section.id] || sectionMap.default}
                     {/* Footer button: only for non-profile, non-appearance, non-email sections */}
-                    {section.id !== 'profile' && section.id !== 'appearance' && section.id !== 'email' && (
+                    {section.id !== 'profile' && section.id !== 'appearance' && section.id !== 'email' && section.id !== 'security' && (
                       <div className="mt-4 text-right">
                         <Button
                           onClick={() => handleSave()}
@@ -732,7 +846,7 @@ const SettingsPage: React.FC = () => {
             {sectionMap[activeSection] || sectionMap.default}
 
             {/* Save Button */}
-            {activeSection !== 'profile' && activeSection !== 'appearance' && activeSection !== 'email' && (
+            {activeSection !== 'profile' && activeSection !== 'appearance' && activeSection !== 'email' && activeSection !== 'security' && (
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
                 <Button onClick={handleSave} className="flex items-center space-x-2">
                   <Save className="w-4 h-4" />

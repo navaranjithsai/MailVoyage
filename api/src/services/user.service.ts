@@ -1,4 +1,5 @@
 import pool from '../db/index.js'; // Corrected: Assuming db/index.ts exports pool correctly
+import bcrypt from 'bcrypt';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
 
@@ -84,6 +85,60 @@ export const updateUserProfile = async (userId: number, profileData: { username:
     
   } catch (error) {
     logger.error(`Error updating profile for user ${userId}:`, error);
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+export const changeUserPassword = async (
+  userId: number,
+  currentPassword: string,
+  newPassword: string
+) => {
+  logger.info(`Updating password for user ${userId}`);
+
+  const client = await pool.connect();
+  try {
+    const userResult = await client.query<{ id: number; password_hash: string }>(
+      `SELECT id, password_hash
+       FROM users
+       WHERE id = $1`,
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      throw new AppError('User not found', 404, true, { general: 'User not found.' });
+    }
+
+    const user = userResult.rows[0];
+    const currentMatches = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!currentMatches) {
+      throw new AppError('Unauthorized', 401, true, {
+        currentPassword: 'Current password is incorrect',
+      });
+    }
+
+    const sameAsCurrent = await bcrypt.compare(newPassword, user.password_hash);
+    if (sameAsCurrent) {
+      throw new AppError('Bad Request', 400, true, {
+        newPassword: 'New password must be different from current password',
+      });
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    await client.query(
+      `UPDATE users
+       SET password_hash = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [newPasswordHash, userId]
+    );
+
+    logger.info(`Password updated successfully for user ${userId}`);
+    return { message: 'Password updated successfully' };
+  } catch (error) {
+    logger.error(`Error updating password for user ${userId}:`, error);
     throw error;
   } finally {
     client.release();

@@ -1,8 +1,7 @@
 {
   "compilerOptions": {
-    "baseUrl": ".", // This must be specified if "paths" is.
     "paths": {
-      "@/*": ["src/*"] // Define the alias
+      "@/*": ["./src/*"] // Define the alias
     }
   },
   "files": [],
