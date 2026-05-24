@@ -10,10 +10,13 @@ import {
   getDraftsCount as getDraftCountFromDb,
   clearSentMails,
   addOrUpdateSentMails,
+  getFlagOverrideMap,
   upsertInboxMails,
   trimInboxToLimit,
   type InboxMailRecord,
+  type FlagUpdateRecord,
 } from './db';
+import { getStoredUserId } from './authSession';
 
 // ============================================================================
 // Types
@@ -163,6 +166,14 @@ export interface FetchProgress {
 function isUserLoggedIn(): boolean {
   return !!localStorage.getItem('authUser');
 }
+
+const parseCacheId = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    return null;
+  }
+  return parsed;
+};
 
 // ============================================================================
 // Individual Fetch Functions
@@ -315,6 +326,8 @@ export async function fetchInboxMails(
 
     // Step 3: Save to local Dexie (encrypted)
     if (allMails.length > 0) {
+      const userId = getStoredUserId();
+      const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
       const records: InboxMailRecord[] = allMails.map((m) => ({
         id: String(m.id ?? `${m.account_code || m.accountCode || m.accountId}:${m.uid}`),
         uid: m.uid ?? 0,
@@ -334,8 +347,18 @@ export async function fetchInboxMails(
         htmlBody: m.html_body || m.htmlBody || null,
         textBody: m.text_body || m.textBody || null,
         date: m.date || new Date().toISOString(),
-        isRead: m.is_read ?? m.isRead ?? false,
-        isStarred: m.is_starred ?? m.isStarred ?? false,
+        isRead: (() => {
+          const base = m.is_read ?? m.isRead ?? false;
+          const cacheId = parseCacheId(m.id);
+          const override = cacheId ? overrideMap.get(cacheId) : undefined;
+          return override?.isRead ?? base;
+        })(),
+        isStarred: (() => {
+          const base = m.is_starred ?? m.isStarred ?? false;
+          const cacheId = parseCacheId(m.id);
+          const override = cacheId ? overrideMap.get(cacheId) : undefined;
+          return override?.isStarred ?? base;
+        })(),
         hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
         attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
         labels: m.labels || [],

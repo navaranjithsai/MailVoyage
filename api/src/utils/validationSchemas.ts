@@ -141,6 +141,24 @@ export const sendMailSchema = z.object({
   })).optional(),
 });
 
+export const inboxFlagUpdatesSchema = z.object({
+  batchId: z.string().min(8, 'batchId is required'),
+  updates: z.array(
+    z.object({
+      cacheId: z.union([z.string(), z.number()]),
+      accountCode: z.string().min(1, 'accountCode is required').optional(),
+      mailbox: z.string().min(1).optional(),
+      uid: z.union([z.string(), z.number()]).optional(),
+      messageId: z.string().optional(),
+      isRead: z.boolean().optional(),
+      isStarred: z.boolean().optional(),
+    }).strict().refine(
+      update => update.isRead !== undefined || update.isStarred !== undefined,
+      { message: 'isRead or isStarred is required' }
+    )
+  ).min(1, 'At least one update is required').max(50, 'Too many updates in one batch'),
+}).strict();
+
 // --- Email Account Schemas ---
 export const emailAccountSchema = z.object({
   email: z.string().email('Invalid email address'),

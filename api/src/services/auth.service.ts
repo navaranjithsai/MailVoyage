@@ -37,6 +37,7 @@ interface User {
   username: string;
   email: string;
   password_hash: string;
+  session_version: number;
 }
 
 type AuthenticatedUser = Pick<User, 'id' | 'username' | 'email'>;
@@ -158,10 +159,12 @@ const toAuthenticatedUser = (user: User): AuthenticatedUser => ({
   email: user.email,
 });
 
-const createLoginSuccessResult = (user: AuthenticatedUser): LoginSuccessResult => {
+const createLoginSuccessResult = (user: AuthenticatedUser, sessionVersion: number): LoginSuccessResult => {
   const token = tokenService.generateAccessToken({
+    userId: user.id,
     username: user.username,
     email: user.email,
+    sessionVersion,
   });
 
   return {
@@ -199,7 +202,7 @@ export const loginUser = async (email: string, password: string, ipAddress = 'un
     );
 
     const userRes = await client.query<User>(
-      `SELECT id, username, email, password_hash
+      `SELECT id, username, email, password_hash, session_version
        FROM users
        WHERE LOWER(email) = LOWER($1)`,
       [normalizedEmail]
@@ -227,7 +230,7 @@ export const loginUser = async (email: string, password: string, ipAddress = 'un
     }
 
     logger.info(`User logged in: ${user.email}`);
-    return createLoginSuccessResult(toAuthenticatedUser(user));
+    return createLoginSuccessResult(toAuthenticatedUser(user), user.session_version ?? 0);
   } catch (err: unknown) {
     logger.error('Error during login:', err);
     if (err instanceof AppError) throw err;
@@ -243,7 +246,7 @@ export const verifyLoginTwoFactorAuthenticator = async (
   ipAddress = 'unknown'
 ): Promise<LoginSuccessResult> => {
   const user = await verifyTwoFactorAuthenticatorLogin(twoFactorToken, code, ipAddress);
-  return createLoginSuccessResult(user);
+  return createLoginSuccessResult(user, user.sessionVersion);
 };
 
 export const requestLoginTwoFactorOtp = async (
@@ -260,7 +263,7 @@ export const verifyLoginTwoFactorOtp = async (
   ipAddress = 'unknown'
 ): Promise<LoginSuccessResult> => {
   const user = await verifyTwoFactorLoginOtp(twoFactorToken, otpChallengeToken, code, ipAddress);
-  return createLoginSuccessResult(user);
+  return createLoginSuccessResult(user, user.sessionVersion);
 };
 
 export const verifyLoginTwoFactorRecoveryCode = async (
@@ -269,7 +272,7 @@ export const verifyLoginTwoFactorRecoveryCode = async (
   ipAddress = 'unknown'
 ): Promise<LoginSuccessResult> => {
   const user = await verifyTwoFactorRecoveryCodeLogin(twoFactorToken, recoveryCode, ipAddress);
-  return createLoginSuccessResult(user);
+  return createLoginSuccessResult(user, user.sessionVersion);
 };
 
 export const getTwoFactorStatusForUser = async (userId: number): Promise<TwoFactorStatus> => {

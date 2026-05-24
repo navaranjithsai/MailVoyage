@@ -26,12 +26,14 @@ interface UserRecord {
   username: string;
   email: string;
   password_hash: string;
+  session_version: number;
 }
 
 interface UserProfile {
   id: number;
   username: string;
   email: string;
+  sessionVersion: number;
 }
 
 interface TwoFactorConfigSetting {
@@ -213,7 +215,7 @@ const getUserById = async (userId: number): Promise<UserRecord | null> => {
   const client = await pool.connect();
   try {
     const result = await client.query<UserRecord>(
-      `SELECT id, username, email, password_hash
+      `SELECT id, username, email, password_hash, session_version
        FROM users
        WHERE id = $1`,
       [userId]
@@ -421,7 +423,12 @@ const resolveAuthenticatedUser = async (payload: TwoFactorLoginPayload): Promise
     });
   }
 
-  return { id: user.id, username: user.username, email: user.email };
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    sessionVersion: user.session_version ?? 0,
+  };
 };
 
 const recordAndThrowIfLocked = async (

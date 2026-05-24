@@ -101,6 +101,21 @@ export interface PendingSync {
   retries: number;
 }
 
+export type FlagUpdateStatus = 'pending' | 'in-flight';
+
+export interface FlagUpdateRecord {
+  id: string;
+  userId: string;
+  cacheId: number;
+  isRead?: boolean;
+  isStarred?: boolean;
+  status: FlagUpdateStatus;
+  batchId?: string | null;
+  retryCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CacheMetadata {
   key: string;
   value: unknown;
@@ -118,6 +133,7 @@ class MailVoyageDB extends Dexie {
   drafts!: Table<DraftRecord, string>;
   syncCheckpoints!: Table<SyncCheckpoint, string>;
   pendingSync!: Table<PendingSync, string>;
+  flagUpdates!: Table<FlagUpdateRecord, string>;
   cacheMetadata!: Table<CacheMetadata, string>;
 
   constructor() {
@@ -141,6 +157,17 @@ class MailVoyageDB extends Dexie {
       pendingSync: 'id, type, table, createdAt',
       
       // General cache metadata
+      cacheMetadata: 'key'
+    });
+
+    // Schema version 2 (adds flag update queue)
+    this.version(2).stores({
+      sentMails: 'id, threadId, fromEmail, status, sentAt, updatedAt',
+      inboxMails: 'id, uid, accountId, mailbox, [accountId+mailbox], date, isRead, isStarred, updatedAt',
+      drafts: 'id, updatedAt',
+      syncCheckpoints: 'id',
+      pendingSync: 'id, type, table, createdAt',
+      flagUpdates: 'id, userId, cacheId, status, retryCount, updatedAt, createdAt, batchId, [userId+cacheId+status], [userId+status]',
       cacheMetadata: 'key'
     });
   }
@@ -725,6 +752,103 @@ export async function clearPendingSync(): Promise<void> {
 }
 
 // ============================================================================
+// Flag Updates Queue (read/star changes)
+// ============================================================================
+
+export async function addFlagUpdate(record: FlagUpdateRecord): Promise<void> {
+  await ensureOpen();
+  await db.flagUpdates.put(record);
+}
+
+export async function updateFlagUpdate(id: string, updates: Partial<FlagUpdateRecord>): Promise<void> {
+  await ensureOpen();
+  await db.flagUpdates.update(id, updates);
+}
+
+export async function bulkUpsertFlagUpdates(records: FlagUpdateRecord[]): Promise<void> {
+  if (records.length === 0) return;
+  await ensureOpen();
+  await db.flagUpdates.bulkPut(records);
+}
+
+export async function getFlagUpdatesByStatus(userId: string, status: FlagUpdateStatus): Promise<FlagUpdateRecord[]> {
+  await ensureOpen();
+  return db.flagUpdates
+    .where('[userId+status]')
+    .equals([userId, status])
+    .toArray();
+}
+
+export async function getPendingFlagUpdateByCacheId(
+  userId: string,
+  cacheId: number
+): Promise<FlagUpdateRecord | undefined> {
+  await ensureOpen();
+  return db.flagUpdates
+    .where('[userId+cacheId+status]')
+    .equals([userId, cacheId, 'pending'])
+    .first();
+}
+
+export async function deleteFlagUpdates(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await ensureOpen();
+  await db.flagUpdates.bulkDelete(ids);
+}
+
+export async function clearFlagUpdatesForUser(userId: string): Promise<void> {
+  await ensureOpen();
+  const ids = await db.flagUpdates.where('userId').equals(userId).primaryKeys();
+  await db.flagUpdates.bulkDelete(ids as string[]);
+}
+
+export async function clearFlagUpdatesForOtherUsers(userId: string): Promise<number> {
+  await ensureOpen();
+  const ids = await db.flagUpdates
+    .filter(record => record.userId !== userId)
+    .primaryKeys();
+  await db.flagUpdates.bulkDelete(ids as string[]);
+  return ids.length;
+}
+
+export async function resetInFlightFlagUpdates(userId: string): Promise<number> {
+  await ensureOpen();
+  const inFlight = await db.flagUpdates
+    .where('[userId+status]')
+    .equals([userId, 'in-flight'])
+    .toArray();
+
+  if (inFlight.length === 0) return 0;
+
+  const updated = inFlight.map((entry) => ({
+    ...entry,
+    status: 'pending' as FlagUpdateStatus,
+    updatedAt: new Date().toISOString(),
+  }));
+
+  await db.flagUpdates.bulkPut(updated);
+  return updated.length;
+}
+
+export async function getFlagOverrideMap(userId: string): Promise<Map<number, FlagUpdateRecord>> {
+  const [pending, inFlight] = await Promise.all([
+    getFlagUpdatesByStatus(userId, 'pending'),
+    getFlagUpdatesByStatus(userId, 'in-flight')
+  ]);
+
+  const combined = [...pending, ...inFlight];
+  const map = new Map<number, FlagUpdateRecord>();
+  for (const record of combined) {
+    const existing = map.get(record.cacheId);
+    if (!existing || record.updatedAt >= existing.updatedAt) {
+      map.set(record.cacheId, record);
+    }
+  }
+
+  return map;
+}
+
+// ============================================================================
 // Cache Metadata Helpers
 // ============================================================================
 
@@ -781,6 +905,7 @@ export async function clearAllData(): Promise<void> {
     db.drafts.clear(),
     db.syncCheckpoints.clear(),
     db.pendingSync.clear(),
+    db.flagUpdates.clear(),
     db.cacheMetadata.clear()
   ]);
 }
@@ -793,15 +918,17 @@ export async function getDbSizeEstimate(): Promise<{
   inboxMails: number;
   drafts: number;
   pendingSync: number;
+  flagUpdates: number;
 }> {
-  const [sentMails, inboxMails, drafts, pendingSync] = await Promise.all([
+  const [sentMails, inboxMails, drafts, pendingSync, flagUpdates] = await Promise.all([
     db.sentMails.count(),
     db.inboxMails.count(),
     db.drafts.count(),
-    db.pendingSync.count()
+    db.pendingSync.count(),
+    db.flagUpdates.count()
   ]);
   
-  return { sentMails, inboxMails, drafts, pendingSync };
+  return { sentMails, inboxMails, drafts, pendingSync, flagUpdates };
 }
 /**
  * Estimate the byte sizes of IndexedDB (Dexie) and localStorage.
@@ -833,6 +960,7 @@ export async function getStorageBreakdown(): Promise<{
     estimateTable(db.sentMails, 'sentMails'),
     estimateTable(db.drafts, 'drafts'),
     estimateTable(db.pendingSync, 'pendingSync'),
+    estimateTable(db.flagUpdates, 'flagUpdates'),
     estimateTable(db.syncCheckpoints, 'syncCheckpoints'),
     estimateTable(db.cacheMetadata, 'cacheMetadata'),
   ]);

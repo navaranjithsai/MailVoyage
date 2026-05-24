@@ -18,6 +18,7 @@ function pop3UidlToNumericUid(uidlStr: string): number {
   return hash.readUInt32BE(0);
 }
 
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -560,6 +561,8 @@ export async function syncMailsToCache(
     const isPop3 = mails.length > 0 && mails[0].mailbox === 'INBOX'
       && mails[0]._pop3 === true;
 
+    const flagOverrideWindow = `NOW() - INTERVAL '${FLAG_OVERRIDE_RETENTION_HOURS} hours'`;
+
     for (const mail of mails) {
       // For IMAP: overwrite flags from server (they are authoritative).
       // For POP3: preserve locally-set is_read / is_starred (POP3 always sends false).
@@ -569,8 +572,24 @@ export async function syncMailsToCache(
            html_body = EXCLUDED.html_body,
            labels = EXCLUDED.labels,
            updated_at = NOW()`
-        : `is_read = EXCLUDED.is_read,
-           is_starred = EXCLUDED.is_starred,
+        : `is_read = CASE
+              WHEN inbox_cache.flag_updated_at IS NOT NULL
+               AND inbox_cache.flag_updated_at > ${flagOverrideWindow}
+                THEN inbox_cache.is_read
+              ELSE EXCLUDED.is_read
+            END,
+           is_starred = CASE
+              WHEN inbox_cache.flag_updated_at IS NOT NULL
+               AND inbox_cache.flag_updated_at > ${flagOverrideWindow}
+                THEN inbox_cache.is_starred
+              ELSE EXCLUDED.is_starred
+            END,
+           flag_updated_at = CASE
+              WHEN inbox_cache.flag_updated_at IS NOT NULL
+               AND inbox_cache.flag_updated_at > ${flagOverrideWindow}
+                THEN inbox_cache.flag_updated_at
+              ELSE NULL
+            END,
            subject = EXCLUDED.subject,
            text_body = EXCLUDED.text_body,
            html_body = EXCLUDED.html_body,
@@ -625,6 +644,297 @@ export async function syncMailsToCache(
     await client.query('ROLLBACK');
     logger.error('[InboxService] Error syncing mails to cache:', error);
     throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// ============================================================================
+// DB: Apply flag updates (read/star) with idempotent batch ACK
+// ============================================================================
+
+interface ImapFlagUpdateTarget {
+  accountCode: string;
+  mailbox: string;
+  uid: number;
+  isRead: boolean | undefined;
+  isStarred: boolean | undefined;
+}
+
+async function updateImapFlagsForUser(
+  userId: string,
+  targets: ImapFlagUpdateTarget[]
+): Promise<void> {
+  if (targets.length === 0) return;
+
+  const grouped = new Map<string, ImapFlagUpdateTarget[]>();
+  for (const target of targets) {
+    const key = `${target.accountCode}::${target.mailbox}`;
+    const group = grouped.get(key);
+    if (group) {
+      group.push(target);
+    } else {
+      grouped.set(key, [target]);
+    }
+  }
+
+  for (const [key, group] of grouped) {
+    const [accountCode, mailbox] = key.split('::');
+    try {
+      const creds = await getImapCredentials(userId, accountCode);
+      if (creds.incomingType === 'POP3') {
+        continue;
+      }
+
+      const secure = creds.security === 'SSL';
+      const imapConfig: ImapFlowOptions = {
+        host: creds.host,
+        port: creds.port,
+        secure,
+        auth: { user: creds.username, pass: creds.password },
+        logger: false,
+        tls: {
+          rejectUnauthorized: process.env.NODE_ENV === 'production',
+          minVersion: 'TLSv1.2',
+        },
+      };
+
+      if (creds.security === 'STARTTLS') {
+        imapConfig.secure = false;
+        (imapConfig as unknown as Record<string, unknown>).starttls = { required: true };
+      }
+
+      const client = new ImapFlow(imapConfig);
+      try {
+        await client.connect();
+        const lock = await client.getMailboxLock(mailbox || 'INBOX');
+        try {
+          for (const target of group) {
+            const addFlags: string[] = [];
+            const removeFlags: string[] = [];
+
+            if (typeof target.isRead === 'boolean') {
+              (target.isRead ? addFlags : removeFlags).push('\\Seen');
+            }
+
+            if (typeof target.isStarred === 'boolean') {
+              (target.isStarred ? addFlags : removeFlags).push('\\Flagged');
+            }
+
+            try {
+              if (addFlags.length > 0) {
+                await client.messageFlagsAdd(target.uid, addFlags, { uid: true });
+              }
+              if (removeFlags.length > 0) {
+                await client.messageFlagsRemove(target.uid, removeFlags, { uid: true });
+              }
+            } catch (updateError) {
+              logger.warn(`[InboxService] Failed to update IMAP flags for UID ${target.uid} (${accountCode}/${mailbox})`, updateError);
+            }
+          }
+        } finally {
+          lock.release();
+        }
+        await client.logout();
+      } catch (error) {
+        logger.warn(`[InboxService] IMAP flag update failed for ${accountCode}/${mailbox}`, error);
+      }
+    } catch (error) {
+      logger.warn(`[InboxService] IMAP credentials lookup failed for ${accountCode}`, error);
+    }
+  }
+}
+
+export interface FlagUpdateInput {
+  cacheId: string | number;
+  isRead?: boolean;
+  isStarred?: boolean;
+}
+
+export interface FlagUpdateAck {
+  success: true;
+  type: 'flag_update_ack';
+  batchId: string;
+  acceptedIds: number[];
+  rejectedIds: number[];
+  timestamp: string;
+}
+
+const FLAG_UPDATE_ACK_RETENTION_HOURS = 6;
+const FLAG_OVERRIDE_RETENTION_HOURS = 6;
+
+export async function applyFlagUpdates(
+  userId: string,
+  batchId: string,
+  updates: FlagUpdateInput[],
+  sessionVersion?: number
+): Promise<FlagUpdateAck> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (typeof sessionVersion === 'number') {
+      const sessionCheck = await client.query(
+        'SELECT session_version FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (sessionCheck.rows.length === 0) {
+        throw new AppError('User not found', 404, true);
+      }
+
+      const currentVersion = sessionCheck.rows[0].session_version ?? 0;
+      if (currentVersion !== sessionVersion) {
+        throw new AppError('Session revoked', 401, true);
+      }
+    }
+
+    // Trim old idempotency records to cap storage growth
+    await client.query(
+      `DELETE FROM processed_flag_batches
+       WHERE created_at < NOW() - INTERVAL '${FLAG_UPDATE_ACK_RETENTION_HOURS} hours'`
+    );
+
+    const existing = await client.query(
+      `SELECT ack_payload FROM processed_flag_batches
+       WHERE user_id = $1 AND batch_id = $2`,
+      [userId, batchId]
+    );
+
+    if (existing.rows.length > 0) {
+      await client.query('COMMIT');
+      return existing.rows[0].ack_payload as FlagUpdateAck;
+    }
+
+    const acceptedIds: number[] = [];
+    const rejectedIds: number[] = [];
+
+    for (const update of updates) {
+      const cacheId = Number(update.cacheId);
+      const hasRead = typeof update.isRead === 'boolean';
+      const hasStarred = typeof update.isStarred === 'boolean';
+
+      if (!Number.isInteger(cacheId) || cacheId <= 0 || (!hasRead && !hasStarred)) {
+        if (Number.isInteger(cacheId) && cacheId > 0) {
+          rejectedIds.push(cacheId);
+        }
+        continue;
+      }
+
+      const result = await client.query(
+        `UPDATE inbox_cache
+         SET is_read = COALESCE($1, is_read),
+             is_starred = COALESCE($2, is_starred),
+             flag_updated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $3 AND user_id = $4
+         RETURNING id`,
+        [
+          hasRead ? update.isRead : null,
+          hasStarred ? update.isStarred : null,
+          cacheId,
+          userId,
+        ]
+      );
+
+      const updatedCount = result.rowCount ?? 0;
+      if (updatedCount > 0) {
+        acceptedIds.push(cacheId);
+      } else {
+        rejectedIds.push(cacheId);
+      }
+    }
+
+    const ack: FlagUpdateAck = {
+      success: true,
+      type: 'flag_update_ack',
+      batchId,
+      acceptedIds,
+      rejectedIds,
+      timestamp: new Date().toISOString(),
+    };
+
+    const inserted = await client.query(
+      `INSERT INTO processed_flag_batches (user_id, batch_id, ack_payload, created_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, batch_id) DO NOTHING
+       RETURNING ack_payload`,
+      [userId, batchId, ack]
+    );
+
+    const insertedCount = inserted.rowCount ?? 0;
+    if (insertedCount === 0) {
+      const existingAfter = await client.query(
+        `SELECT ack_payload FROM processed_flag_batches
+         WHERE user_id = $1 AND batch_id = $2`,
+        [userId, batchId]
+      );
+      await client.query('COMMIT');
+      return existingAfter.rows[0].ack_payload as FlagUpdateAck;
+    }
+
+    await client.query('COMMIT');
+
+    if (acceptedIds.length > 0) {
+      try {
+        const updatesById = new Map<number, FlagUpdateInput>();
+        for (const update of updates) {
+          const cacheId = Number(update.cacheId);
+          if (Number.isInteger(cacheId)) {
+            updatesById.set(cacheId, update);
+          }
+        }
+
+        const targetsResult = await client.query(
+          `SELECT id, account_code, mailbox, uid
+           FROM inbox_cache
+           WHERE user_id = $1 AND id = ANY($2::int[])`,
+          [userId, acceptedIds]
+        );
+
+        const targets = targetsResult.rows
+          .map(row => {
+            const update = updatesById.get(row.id as number);
+            if (!update) return null;
+            return {
+              accountCode: row.account_code as string,
+              mailbox: row.mailbox as string,
+              uid: row.uid as number,
+              isRead: update.isRead,
+              isStarred: update.isStarred,
+            } as ImapFlagUpdateTarget;
+          })
+          .filter((target): target is ImapFlagUpdateTarget => target !== null);
+
+        await updateImapFlagsForUser(userId, targets);
+      } catch (error) {
+        logger.warn('[InboxService] Failed to update IMAP flags:', error);
+      }
+    }
+
+    return ack;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error('[InboxService] Error applying flag updates:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getFlagBatchStatus(
+  userId: string,
+  batchId: string
+): Promise<FlagUpdateAck | null> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT ack_payload FROM processed_flag_batches
+       WHERE user_id = $1 AND batch_id = $2`,
+      [userId, batchId]
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0].ack_payload as FlagUpdateAck;
   } finally {
     client.release();
   }

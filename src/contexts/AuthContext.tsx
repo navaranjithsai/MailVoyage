@@ -1,8 +1,9 @@
-import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiFetch } from '../lib/apiFetch';
 import { performCompleteLogout } from '../lib/storageCleanup';
+import { flagSync } from '../lib/flagSync';
 import LoadingSpinner from '../components/common/LoadingSpinner'; // Import LoadingSpinner
 
 interface User {
@@ -107,6 +108,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
+  const tabSessionIdRef = useRef<string>(getTabSessionId());
+  const broadcastRef = useRef<BroadcastChannel | null>(null);
+  const isLoggingOutRef = useRef(false);
 
   useEffect(() => {
     const verifyAuthOnLoad = async () => {
@@ -186,6 +190,91 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     verifyAuthOnLoad();
   }, []); // navigate dependency removed as it's stable
+
+  useEffect(() => {
+    if (user?.id) {
+      void flagSync.initialize(String(user.id));
+      return;
+    }
+
+    void flagSync.shutdown(true);
+  }, [user?.id]);
+  const performLocalLogout = useCallback(async (options: {
+    callApi: boolean;
+    broadcast: boolean;
+    reason: 'user' | 'remote' | 'unknown';
+  }) => {
+    if (isLoggingOutRef.current) return;
+    isLoggingOutRef.current = true;
+    setIsLoading(true);
+
+    try {
+      if (options.callApi) {
+        try {
+          await apiFetch('/api/auth/logout', { method: 'POST' });
+          console.log('AuthContext: Logout API call successful');
+        } catch (error: unknown) {
+          console.error('AuthContext: Logout API call failed:', error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      setUser(null);
+      localStorage.removeItem('authUser');
+      clearAllTabValidations();
+
+      try {
+        await flagSync.shutdown(true);
+      } catch (flagError) {
+        console.warn('AuthContext: Flag sync shutdown failed:', flagError);
+      }
+
+      try {
+        console.log('AuthContext: Performing complete local data cleanup...');
+        await performCompleteLogout();
+        console.log('AuthContext: Complete cleanup finished');
+      } catch (cleanupError) {
+        console.error('AuthContext: Error during cleanup:', cleanupError);
+        localStorage.removeItem('emailAccounts');
+        localStorage.removeItem('smtpAccounts');
+      }
+
+      if (options.broadcast && broadcastRef.current) {
+        broadcastRef.current.postMessage({
+          type: 'logout',
+          sourceTab: tabSessionIdRef.current,
+        });
+      }
+
+      setIsLoading(false);
+
+      if (options.reason === 'remote') {
+        toast.info('You were logged out in another tab.');
+      } else {
+        toast.info('You have been logged out successfully.');
+      }
+      navigate('/login');
+      console.log('AuthContext: User logged out, all data cleared.');
+    } finally {
+      isLoggingOutRef.current = false;
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel('mailvoyage-auth');
+    broadcastRef.current = channel;
+
+    channel.onmessage = (event) => {
+      if (!event?.data || event.data.type !== 'logout') return;
+      if (event.data.sourceTab === tabSessionIdRef.current) return;
+      void performLocalLogout({ callApi: false, broadcast: false, reason: 'remote' });
+    };
+
+    return () => {
+      channel.close();
+      broadcastRef.current = null;
+    };
+  }, [performLocalLogout]);
   const login = (userData: User) => {
     const tabSessionId = getTabSessionId();
     setUser(userData);
@@ -195,44 +284,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     console.log('AuthContext: User logged in, authUser stored. Tab session marked as validated.');
   };
   const logout = async () => {
-    setIsLoading(true);
     console.log('AuthContext: Logout initiated.');
-    
-    try {
-      // Call logout API first (to invalidate server-side session/cookie)
-      await apiFetch('/api/auth/logout', { method: 'POST' });
-      console.log('AuthContext: Logout API call successful');
-    } catch (error: unknown) {
-      console.error('AuthContext: Logout API call failed:', error instanceof Error ? error.message : String(error));
-      // Continue with local cleanup even if API fails
-    }
-    
-    // ── CRITICAL: Set user to null FIRST ──
-    // This makes isAuthenticated=false immediately, so EmailProvider and
-    // SyncProvider react by stopping all Dexie operations and clearing
-    // in-memory state BEFORE we delete the underlying IndexedDB.
-    setUser(null);
-    localStorage.removeItem('authUser');
-    clearAllTabValidations();
-    
-    try {
-      // Now perform complete cleanup of all local data (IndexedDB, caches, etc.)
-      console.log('AuthContext: Performing complete local data cleanup...');
-      await performCompleteLogout();
-      console.log('AuthContext: Complete cleanup finished');
-    } catch (cleanupError) {
-      console.error('AuthContext: Error during cleanup:', cleanupError);
-      // Fallback: at minimum clear the essential items
-      localStorage.removeItem('emailAccounts');
-      localStorage.removeItem('smtpAccounts');
-    }
-    
-    setIsLoading(false);
-    
-    // Show success message and navigate
-    toast.info('You have been logged out successfully.');
-    navigate('/login');
-    console.log('AuthContext: User logged out, all data cleared.');
+    await performLocalLogout({ callApi: true, broadcast: true, reason: 'user' });
   };
   // Debug utilities for tab-based session management
   const getTabSessionInfo = () => {

@@ -13,12 +13,15 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 're
 
 export interface SyncSignal {
   type: 'sync_required' | 'heartbeat' | 'pong' | 'connected' | 'error' | 'auth_failed'
-      | 'inbox_sync_complete' | 'settings_updated' | 'inbox_new_mail';
+      | 'inbox_sync_complete' | 'settings_updated' | 'inbox_new_mail' | 'flag_update_ack';
   tables?: string[];
   since?: string;
   message?: string;
   timestamp: string;
   data?: Record<string, unknown>;
+  batchId?: string;
+  acceptedIds?: number[];
+  rejectedIds?: number[];
 }
 
 export interface WebSocketConfig {
@@ -161,6 +164,13 @@ class WebSocketClient {
   }
 
   /**
+   * Send an arbitrary message to the server (if connected)
+   */
+  sendMessage(data: Record<string, unknown>): boolean {
+    return this.send(data);
+  }
+
+  /**
    * Subscribe to sync signals
    */
   onSignal(handler: SignalHandler): () => void {
@@ -284,6 +294,10 @@ class WebSocketClient {
         case 'inbox_new_mail':
         case 'settings_updated':
           console.info(`[WebSocket] ${signal.type} signal received:`, signal.message);
+          this.notifySignalHandlers(signal);
+          break;
+
+        case 'flag_update_ack':
           this.notifySignalHandlers(signal);
           break;
 
@@ -416,10 +430,12 @@ class WebSocketClient {
   /**
    * Send message to server
    */
-  private send(data: Record<string, unknown>): void {
+  private send(data: Record<string, unknown>): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
+      return true;
     }
+    return false;
   }
 
   /**
