@@ -14,6 +14,8 @@ import { Server as HttpServer } from 'http';
 import { logger } from '../utils/logger.js';
 import jwt from 'jsonwebtoken';
 import { config } from '../utils/config.js';
+import pool from '../db/index.js';
+import * as inboxService from './inbox.service.js';
 
 // ============================================================================
 // Types
@@ -24,16 +26,21 @@ interface AuthenticatedClient {
   userId: string;
   lastHeartbeat: number;
   isAlive: boolean;
+  sessionVersion: number;
 }
 
 export interface SyncSignal {
   type: 'sync_required' | 'heartbeat' | 'pong' | 'connected' | 'error' 
-      | 'inbox_sync_complete' | 'settings_updated' | 'inbox_new_mail';
+      | 'inbox_sync_complete' | 'settings_updated' | 'inbox_new_mail' | 'flag_update_ack';
   tables?: string[];       // Which tables have updates
   since?: string;          // Timestamp of oldest change
   message?: string;        // Optional message
   timestamp: string;       // Signal timestamp
   data?: Record<string, unknown>;  // Optional payload data
+  batchId?: string;
+  acceptedIds?: number[];
+  rejectedIds?: number[];
+  success?: boolean;
 }
 
 interface PendingSignal {
@@ -51,6 +58,7 @@ class WebSocketService {
   private wss: WebSocketServer | null = null;
   /** userId → Set of active connections (supports multiple tabs) */
   private clients: Map<string, Set<AuthenticatedClient>> = new Map();
+  private socketIndex: Map<WebSocket, AuthenticatedClient> = new Map();
   private pendingSignals: Map<string, PendingSignal> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private isInitialized = false;
@@ -140,11 +148,15 @@ class WebSocketService {
   private handleMessage(ws: WebSocket, message: Record<string, unknown>): void {
     switch (message.type) {
       case 'auth':
-        this.handleAuth(ws, message.token as string);
+        void this.handleAuth(ws, message.token as string);
         break;
       
       case 'ping':
         this.handlePing(ws);
+        break;
+
+      case 'flag_update':
+        void this.handleFlagUpdate(ws, message);
         break;
       
       default:
@@ -156,22 +168,57 @@ class WebSocketService {
    * Authenticate client with JWT token.
    * Supports multiple connections per user (multi-tab).
    */
-  private handleAuth(ws: WebSocket, token: string): void {
+  private async handleAuth(ws: WebSocket, token: string): Promise<void> {
     if (!token) {
       this.sendError(ws, 'No token provided');
       return;
     }
 
     try {
-      const decoded = jwt.verify(token, config.jwtSecret) as { userId: string; id?: string };
-      const userId = decoded.userId || decoded.id;
+      const decoded = jwt.verify(token, config.jwtSecret) as { userId?: string; id?: string; sessionVersion?: number };
+      const userIdRaw = decoded.userId || decoded.id;
+      const sessionVersion = decoded.sessionVersion;
 
-      if (!userId) {
+      if (!userIdRaw) {
         this.sendError(ws, 'Invalid token payload');
         return;
       }
 
+      if (typeof sessionVersion !== 'number') {
+        this.sendError(ws, 'Invalid session');
+        return;
+      }
+
+      const userIdNum = Number(userIdRaw);
+      if (!Number.isFinite(userIdNum)) {
+        this.sendError(ws, 'Invalid user id');
+        return;
+      }
+
+      const dbClient = await pool.connect();
+      try {
+        const result = await dbClient.query(
+          'SELECT session_version FROM users WHERE id = $1',
+          [userIdNum]
+        );
+
+        if (result.rows.length === 0) {
+          this.sendError(ws, 'User not found');
+          return;
+        }
+
+        const currentVersion = result.rows[0].session_version ?? 0;
+        if (currentVersion !== sessionVersion) {
+          this.sendError(ws, 'Session revoked');
+          ws.close(1008, 'Session revoked');
+          return;
+        }
+      } finally {
+        dbClient.release();
+      }
+
       // Get or create the set for this user
+      const userId = String(userIdRaw);
       let clientSet = this.clients.get(userId);
       if (!clientSet) {
         clientSet = new Set();
@@ -185,17 +232,20 @@ class WebSocketService {
           logger.info(`[WebSocket] User ${userId} exceeded max connections (${this.MAX_CONNECTIONS_PER_USER}), closing oldest`);
           oldest.ws.close(1000, 'Too many connections');
           clientSet.delete(oldest);
+          this.socketIndex.delete(oldest.ws);
         }
       }
 
-      const client: AuthenticatedClient = {
+      const authedClient: AuthenticatedClient = {
         ws,
         userId,
         lastHeartbeat: Date.now(),
-        isAlive: true
+        isAlive: true,
+        sessionVersion
       };
 
-      clientSet.add(client);
+      clientSet.add(authedClient);
+      this.socketIndex.set(ws, authedClient);
       logger.info(`[WebSocket] User ${userId} authenticated (${clientSet.size} tab(s)). Total connections: ${this.totalConnections}`);
 
       this.send(ws, {
@@ -214,18 +264,15 @@ class WebSocketService {
    * Handle ping from client (keep-alive)
    */
   private handlePing(ws: WebSocket): void {
-    for (const clientSet of this.clients.values()) {
-      for (const client of clientSet) {
-        if (client.ws === ws) {
-          client.lastHeartbeat = Date.now();
-          client.isAlive = true;
-          this.send(ws, {
-            type: 'pong',
-            timestamp: new Date().toISOString()
-          });
-          return;
-        }
-      }
+    const client = this.socketIndex.get(ws);
+    if (client) {
+      client.lastHeartbeat = Date.now();
+      client.isAlive = true;
+      this.send(ws, {
+        type: 'pong',
+        timestamp: new Date().toISOString()
+      });
+      return;
     }
     // Not authenticated yet, still send pong
     this.send(ws, {
@@ -235,29 +282,88 @@ class WebSocketService {
   }
 
   /**
+   * Handle flag updates sent from client over WebSocket.
+   */
+  private async handleFlagUpdate(ws: WebSocket, message: Record<string, unknown>): Promise<void> {
+    const client = this.socketIndex.get(ws);
+    if (!client) {
+      this.sendError(ws, 'Not authenticated');
+      return;
+    }
+
+    const batchId = typeof message.batchId === 'string' ? message.batchId : '';
+    const updates = Array.isArray(message.updates) ? message.updates : [];
+    if (!batchId || updates.length === 0) {
+      this.sendError(ws, 'Invalid flag update payload');
+      return;
+    }
+
+    const userIdNum = Number(client.userId);
+    if (!Number.isFinite(userIdNum)) {
+      this.sendError(ws, 'Invalid user id');
+      return;
+    }
+
+    const dbClient = await pool.connect();
+    try {
+      const result = await dbClient.query(
+        'SELECT session_version FROM users WHERE id = $1',
+        [userIdNum]
+      );
+
+      const currentVersion = result.rows[0]?.session_version ?? 0;
+      if (currentVersion !== client.sessionVersion) {
+        this.sendError(ws, 'Session revoked');
+        ws.close(1008, 'Session revoked');
+        return;
+      }
+    } finally {
+      dbClient.release();
+    }
+
+    try {
+      const ack = await inboxService.applyFlagUpdates(
+        client.userId,
+        batchId,
+        updates as inboxService.FlagUpdateInput[],
+        client.sessionVersion
+      );
+
+      this.send(ws, ack);
+
+      if (ack.acceptedIds.length > 0) {
+        this.signalUser(client.userId, ['inbox_mails'], ack.timestamp);
+      }
+    } catch (error) {
+      logger.warn('[WebSocket] Failed to apply flag updates:', error);
+      this.sendError(ws, 'Failed to apply flag updates');
+    }
+  }
+
+  /**
    * Handle client disconnect
    */
   private handleDisconnect(ws: WebSocket): void {
-    for (const [userId, clientSet] of this.clients) {
-      for (const client of clientSet) {
-        if (client.ws === ws) {
-          clientSet.delete(client);
+    const client = this.socketIndex.get(ws);
+    if (!client) return;
 
-          // Clean up empty sets and pending signals when last tab closes
-          if (clientSet.size === 0) {
-            this.clients.delete(userId);
-            const pending = this.pendingSignals.get(userId);
-            if (pending?.timeout) {
-              clearTimeout(pending.timeout);
-              this.pendingSignals.delete(userId);
-            }
-          }
+    const userId = client.userId;
+    const clientSet = this.clients.get(userId);
+    if (clientSet) {
+      clientSet.delete(client);
 
-          logger.info(`[WebSocket] User ${userId} tab disconnected (${clientSet.size} remaining). Total connections: ${this.totalConnections}`);
-          return;
+      if (clientSet.size === 0) {
+        this.clients.delete(userId);
+        const pending = this.pendingSignals.get(userId);
+        if (pending?.timeout) {
+          clearTimeout(pending.timeout);
+          this.pendingSignals.delete(userId);
         }
       }
     }
+
+    this.socketIndex.delete(ws);
+    logger.info(`[WebSocket] User ${userId} tab disconnected (${clientSet?.size ?? 0} remaining). Total connections: ${this.totalConnections}`);
   }
 
   /**
@@ -288,6 +394,7 @@ class WebSocketService {
 
         for (const dead of toRemove) {
           clientSet.delete(dead);
+          this.socketIndex.delete(dead.ws);
         }
         if (clientSet.size === 0) {
           this.clients.delete(userId);
@@ -451,6 +558,7 @@ class WebSocketService {
       }
     }
     this.clients.clear();
+    this.socketIndex.clear();
 
     if (this.wss) {
       this.wss.close();

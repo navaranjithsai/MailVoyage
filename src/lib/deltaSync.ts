@@ -12,6 +12,7 @@ import {
   db, 
   getLastSyncTimestamp, 
   updateSyncCheckpoint,
+  getFlagOverrideMap,
   upsertSentMails,
   upsertInboxMails,
   trimInboxToLimit,
@@ -21,9 +22,11 @@ import {
   getCacheValue,
   setCacheValue,
   type SentMailRecord,
-  type InboxMailRecord
+  type InboxMailRecord,
+  type FlagUpdateRecord
 } from './db';
 import { wsClient, type SyncSignal, type ConnectionStatus } from './websocket';
+import { getStoredUserId } from './authSession';
 
 // ============================================================================
 // Types
@@ -739,6 +742,8 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
       return { updated: 0, deleted: 0 };
     }
 
+    const userId = getStoredUserId();
+    const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
     const accounts: Array<{ accountCode: string }> = JSON.parse(emailAccountsStr);
     let totalUpdated = 0;
 
@@ -767,8 +772,18 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
             htmlBody: m.html_body || m.htmlBody || null,
             textBody: m.text_body || m.textBody || null,
             date: m.date || new Date().toISOString(),
-            isRead: m.is_read ?? m.isRead ?? false,
-            isStarred: m.is_starred ?? m.isStarred ?? false,
+            isRead: (() => {
+              const base = m.is_read ?? m.isRead ?? false;
+              const cacheId = parseCacheId(m.id);
+              const override = cacheId ? overrideMap.get(cacheId) : undefined;
+              return override?.isRead ?? base;
+            })(),
+            isStarred: (() => {
+              const base = m.is_starred ?? m.isStarred ?? false;
+              const cacheId = parseCacheId(m.id);
+              const override = cacheId ? overrideMap.get(cacheId) : undefined;
+              return override?.isStarred ?? base;
+            })(),
             hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
             attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
             labels: m.labels || [],
@@ -798,6 +813,14 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
     console.error('[DeltaSync] Failed to sync inbox mails:', error);
     throw error;
   }
+}
+
+function parseCacheId(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    return null;
+  }
+  return parsed;
 }
 
 /**

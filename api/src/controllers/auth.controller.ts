@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service.js';
 import * as userService from '../services/user.service.js'; // Import userService to fetch user details
+import * as tokenService from '../services/token.service.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 import { AppError } from '../utils/errors.js';
@@ -235,6 +236,21 @@ export const regenerateTwoFactorRecoveryCodes = async (req: Request, res: Respon
 export const logout = async (req: Request, res: Response, next: NextFunction) => {
   // This endpoint does not need authenticateToken middleware
   try {
+    const token = req.cookies?.authToken;
+    if (token) {
+      try {
+        const decoded = tokenService.verifyAccessToken(token) as { userId?: string | number; email?: string };
+        const userId = decoded.userId !== undefined ? Number(decoded.userId) : NaN;
+        if (Number.isFinite(userId)) {
+          await userService.incrementSessionVersion(userId);
+        } else if (decoded.email) {
+          await userService.incrementSessionVersionByEmail(decoded.email);
+        }
+      } catch (error) {
+        logger.warn('Logout: token invalid or expired, skipping session revocation');
+      }
+    }
+
     clearAuthCookie(res);
     // It's good practice to also send a response confirming logout.
     res.status(200).json({ message: 'Logout successful' });
@@ -380,6 +396,7 @@ export const getWebSocketToken = async (req: Request, res: Response, next: NextF
         userId: req.user.id, 
         username: req.user.username,
         email: req.user.email,
+        sessionVersion: typeof req.user.sessionVersion === 'number' ? req.user.sessionVersion : 0,
         purpose: 'websocket' 
       },
       config.jwtSecret,

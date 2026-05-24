@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import * as inboxController from '../controllers/inbox.controller.js';
 import { authenticateToken } from '../middlewares/auth.js';
+import { validateRequest } from '../middlewares/validateRequest.js';
+import { inboxFlagUpdatesSchema } from '../utils/validationSchemas.js';
 
 const router = Router();
 
@@ -15,6 +17,12 @@ router.get('/fetch', inboxController.fetchMails);
 
 // Sync: fetch from IMAP + update server cache
 router.post('/sync', inboxController.syncInbox);
+
+// Apply read/star flag updates (batched)
+router.post('/flag-updates', validateRequest({ body: inboxFlagUpdatesSchema }), inboxController.applyFlagUpdates);
+
+// Check if a flag batch was already applied
+router.get('/batch-status/:batchId', inboxController.getFlagBatchStatus);
 
 // Search mails on IMAP server (progressive date-range search)
 router.post('/search', inboxController.searchOnServer);

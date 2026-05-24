@@ -7,13 +7,14 @@ export interface UserProfile {
   id: number;
   username: string;
   email: string;
+  sessionVersion: number;
 }
 
 export const getUserByEmail = async (email: string): Promise<UserProfile | null> => {
   const client = await pool.connect();
   try {
     const result = await client.query<UserProfile>(
-      'SELECT id, username, email FROM users WHERE email = $1',
+      'SELECT id, username, email, session_version as "sessionVersion" FROM users WHERE email = $1',
       [email]
     );
     
@@ -21,6 +22,56 @@ export const getUserByEmail = async (email: string): Promise<UserProfile | null>
   } catch (error) {
     logger.error(`getUserByEmail failed for ${email}:`, error);
     throw new AppError('Database error while fetching user by email', 500, false, { context: 'getUserByEmail', email });
+  } finally {
+    client.release();
+  }
+};
+
+export const incrementSessionVersion = async (userId: number): Promise<number> => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `UPDATE users
+       SET session_version = COALESCE(session_version, 0) + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING session_version`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new AppError('User not found', 404);
+    }
+
+    return result.rows[0].session_version as number;
+  } catch (error) {
+    logger.error(`incrementSessionVersion failed for user ${userId}:`, error);
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+export const incrementSessionVersionByEmail = async (email: string): Promise<number | null> => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `UPDATE users
+       SET session_version = COALESCE(session_version, 0) + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE email = $1
+       RETURNING session_version`,
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0].session_version as number;
+  } catch (error) {
+    logger.error(`incrementSessionVersionByEmail failed for ${email}:`, error);
+    throw error;
   } finally {
     client.release();
   }

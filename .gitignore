@@ -3,6 +3,7 @@ idea.prompt
 API_MIGRATION_GUIDE.md
 API_ROUTER_AUDIT_REPORT.md
 TODO.md
+WRBugAnalysisAuditReports/
 
 # Logs
 logs
@@ -30,6 +31,7 @@ api/.vitest/
 !.env.example
 
 # Editor directories and files
+.vscode
 .vscode/*
 !.vscode/extensions.json
 .idea

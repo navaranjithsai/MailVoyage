@@ -4,6 +4,7 @@ import { AuthContext } from './AuthContext';
 import {
   getAllInboxMails,
   getUnreadCount,
+  getInboxMailById,
   updateMailReadStatus,
   updateMailStarredStatus,
   deleteInboxMails,
@@ -11,6 +12,7 @@ import {
   cleanupNumericKeyedMails,
   type InboxMailRecord,
 } from '@/lib/db';
+import { flagSync } from '@/lib/flagSync';
 
 // Email interface used by all UI components
 export interface Email {
@@ -61,6 +63,7 @@ interface EmailContextType {
   toggleEmailStarred: (emailId: string) => void;
   addEmail: (email: Omit<Email, 'id' | 'timestamp'>) => void;
   refreshEmails: () => Promise<void>;
+  refreshUnreadCount: () => Promise<void>;
   showUnreadBadge: boolean;
   setShowUnreadBadge: (show: boolean) => void;
   isLoading: boolean;
@@ -90,6 +93,13 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseCacheId(id: string): number | null {
+  if (!/^[0-9]+$/.test(id)) return null;
+  const parsed = Number(id);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 /** Convert an InboxMailRecord (from Dexie) to the Email interface consumed by components. */
@@ -218,9 +228,39 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
+  // Refresh inbox state when other tabs ACK flag updates
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleAck = () => {
+      void loadEmails();
+    };
+
+    window.addEventListener('flag-sync:ack', handleAck);
+
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel('mailvoyage-flag-sync');
+      channel.onmessage = (event) => {
+        if (event?.data?.type === 'flag_update_ack') {
+          void loadEmails();
+        }
+      };
+    }
+
+    return () => {
+      window.removeEventListener('flag-sync:ack', handleAck);
+      if (channel) channel.close();
+    };
+  }, [isAuthenticated, loadEmails]);
+
   const markAsRead = useCallback(async (emailId: string) => {
     if (!isAuthenticated) return;
     await updateMailReadStatus(emailId, true);
+    const cacheId = parseCacheId(emailId);
+    if (cacheId) {
+      await flagSync.enqueue({ cacheId, isRead: true });
+    }
     setEmails(prev => prev.map(e => e.id === emailId ? { ...e, isRead: true } : e));
     setUnreadCount(prev => Math.max(0, prev - 1));
   }, [isAuthenticated]);
@@ -228,14 +268,28 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const markAsUnread = useCallback(async (emailId: string) => {
     if (!isAuthenticated) return;
     await updateMailReadStatus(emailId, false);
+    const cacheId = parseCacheId(emailId);
+    if (cacheId) {
+      await flagSync.enqueue({ cacheId, isRead: false });
+    }
     setEmails(prev => prev.map(e => e.id === emailId ? { ...e, isRead: false } : e));
     setUnreadCount(prev => prev + 1);
   }, [isAuthenticated]);
 
   const toggleEmailRead = useCallback(async (emailId: string) => {
     const email = emails.find(e => e.id === emailId);
-    if (!email) return;
-    if (email.isRead) {
+    if (email) {
+      if (email.isRead) {
+        await markAsUnread(emailId);
+      } else {
+        await markAsRead(emailId);
+      }
+      return;
+    }
+
+    const record = await getInboxMailById(emailId);
+    if (!record) return;
+    if (record.isRead) {
       await markAsUnread(emailId);
     } else {
       await markAsRead(emailId);
@@ -261,24 +315,48 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const starEmail = useCallback(async (emailId: string) => {
     if (!isAuthenticated) return;
     await updateMailStarredStatus(emailId, true);
+    const cacheId = parseCacheId(emailId);
+    if (cacheId) {
+      await flagSync.enqueue({ cacheId, isStarred: true });
+    }
     setEmails(prev => prev.map(e => e.id === emailId ? { ...e, isStarred: true, isImportant: true } : e));
   }, [isAuthenticated]);
 
   const unstarEmail = useCallback(async (emailId: string) => {
     if (!isAuthenticated) return;
     await updateMailStarredStatus(emailId, false);
+    const cacheId = parseCacheId(emailId);
+    if (cacheId) {
+      await flagSync.enqueue({ cacheId, isStarred: false });
+    }
     setEmails(prev => prev.map(e => e.id === emailId ? { ...e, isStarred: false, isImportant: false } : e));
   }, [isAuthenticated]);
 
   const toggleEmailStarred = useCallback(async (emailId: string) => {
     const email = emails.find(e => e.id === emailId);
-    if (!email) return;
-    if (email.isStarred) {
+    if (email) {
+      if (email.isStarred) {
+        await unstarEmail(emailId);
+      } else {
+        await starEmail(emailId);
+      }
+      return;
+    }
+
+    const record = await getInboxMailById(emailId);
+    if (!record) return;
+    if (record.isStarred) {
       await unstarEmail(emailId);
     } else {
       await starEmail(emailId);
     }
   }, [emails, starEmail, unstarEmail]);
+
+  const refreshUnreadCount = useCallback(async () => {
+    if (!isAuthenticated) return;
+    const count = await getUnreadCount();
+    setUnreadCount(count);
+  }, [isAuthenticated]);
 
   const addEmail = useCallback((emailData: Omit<Email, 'id' | 'timestamp'>) => {
     const newEmail: Email = { ...emailData, id: Date.now().toString(), timestamp: new Date() };
@@ -309,6 +387,7 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     toggleEmailStarred,
     addEmail,
     refreshEmails,
+    refreshUnreadCount,
     showUnreadBadge,
     setShowUnreadBadge,
     isLoading,

@@ -2,12 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import * as inboxService from '../services/inbox.service.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
-import { signalInboxSyncComplete, signalSettingsUpdated } from '../utils/signaling.js';
+import { signalInboxSyncComplete, signalSettingsUpdated, signalInboxUpdate } from '../utils/signaling.js';
 
 // Helper to get authenticated user
 const getUser = (req: Request) => {
   if (!req.user) throw new AppError('User not authenticated', 401);
-  return req.user as { id: string; username: string; email: string };
+  return req.user as { id: string; username: string; email: string; sessionVersion: number };
 };
 
 /**
@@ -225,6 +225,53 @@ export const updateSettings = async (req: Request, res: Response, next: NextFunc
     res.json({
       success: true,
       message: 'Settings updated',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/inbox/flag-updates
+ * Apply batched read/star updates to inbox_cache.
+ * Body: { batchId, updates: [{ cacheId, isRead?, isStarred? }] }
+ */
+export const applyFlagUpdates = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = getUser(req);
+    const { batchId, updates } = req.body as { batchId: string; updates: inboxService.FlagUpdateInput[] };
+
+    const ack = await inboxService.applyFlagUpdates(user.id, batchId, updates, user.sessionVersion);
+    if (ack.acceptedIds.length > 0) {
+      signalInboxUpdate(user.id, ack.timestamp);
+    }
+
+    res.json(ack);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/inbox/batch-status/:batchId
+ * Check if a flag update batch was already applied (idempotency lookup).
+ */
+export const getFlagBatchStatus = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = getUser(req);
+    const batchIdParam = req.params.batchId;
+    const batchId = Array.isArray(batchIdParam) ? batchIdParam[0] : batchIdParam;
+
+    if (!batchId) {
+      return next(new AppError('batchId is required', 400, true));
+    }
+
+    const ack = await inboxService.getFlagBatchStatus(user.id, batchId);
+
+    res.json({
+      success: true,
+      applied: !!ack,
+      ack: ack || undefined,
     });
   } catch (error) {
     next(error);

@@ -10,14 +10,14 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace -- Express augmentation requires namespace syntax
   namespace Express {
     interface Request {
-      user?: { id: string; username: string; email: string }; // Payload with id, username and email
+      user?: { id: string; username: string; email: string; sessionVersion: number }; // Payload with session version
     }
   }
 }
 
 // Type for authenticated requests
 export interface AuthenticatedRequest extends Request {
-  user: { id: string; username: string; email: string };
+  user: { id: string; username: string; email: string; sessionVersion: number };
 }
 
 export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
@@ -29,7 +29,14 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
   }
 
   try {
-    const decoded = tokenService.verifyAccessToken(token) as { username: string; email: string; iat?: number; exp?: number };
+    const decoded = tokenService.verifyAccessToken(token) as {
+      username: string;
+      email: string;
+      userId?: string | number;
+      sessionVersion?: number;
+      iat?: number;
+      exp?: number;
+    };
 
     // Basic check if essential properties exist after decoding
     if (!decoded || typeof decoded.username !== 'string' || typeof decoded.email !== 'string') {
@@ -61,10 +68,48 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       return next(new AppError('Unauthorized: User not found', 401));
     }
 
+    if (decoded.userId === undefined || typeof decoded.sessionVersion !== 'number') {
+      logger.warn('Auth: Token missing required session claims');
+      res.cookie('authToken', '', {
+        httpOnly: true,
+        secure: config.nodeEnv === 'production',
+        expires: new Date(0),
+        sameSite: 'strict',
+        path: '/',
+      });
+      return next(new AppError('Unauthorized: Token missing session claims', 401));
+    }
+
+    const tokenUserId = String(decoded.userId);
+    if (tokenUserId !== String(userProfile.id)) {
+      logger.warn(`Auth: Token userId mismatch for ${decoded.email}`);
+      res.cookie('authToken', '', {
+        httpOnly: true,
+        secure: config.nodeEnv === 'production',
+        expires: new Date(0),
+        sameSite: 'strict',
+        path: '/',
+      });
+      return next(new AppError('Unauthorized: User mismatch', 401));
+    }
+
+    if (userProfile.sessionVersion !== decoded.sessionVersion) {
+      logger.warn(`Auth: Session revoked for ${decoded.email}`);
+      res.cookie('authToken', '', {
+        httpOnly: true,
+        secure: config.nodeEnv === 'production',
+        expires: new Date(0),
+        sameSite: 'strict',
+        path: '/',
+      });
+      return next(new AppError('Unauthorized: Session revoked', 401));
+    }
+
     req.user = { 
       id: userProfile.id.toString(), 
       username: decoded.username, 
-      email: decoded.email 
+      email: decoded.email,
+      sessionVersion: userProfile.sessionVersion,
     };
     logger.info(`Auth: Token validated for user ${decoded.username} (${decoded.email}) - ${req.method} ${req.path}`);
     next();

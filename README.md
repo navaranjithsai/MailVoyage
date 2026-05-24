@@ -12,7 +12,7 @@
 ---
 </div>
 
-MailVoyage is a modern, developer-friendly email client designed to simplify email management and testing. It provides a unified platform for sending, receiving, and testing emails across multiple providers, all in one place. Built with React, TypeScript, and Vite, MailVoyage is optimized for performance, scalability, and ease of use. The application supports serverless deployments, making it ideal for integration with platforms like Vercel.
+MailVoyage is a modern, developer-friendly email client designed to simplify email management and testing. It provides a unified platform for sending, receiving, and testing emails across multiple providers, all in one place. Built with React, TypeScript, and Vite, MailVoyage is optimized for performance, scalability, and ease of use. The application supports serverless deployments, making it ideal for integration with platforms like Vercel. The current auth stack also includes two-factor authentication, password change in Settings, and rate-limited challenge flows.
 
 ## Documentation and Wiki
 
@@ -56,6 +56,7 @@ The README is the quick-start overview. The Wiki is the source for deeper and co
 - **Email Sending**: Send emails with attachments, priority settings, and advanced formatting.
 - **Offline-first Experience**: Read cached inbox data, queue actions offline, and sync when connectivity returns.
 - **Dark Mode**: Enjoy a modern UI with light and dark theme support.
+- **Account Security**: Two-factor authentication, recovery codes, and password change in Settings.
 
 ## Tech Stack
 - **Frontend**: React 19, TypeScript 5.9, TailwindCSS, Framer Motion, Dexie v4 (IndexedDB)
@@ -63,7 +64,7 @@ The README is the quick-start overview. The Wiki is the source for deeper and co
 - **Email Protocols**: IMAP (ImapFlow), POP3 (node-pop3), SMTP (Nodemailer)
 - **Validation**: Zod 4 for schema validation
 - **Real-time**: WebSocket (ws) for live sync
-- **Security**: AES-256-GCM client-side encryption (Web Crypto API), HttpOnly cookie JWT
+- **Security**: AES-256-GCM client-side encryption (Web Crypto API), HttpOnly cookie JWT, TOTP 2FA, recovery codes, and auth rate limiting
 - **Deployment**: Docker, Docker Compose, and Vercel (with serverless limitations)
 
 ---
@@ -99,6 +100,19 @@ Mail Server (Gmail, Outlook, etc.)
 | **Cache limit rotation** | Both server-side (`inbox_cache` table) and client-side (IndexedDB) enforce a configurable cache limit (default 15). When new mails are synced, older mails beyond the limit are automatically pruned. |
 | **Client-side encryption** | Sensitive mail fields (from, subject, body) are encrypted with AES-256-GCM before storing in IndexedDB. The encryption key is derived per-session. |
 | **Minimal API calls** | Settings are cached in `localStorage` to avoid repeated API requests. The dashboard refreshes from local Dexie on focus/visibility change rather than hitting the API. |
+
+---
+
+## Security & Account Protection
+
+MailVoyage now ships with the current account-security flow exposed in the app and backend:
+
+- Login may return a short-lived 2FA challenge instead of setting the session cookie immediately.
+- Authenticator-app sign-in, email OTP fallback, and recovery codes are available for second-factor verification.
+- Password change is available in Settings and requires the current password.
+- Password reset uses a signed challenge bound to the browser tab session.
+- Login, 2FA, and password-reset flows are rate-limited server-side.
+- Auth cookies remain HttpOnly and SameSite-strict in the current implementation.
 
 ---
 
@@ -188,6 +202,8 @@ The inbox cache limit controls how many emails are kept per email account:
   - Create `api/.env` from `api/.env.example` and fill in required values.
   - Keep secrets only in `api/.env` (this file is git-ignored).
   - Keep `api/.env.example` committed so contributors know required variables.
+  - If you want password-reset email delivery or email OTP fallback for 2FA, configure the `SMTP_*` values.
+  - Optional 2FA tuning is available through `TOTP_ENCRYPTION_KEY`, `TWO_FACTOR_*`, and `AUTH_RATE_LIMIT_*` variables.
 
   Example:
   ```bash
@@ -340,12 +356,32 @@ Note: WebSocket-based real-time sync is not available on Vercel serverless runti
 |---|---|---|
 | `POST` | `/api/auth/register` | Register a new user |
 | `POST` | `/api/auth/login` | Log in |
+| `POST` | `/api/auth/login/2fa/verify` | Complete authenticator-based 2FA login |
+| `POST` | `/api/auth/login/2fa/otp/request` | Request email OTP for 2FA login |
+| `POST` | `/api/auth/login/2fa/otp/verify` | Complete email OTP 2FA login |
+| `POST` | `/api/auth/login/2fa/recovery/verify` | Complete 2FA login with a recovery code |
 | `POST` | `/api/auth/logout` | Log out |
 | `POST` | `/api/auth/forgot-password` | Request password reset |
 | `POST` | `/api/auth/reset-password` | Reset password using OTP + challenge |
 | `GET`  | `/api/auth/validate-token` | Validate active session token |
-| `POST` | `/api/auth/test-smtp` | Test SMTP connectivity |
+| `GET`  | `/api/auth/2fa/status` | Check whether 2FA is enabled |
+| `POST` | `/api/auth/2fa/setup/init` | Start 2FA setup or reconfigure existing 2FA |
+| `POST` | `/api/auth/2fa/setup/verify` | Verify a 2FA setup code and finalize enrollment |
+| `POST` | `/api/auth/2fa/disable` | Disable 2FA with the current password |
+| `POST` | `/api/auth/2fa/recovery/regenerate` | Regenerate recovery codes with the current password |
+| `GET`  | `/api/auth/test-smtp` | Test SMTP connectivity |
 | `GET`  | `/api/auth/ws-token` | Get WebSocket token |
+
+If 2FA is enabled, `POST /api/auth/login` returns a challenge payload instead of a cookie until one of the second-factor routes succeeds.
+
+### User Accounts
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET`  | `/api/users/profile` | Read the current profile |
+| `PUT`  | `/api/users/profileUpdate` | Update username/email for the signed-in user |
+| `PUT`  | `/api/users/password` | Change password using the current password |
+| `GET`  | `/api/users/preferences` | Read user preferences |
+| `PUT`  | `/api/users/preferences` | Update user preferences |
 
 ### Email Accounts
 | Method | Endpoint | Description |

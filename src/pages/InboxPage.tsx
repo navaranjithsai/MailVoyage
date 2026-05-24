@@ -26,19 +26,20 @@ import {
   getInboxMailsPaginated,
   searchInboxMails,
   deleteInboxMails,
-  updateMailReadStatus,
-  updateMailStarredStatus,
+  getFlagOverrideMap,
   upsertInboxMails,
   trimInboxToLimit,
   clearAccountInbox,
   getHighestUid,
   getExistingMailIds,
   type InboxMailRecord,
+  type FlagUpdateRecord,
 } from '@/lib/db';
 import { useEmail } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
 import { toast } from '@/lib/toast';
 import { isMobileTabletWidth } from '@/lib/navigation';
+import { getStoredUserId } from '@/lib/authSession';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -87,11 +88,19 @@ interface ServerMailData {
   createdAt?: string;
 }
 
+const parseCacheId = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    return null;
+  }
+  return parsed;
+};
+
 // ── Component ────────────────────────────────────────────────────────────
 
 const InboxPage: React.FC = () => {
   const navigate = useNavigate();
-  const { refreshEmails, toggleEmailStarred } = useEmail();
+  const { refreshEmails, toggleEmailStarred, toggleEmailRead } = useEmail();
   const isMobile = isMobileTabletWidth();
 
   // Data
@@ -407,35 +416,46 @@ const InboxPage: React.FC = () => {
    * Convert server response mails (camelCase from mapRowToInboxMail) to InboxMailRecord.
    * Handles both camelCase and snake_case for robustness.
    */
-  const mapServerMailToRecord = useCallback((m: ServerMailData, accountCode: string): InboxMailRecord => ({
-    id: String(m.id ?? `${accountCode}:${m.uid}`),
-    uid: m.uid,
-    accountId: accountCode,
-    mailbox: m.mailbox || 'INBOX',
-    messageId: m.message_id || m.messageId || undefined,
-    fromAddress: m.from_address || m.fromAddress || '',
-    fromName: m.from_name || m.fromName || '',
-    toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
-      ? (m.to_addresses || m.toAddresses) as string[]
-      : [m.to_addresses?.[0] || m.toAddresses?.[0] || ''],
-    ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
-      ? (m.cc_addresses || m.ccAddresses) as string[]
-      : [],
-    bccAddresses: Array.isArray(m.bcc_addresses || m.bccAddresses)
-      ? (m.bcc_addresses || m.bccAddresses) as string[]
-      : [],
-    subject: m.subject || '(No Subject)',
-    htmlBody: m.html_body || m.htmlBody || null,
-    textBody: m.text_body || m.textBody || null,
-    date: m.date || new Date().toISOString(),
-    isRead: m.is_read ?? m.isRead ?? false,
-    isStarred: m.is_starred ?? m.isStarred ?? false,
-    hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
-    attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
-    labels: m.labels || [],
-    updatedAt: new Date().toISOString(),
-    createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
-  }), []);
+  const mapServerMailToRecord = useCallback((
+    m: ServerMailData,
+    accountCode: string,
+    overrideMap?: Map<number, FlagUpdateRecord>
+  ): InboxMailRecord => {
+    const cacheId = parseCacheId(m.id);
+    const override = cacheId && overrideMap ? overrideMap.get(cacheId) : undefined;
+    const baseIsRead = m.is_read ?? m.isRead ?? false;
+    const baseIsStarred = m.is_starred ?? m.isStarred ?? false;
+
+    return {
+      id: String(m.id ?? `${accountCode}:${m.uid}`),
+      uid: m.uid,
+      accountId: accountCode,
+      mailbox: m.mailbox || 'INBOX',
+      messageId: m.message_id || m.messageId || undefined,
+      fromAddress: m.from_address || m.fromAddress || '',
+      fromName: m.from_name || m.fromName || '',
+      toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
+        ? (m.to_addresses || m.toAddresses) as string[]
+        : [m.to_addresses?.[0] || m.toAddresses?.[0] || ''],
+      ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
+        ? (m.cc_addresses || m.ccAddresses) as string[]
+        : [],
+      bccAddresses: Array.isArray(m.bcc_addresses || m.bccAddresses)
+        ? (m.bcc_addresses || m.bccAddresses) as string[]
+        : [],
+      subject: m.subject || '(No Subject)',
+      htmlBody: m.html_body || m.htmlBody || null,
+      textBody: m.text_body || m.textBody || null,
+      date: m.date || new Date().toISOString(),
+      isRead: override?.isRead ?? baseIsRead,
+      isStarred: override?.isStarred ?? baseIsStarred,
+      hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
+      attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
+      labels: m.labels || [],
+      updatedAt: new Date().toISOString(),
+      createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
+    };
+  }, []);
 
   const handleSync = useCallback(async () => {
     if (!selectedAccount || isSyncing) return;
@@ -458,8 +478,10 @@ const InboxPage: React.FC = () => {
       const fetchedMails = response?.data?.mails || response?.mails || [];
 
       if (fetchedMails.length > 0) {
+        const userId = getStoredUserId();
+        const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
         const records = fetchedMails.map((m: ServerMailData) =>
-          mapServerMailToRecord(m, selectedAccount.accountCode)
+          mapServerMailToRecord(m, selectedAccount.accountCode, overrideMap)
         );
 
         await upsertInboxMails(records);
@@ -516,8 +538,10 @@ const InboxPage: React.FC = () => {
       await clearAccountInbox(selectedAccount.accountCode);
 
       if (fetchedMails.length > 0) {
+        const userId = getStoredUserId();
+        const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
         const records = fetchedMails.map((m: ServerMailData) =>
-          mapServerMailToRecord(m, selectedAccount.accountCode)
+          mapServerMailToRecord(m, selectedAccount.accountCode, overrideMap)
         );
         await upsertInboxMails(records);
 
@@ -621,7 +645,14 @@ const InboxPage: React.FC = () => {
         const existingIds = await getExistingMailIds(selectedAccount.accountCode, uids);
 
         // Convert to InboxMailRecord and upsert into Dexie (local-only storage)
-        const records: InboxMailRecord[] = serverMails.map((m: ServerMailData) => ({
+        const userId = getStoredUserId();
+        const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
+        const records: InboxMailRecord[] = serverMails.map((m: ServerMailData) => {
+          const cacheId = parseCacheId(m.id);
+          const override = cacheId ? overrideMap.get(cacheId) : undefined;
+          const baseIsRead = m.isRead ?? false;
+          const baseIsStarred = m.isStarred ?? false;
+          return {
           id: existingIds.get(m.uid) ?? `${selectedAccount.accountCode}:${m.uid}`,
           uid: m.uid,
           accountId: selectedAccount.accountCode,
@@ -636,15 +667,16 @@ const InboxPage: React.FC = () => {
           htmlBody: m.htmlBody || null,
           textBody: m.textBody || null,
           date: m.date || new Date().toISOString(),
-          isRead: m.isRead ?? false,
-          isStarred: m.isStarred ?? false,
+          isRead: override?.isRead ?? baseIsRead,
+          isStarred: override?.isStarred ?? baseIsStarred,
           hasAttachments: m.hasAttachments ?? false,
           attachmentsMetadata: m.attachmentsMetadata || null,
           labels: m.labels || [],
           syncedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           createdAt: m.date || new Date().toISOString(),
-        }));
+        };
+        });
 
         // Store in Dexie only — do NOT trim (these are search results, not cache)
         await upsertInboxMails(records);
@@ -696,14 +728,13 @@ const InboxPage: React.FC = () => {
 
   const handleStarToggle = async (e: React.MouseEvent, mail: InboxMailRecord) => {
     e.stopPropagation();
-    await updateMailStarredStatus(mail.id, !mail.isStarred);
+    await toggleEmailStarred(mail.id);
     // Update local state
     const updater = (prev: InboxMailRecord[]) =>
       prev.map(m => m.id === mail.id ? { ...m, isStarred: !m.isStarred } : m);
     setMails(updater);
     setMobileMails(updater);
     if (searchResults) setSearchResults(prev => prev ? updater(prev) : prev);
-    toggleEmailStarred(mail.id);
   };
 
   const handleMailClick = (mail: InboxMailRecord) => {
@@ -713,7 +744,7 @@ const InboxPage: React.FC = () => {
 
   const handleReadToggle = async (e: React.MouseEvent, mail: InboxMailRecord) => {
     e.stopPropagation();
-    await updateMailReadStatus(mail.id, !mail.isRead);
+    await toggleEmailRead(mail.id);
     const updater = (prev: InboxMailRecord[]) =>
       prev.map(m => m.id === mail.id ? { ...m, isRead: !m.isRead } : m);
     setMails(updater);
