@@ -222,7 +222,7 @@ export const getStorageStats = async (): Promise<{
   const sessionStorageKeys = Object.keys(sessionStorage);
   
   // Check which IndexedDB databases exist
-  let existingDatabases: string[] = [];
+  let existingDatabases: string[];
   try {
     const databases = await indexedDB.databases();
     existingDatabases = databases

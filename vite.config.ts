@@ -38,15 +38,26 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Manual chunk splitting for optimal caching & parallel loading
-        manualChunks: {
+        // Vite 8 uses Rolldown - manualChunks must be a function
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          
           // React core — rarely changes, long cache
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router-dom/')) {
+            return 'vendor-react';
+          }
           // CKEditor — heaviest dep, only needed on compose page (lazy loaded)
-          'vendor-ckeditor': ['ckeditor5', '@ckeditor/ckeditor5-react'],
+          if (id.includes('/ckeditor5/') || id.includes('/@ckeditor/')) {
+            return 'vendor-ckeditor';
+          }
           // UI animation libraries
-          'vendor-ui': ['framer-motion', 'lucide-react'],
+          if (id.includes('/framer-motion/') || id.includes('/lucide-react/')) {
+            return 'vendor-ui';
+          }
           // Data & utilities
-          'vendor-data': ['dexie', 'dompurify', 'react-hook-form', 'react-toastify', 'jwt-decode'],
+          if (id.includes('/dexie/') || id.includes('/dompurify/') || id.includes('/react-hook-form/') || id.includes('/react-toastify/') || id.includes('/jwt-decode/')) {
+            return 'vendor-data';
+          }
         },
       },
     },

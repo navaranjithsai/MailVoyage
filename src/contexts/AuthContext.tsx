@@ -2,8 +2,10 @@ import React, { createContext, useState, useContext, useEffect, useRef, useCallb
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiFetch } from '../lib/apiFetch';
+import { fetchAll } from '../lib/dataSync';
 import { performCompleteLogout } from '../lib/storageCleanup';
 import { flagSync } from '../lib/flagSync';
+import { isAutoSyncInFlight, setAutoSyncInFlight, setLastAutoSyncAt } from '../lib/autoSync';
 import LoadingSpinner from '../components/common/LoadingSpinner'; // Import LoadingSpinner
 
 interface User {
@@ -122,7 +124,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (storedUserString) {
         console.log('AuthContext: Found authUser in localStorage.');
-        let parsedUserForValidation: User | null = null;
+        let parsedUserForValidation: User | null;
         try {
           parsedUserForValidation = JSON.parse(storedUserString);
           setUser(parsedUserForValidation); // Optimistically set user
@@ -199,6 +201,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     void flagSync.shutdown(true);
   }, [user?.id]);
+
+  const runLoginAutoSync = useCallback(async () => {
+    if (isAutoSyncInFlight()) {
+      console.debug('AuthContext: Auto-sync already running, skipping post-login sync');
+      return;
+    }
+
+    setAutoSyncInFlight(true);
+    try {
+      const results = await fetchAll(undefined, {
+        fetchAccounts: true,
+        fetchInbox: true,
+        fetchSent: true,
+        fetchSettings: true,
+        invalidateCache: false
+      });
+
+      const successCount = [
+        results.emailAccounts.success,
+        results.inbox.success,
+        results.sentMails.success,
+        results.settings.success
+      ].filter(Boolean).length;
+
+      if (successCount > 0) {
+        await setLastAutoSyncAt(Date.now());
+      }
+    } catch (error: unknown) {
+      console.warn('AuthContext: Post-login full sync failed:', error);
+    } finally {
+      setAutoSyncInFlight(false);
+    }
+  }, []);
   const performLocalLogout = useCallback(async (options: {
     callApi: boolean;
     broadcast: boolean;
@@ -282,6 +317,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // On login, mark this tab session as validated since we just authenticated
     setSessionValidationState(tabSessionId, true);
     console.log('AuthContext: User logged in, authUser stored. Tab session marked as validated.');
+    void runLoginAutoSync();
   };
   const logout = async () => {
     console.log('AuthContext: Logout initiated.');

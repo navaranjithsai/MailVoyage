@@ -3,6 +3,8 @@ import React, { Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 // ... other imports ...
 import { useAuth } from '@/contexts/AuthContext';
+import { useSync } from '@/contexts/SyncContext';
+import { useServerStatus } from '@/contexts/ServerStatusContext';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import Layout from '@/components/layout/Layout';
 
@@ -19,6 +21,9 @@ const DraftsPage = React.lazy(() => import('@/pages/DraftsPage'));
 const SettingsPage = React.lazy(() => import('@/pages/SettingsPage'));
 const SearchPage = React.lazy(() => import('@/pages/SearchPage'));
 const EmailPage = React.lazy(() => import('@/pages/EmailPage'));
+const NotFoundPage = React.lazy(() => import('@/pages/errors/NotFoundPage'));
+const ServerErrorPage = React.lazy(() => import('@/pages/errors/ServerErrorPage'));
+const OfflinePage = React.lazy(() => import('@/pages/errors/OfflinePage'));
 
 // Placeholder for a component that requires authentication
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -60,6 +65,8 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const AppRouter: React.FC = () => {
   const { isLoading } = useAuth(); // Get loading state
+  const { syncState } = useSync();
+  const { isServerDown } = useServerStatus();
 
   // Optional: Prevent route rendering until auth check is complete
   // This avoids potential flashes of content or incorrect redirects
@@ -67,9 +74,16 @@ const AppRouter: React.FC = () => {
       return <LoadingSpinner message="Initializing Application..." />; // Or a global spinner
   }
 
+  const statusOverride = !syncState.isOnline
+    ? <OfflinePage />
+    : isServerDown
+      ? <ServerErrorPage />
+      : null;
+
   return (
     // Remove BrowserRouter from here
     <Suspense fallback={<LoadingSpinner message="Loading page..." />}>
+    {statusOverride ?? (
     <Routes>      {/* Public routes (Login, Register) */}
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
@@ -152,10 +166,13 @@ const AppRouter: React.FC = () => {
           }
       />
 
+        <Route path="/offline" element={<OfflinePage />} />
+        <Route path="/server-error" element={<ServerErrorPage />} />
+
       {/* Catch-all for 404 Not Found */}
-      {/* You might want to create a dedicated NotFoundPage component */}
-      <Route path="*" element={<div>404 Not Found</div>} />
+        <Route path="*" element={<NotFoundPage />} />
     </Routes>
+    )}
     </Suspense>
   );
 };

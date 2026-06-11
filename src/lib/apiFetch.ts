@@ -7,6 +7,68 @@
  * @returns Promise<any> The JSON response from the API
  * @throws Error if the request fails or the response is not ok
  */
+const isServerErrorStatus = (status: number): boolean => status >= 500 && status <= 599;
+const SERVER_ERROR_THRESHOLD = 3;
+let consecutiveServerErrors = 0;
+let isServerMarkedDown = false;
+
+const notifyServerDown = (message: string, status?: number): void => {
+  if (typeof window === 'undefined') return;
+  if (isServerMarkedDown) return;
+
+  isServerMarkedDown = true;
+  window.dispatchEvent(new CustomEvent('server:down', {
+    detail: { message, status }
+  }));
+};
+
+const notifyServerUp = (): void => {
+  if (typeof window === 'undefined') return;
+  if (!isServerMarkedDown) return;
+
+  isServerMarkedDown = false;
+  window.dispatchEvent(new CustomEvent('server:up'));
+};
+
+const resetServerErrorTracking = (): void => {
+  consecutiveServerErrors = 0;
+  notifyServerUp();
+};
+
+const recordServerErrorStatus = (status: number, message: string): void => {
+  if (isServerErrorStatus(status)) {
+    consecutiveServerErrors += 1;
+    if (consecutiveServerErrors >= SERVER_ERROR_THRESHOLD) {
+      notifyServerDown(message, status);
+    }
+    return;
+  }
+
+  resetServerErrorTracking();
+};
+
+const markNetworkFailure = (message: string): void => {
+  consecutiveServerErrors = SERVER_ERROR_THRESHOLD;
+  notifyServerDown(message);
+};
+
+const isNetworkFailure = (error: Error): boolean => {
+  if (error.name === 'AbortError') return false;
+  if (error instanceof TypeError) return true;
+
+  const message = error.message.toLowerCase();
+  return message.includes('failed to fetch') || message.includes('networkerror') || message.includes('load failed');
+};
+
+const getErrorStatus = (error: Error): number | null => {
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' ? status : null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const apiFetch = async (endpoint: string, options: RequestInit = {}): Promise<any> => {
   const getOrCreateTabSessionId = (): string | null => {
@@ -61,6 +123,9 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
   try {
     const response = await fetch(endpoint, config);
+    if (response.ok) {
+      resetServerErrorTracking();
+    }
 
     let responseData: unknown;
     let responseText = ''; // Store raw text for better error reporting
@@ -82,9 +147,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
     if (!response.ok) {
       // Type-narrow responseData for property access
-      const resObj = (typeof responseData === 'object' && responseData !== null)
-        ? responseData as Record<string, unknown>
-        : null;
+      const resObj = isRecord(responseData) ? responseData : null;
       // Ensure message comes from parsed JSON error or fallback
       const message = String(resObj?.message || responseText || `HTTP error! status: ${response.status}`);
       const err = Object.assign(new Error(message), { status: response.status });
@@ -101,6 +164,17 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
   } catch (error: unknown) {
     console.error('API Fetch Error:', error);
 
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (isOnline && error instanceof Error) {
+      const status = getErrorStatus(error);
+
+      if (typeof status === 'number') {
+        recordServerErrorStatus(status, error.message);
+      } else if (isNetworkFailure(error)) {
+        markNetworkFailure(error.message);
+      }
+    }
+
     // Re-throw the error so components can handle it.
     // If it's an error we constructed in the !response.ok block, it will have status/errors.
     // If it's a network error from fetch itself (e.g., TypeError), it will be an Error instance.
@@ -110,7 +184,7 @@ export const apiFetch = async (endpoint: string, options: RequestInit = {}): Pro
 
     // Fallback for other types of thrown values (less common)
     let message = 'An unexpected error occurred during the API request.';
-    const errRecord = (typeof error === 'object' && error !== null) ? error as Record<string, unknown> : null;
+    const errRecord = isRecord(error) ? error : null;
     if (typeof error === 'string' && error.length > 0) {
       message = error;
     } else if (errRecord && typeof errRecord.message === 'string') {

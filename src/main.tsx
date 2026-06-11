@@ -12,6 +12,14 @@ if (import.meta.env.PROD) {
   })
 }
 
+try {
+  if (!sessionStorage.getItem('appSessionStart')) {
+    sessionStorage.setItem('appSessionStart', String(Date.now()))
+  }
+} catch {
+  // Ignore storage errors in restricted environments.
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   // StrictMode is already included in App.tsx
   <App />

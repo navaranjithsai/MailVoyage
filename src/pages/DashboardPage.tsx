@@ -30,6 +30,7 @@ import EmailList from '@/components/email/EmailList';
 import SearchBar from '@/components/email/SearchBar';
 import { toast } from '@/lib/toast';
 import { fetchAll, fetchDraftsCount, type FetchProgress } from '@/lib/dataSync';
+import { getLastAutoSyncAt, isAutoSyncInFlight, setAutoSyncInFlight, setLastAutoSyncAt } from '@/lib/autoSync';
 import { getStorageBreakdown, getSentMailsCount } from '@/lib/db';
 import { SectionErrorBoundary } from '@/components/ErrorBoundary';
 import { OfflineIndicator } from '@/components/OfflineQueueManager';
@@ -87,6 +88,12 @@ const getAvatarColor = (username: string): string => {
 // Avatar caching in localStorage
 const AVATAR_CACHE_KEY = 'mailvoyage-avatar-cache';
 const AVATAR_CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// Auto-sync timing (ms)
+const AUTO_SYNC_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+const REALTIME_AUTO_SYNC_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours
+const APP_GAP_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const OFFLINE_RETURN_MIN_MS = 2 * 60 * 1000; // 2 minutes
 
 interface CachedAvatar {
   svg: string;
@@ -248,11 +255,22 @@ const DashboardPage: React.FC = () => {
     pendingSync: syncState.pendingChanges
   }), [syncState, isRealTimeActive]);
 
+  const autoSyncInFlightRef = useRef(false);
+  const lastOnlineRef = useRef(syncState.isOnline);
+  const lastOnlineReturnRef = useRef<number | null>(null);
+
   // Get username for avatar
   const username = user?.username || 'User';
   const avatarUrl = `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(username)}`;
   const avatarColor = getAvatarColor(username);
   const firstLetter = username.charAt(0).toUpperCase();
+
+  useEffect(() => {
+    if (!lastOnlineRef.current && syncState.isOnline) {
+      lastOnlineReturnRef.current = Date.now();
+    }
+    lastOnlineRef.current = syncState.isOnline;
+  }, [syncState.isOnline]);
 
   // Set avatarLoaded if we have cached avatar
   useEffect(() => {
@@ -386,10 +404,12 @@ const DashboardPage: React.FC = () => {
     console.log('📊 Sync progress:', progress.step, progress.message);
   }, []);
 
-  const handleRefresh = useCallback(async () => {
+  const performFullSync = useCallback(async (): Promise<{ successCount: number }> => {
     setIsRefreshing(true);
     setRefreshProgress('Starting sync...');
-    
+
+    let successCount = 0;
+
     try {
       // Full sync: accounts → inbox + sent + settings (parallel)
       const results = await fetchAll(handleFetchProgress, {
@@ -402,7 +422,7 @@ const DashboardPage: React.FC = () => {
 
       // Immediately refresh EmailContext so UI renders new data
       await refreshEmails();
-      
+
       // Update email stats from fresh Dexie data
       const [sentCount, draftsCount] = await Promise.all([
         getSentMailsCount(),
@@ -416,7 +436,7 @@ const DashboardPage: React.FC = () => {
         drafts: draftsCount,
         unread: unreadCount,
       }));
-      
+
       // Refresh storage breakdown after sync
       try {
         const breakdown = await getStorageBreakdown();
@@ -428,16 +448,22 @@ const DashboardPage: React.FC = () => {
           localStorage: breakdown.localStorage,
           percentage: prev.total > 0 ? Math.min((totalUsed / prev.total) * 100, 100) : 0,
         }));
-      } catch { /* ignore */ }
-      
+      } catch {
+        /* ignore */
+      }
+
       // Show success/partial success message
-      const successCount = [
+      successCount = [
         results.emailAccounts.success,
         results.inbox.success,
         results.sentMails.success,
         results.settings.success
       ].filter(Boolean).length;
-      
+
+      if (successCount > 0) {
+        await setLastAutoSyncAt(Date.now());
+      }
+
       if (successCount === 4) {
         toast.success('All data synced successfully');
       } else if (successCount > 0) {
@@ -445,7 +471,6 @@ const DashboardPage: React.FC = () => {
       } else {
         toast.error('Sync failed - please try again');
       }
-      
     } catch (error) {
       console.error('Error refreshing dashboard:', error);
       toast.error('Failed to refresh dashboard');
@@ -453,17 +478,80 @@ const DashboardPage: React.FC = () => {
       setIsRefreshing(false);
       setRefreshProgress('');
     }
+
+    return { successCount };
   }, [handleFetchProgress, unreadCount, refreshEmails]);
 
-  // Auto-trigger full sync on first load (e.g. after login)
-  const hasAutoSynced = useRef(false);
-  useEffect(() => {
-    if (!hasAutoSynced.current && user) {
-      hasAutoSynced.current = true;
-      // Call directly — no setTimeout to avoid StrictMode cleanup cancellation
-      handleRefresh();
+  const handleRefresh = useCallback(async () => {
+    await performFullSync();
+  }, [performFullSync]);
+
+  const shouldAutoSync = useCallback(async (): Promise<boolean> => {
+    if (!user) return false;
+    if (!syncState.isOnline) return false;
+    if (isRefreshing || autoSyncInFlightRef.current || isAutoSyncInFlight()) return false;
+
+    const lastAutoSyncAt = await getLastAutoSyncAt();
+    const now = Date.now();
+    const timeSinceLast = lastAutoSyncAt ? now - lastAutoSyncAt : Number.POSITIVE_INFINITY;
+    const hasGap = !lastAutoSyncAt || timeSinceLast > APP_GAP_THRESHOLD_MS;
+
+    if (hasGap) return true;
+
+    const readSessionTimestamp = (key: string): number => {
+      try {
+        const value = sessionStorage.getItem(key);
+        const parsed = value ? Number(value) : 0;
+        return Number.isFinite(parsed) ? parsed : 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const lastWsReconnect = readSessionTimestamp('lastWsReconnect');
+    const storedOnlineReturn = readSessionTimestamp('lastOnlineReturn');
+    const lastOnlineReturn = Math.max(storedOnlineReturn, lastOnlineReturnRef.current ?? 0);
+
+    if (isRealTimeActive) {
+      if (lastWsReconnect > (lastAutoSyncAt ?? 0)) {
+        return true;
+      }
+      return timeSinceLast > REALTIME_AUTO_SYNC_COOLDOWN_MS;
     }
-  }, [user, handleRefresh]);
+
+    if (lastOnlineReturn > (lastAutoSyncAt ?? 0) && timeSinceLast > OFFLINE_RETURN_MIN_MS) {
+      return true;
+    }
+
+    return timeSinceLast > AUTO_SYNC_COOLDOWN_MS;
+  }, [user, syncState.isOnline, isRealTimeActive, isRefreshing]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (autoSyncInFlightRef.current || isAutoSyncInFlight()) return;
+
+    let cancelled = false;
+
+    const runAutoSync = async () => {
+      const shouldSync = await shouldAutoSync();
+      if (!shouldSync || cancelled) return;
+
+      autoSyncInFlightRef.current = true;
+      setAutoSyncInFlight(true);
+      try {
+        await performFullSync();
+      } finally {
+        autoSyncInFlightRef.current = false;
+        setAutoSyncInFlight(false);
+      }
+    };
+
+    void runAutoSync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, shouldAutoSync, performFullSync]);
 
   // Pull-to-refresh functionality for mobile
   const {

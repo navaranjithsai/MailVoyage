@@ -485,6 +485,15 @@ class DeltaSyncManager {
   private handleOnline = (): void => {
     console.info('[DeltaSync] Network online');
     this.updateState({ isOnline: true });
+
+    if (typeof window !== 'undefined') {
+      try {
+        sessionStorage.setItem('lastOnlineReturn', String(Date.now()));
+        window.dispatchEvent(new CustomEvent('network:online-return'));
+      } catch {
+        // Ignore storage or event errors.
+      }
+    }
     
     // Reconnect WebSocket if we have a token
     // WebSocket will signal if there are updates to sync

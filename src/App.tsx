@@ -5,6 +5,8 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { EmailProvider } from './contexts/EmailContext';
 import { SyncProvider } from './contexts/SyncContext';
+import { ServerStatusProvider } from './contexts/ServerStatusContext';
+import ServerStatusOverlay from './components/status/ServerStatusOverlay';
 import { ToastContainer } from 'react-toastify';
 import { defaultToastOptions } from './lib/toast';
 
@@ -17,8 +19,11 @@ function App() {
           <AuthProvider>
             <SyncProvider>
               <EmailProvider>
-                <AppRouter />
-                <ToastContainer {...defaultToastOptions} />
+                <ServerStatusProvider>
+                  <AppRouter />
+                  <ServerStatusOverlay />
+                  <ToastContainer {...defaultToastOptions} />
+                </ServerStatusProvider>
               </EmailProvider>
             </SyncProvider>
           </AuthProvider>

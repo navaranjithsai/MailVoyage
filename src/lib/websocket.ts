@@ -59,6 +59,7 @@ class WebSocketClient {
   private authFailureCount = 0;
   private isRefreshingToken = false;
   private authFailureDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+  private hasConnectedOnce = false;
 
   // Event handlers
   private signalHandlers: Set<SignalHandler> = new Set();
@@ -443,7 +444,16 @@ class WebSocketClient {
    */
   private setStatus(status: ConnectionStatus): void {
     if (this.status !== status) {
+      const previousStatus = this.status;
       this.status = status;
+
+      if (status === 'connected') {
+        if (this.hasConnectedOnce && previousStatus !== 'connected') {
+          this.emitReconnect();
+        }
+        this.hasConnectedOnce = true;
+      }
+
       this.statusHandlers.forEach(handler => {
         try {
           handler(status);
@@ -465,6 +475,17 @@ class WebSocketClient {
         console.warn('[WebSocket] Error in signal handler:', error);
       }
     });
+  }
+
+  private emitReconnect(): void {
+    if (typeof window === 'undefined') return;
+
+    try {
+      sessionStorage.setItem('lastWsReconnect', String(Date.now()));
+      window.dispatchEvent(new CustomEvent('ws:reconnected'));
+    } catch {
+      // Ignore storage or event errors in restricted environments.
+    }
   }
 
   /**

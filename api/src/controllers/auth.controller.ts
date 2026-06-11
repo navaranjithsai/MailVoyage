@@ -246,7 +246,7 @@ export const logout = async (req: Request, res: Response, next: NextFunction) =>
         } else if (decoded.email) {
           await userService.incrementSessionVersionByEmail(decoded.email);
         }
-      } catch (error) {
+      } catch (_error) {
         logger.warn('Logout: token invalid or expired, skipping session revocation');
       }
     }

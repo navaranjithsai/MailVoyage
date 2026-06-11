@@ -31,7 +31,7 @@ export const sha256 = async (message: string): Promise<string> => {
     return Math.abs(hash).toString(16);
   } catch (error) {
     console.error('Error hashing message:', error);
-    throw new Error('Failed to hash message');
+    throw new Error('Failed to hash message', { cause: error });
   }
 };
 
