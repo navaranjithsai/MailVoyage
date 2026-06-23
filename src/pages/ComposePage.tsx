@@ -1025,16 +1025,23 @@ const ComposePage: React.FC = () => {
                 <span>{isSending ? 'Sending...' : 'Send'}</span>
               </Button>
 
-              <label className="cursor-pointer">
+              {/* Attachment Input */}
+              <label
+                className="cursor-pointer group"
+                title="Attach files"
+              >
                 <input
                   type="file"
                   multiple
                   onChange={handleAttachment}
                   className="hidden"
+                  aria-label="Attach files"
                 />
-                <div className="flex items-center space-x-2 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                  <Paperclip className="w-4 h-4" />
-                  <span className="text-sm">Attach</span>
+                <div className="flex items-center space-x-2 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200 group-hover:border-blue-400 dark:group-hover:border-blue-500">
+                  <Paperclip className="w-4 h-4 text-gray-500 group-hover:text-blue-500 dark:text-gray-400 dark:group-hover:text-blue-400 transition-colors" />
+                  <span className="text-sm font-medium text-gray-600 group-hover:text-blue-600 dark:text-gray-300 dark:group-hover:text-blue-400 transition-colors">
+                    Attach
+                  </span>
                 </div>
               </label>
             </div>
