@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, UserPlus, Mail, Lock, Eye, EyeOff, AlertCircle, Check, X as XIcon } from 'lucide-react';

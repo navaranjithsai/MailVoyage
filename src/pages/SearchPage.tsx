@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Search, Filter } from 'lucide-react';
 import SearchBar, { SearchFilters } from '@/components/email/SearchBar';

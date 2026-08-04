@@ -56,6 +56,7 @@ export interface InboxMailRecord {
     filename: string;
     contentType: string;
     size: number;
+    content?: string;
   }> | null;
   labels?: string[];
   createdAt: string;
@@ -453,6 +454,21 @@ export async function getInboxMailById(id: string): Promise<InboxMailRecord | un
   if (!decrypted) {
     // Stale encryption — delete the record
     await db.inboxMails.delete(id);
+    return undefined;
+  }
+  return decrypted;
+}
+
+/**
+ * Get a single inbox mail by Message-ID (decrypted)
+ */
+export async function getInboxMailByMessageId(messageId: string): Promise<InboxMailRecord | undefined> {
+  await ensureOpen();
+  const mail = await db.inboxMails.filter(record => record.messageId === messageId).first();
+  if (!mail) return undefined;
+  const decrypted = await decryptInboxMail(mail);
+  if (!decrypted) {
+    await db.inboxMails.delete(mail.id);
     return undefined;
   }
   return decrypted;

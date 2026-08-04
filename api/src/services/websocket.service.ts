@@ -16,6 +16,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../utils/config.js';
 import pool from '../db/index.js';
 import * as inboxService from './inbox.service.js';
+import { pollUserNow, cleanupUserCache } from './mail-poller.service.js';
 
 // ============================================================================
 // Types
@@ -254,6 +255,12 @@ class WebSocketService {
         timestamp: new Date().toISOString()
       });
 
+      // Trigger an immediate mail poll for this user on their first connection.
+      // If they already have other tabs connected, skip (already being polled).
+      if (clientSet.size === 1) {
+        pollUserNow(userId);
+      }
+
     } catch (error: unknown) {
       logger.warn('[WebSocket] Auth failed:', error instanceof Error ? error.message : String(error));
       this.sendError(ws, 'Authentication failed');
@@ -359,6 +366,8 @@ class WebSocketService {
           clearTimeout(pending.timeout);
           this.pendingSignals.delete(userId);
         }
+        // Clean up the mail poller's cached counts for this user
+        cleanupUserCache(userId);
       }
     }
 
@@ -535,6 +544,24 @@ class WebSocketService {
    */
   getConnectedCount(): number {
     return this.clients.size;
+  }
+
+  /**
+   * Get all user IDs that currently have at least one connected tab.
+   * Used by the background mail poller to check for new mail on
+   * behalf of online users.
+   */
+  getConnectedUserIds(): string[] {
+    const userIds: string[] = [];
+    for (const [userId, clientSet] of this.clients.entries()) {
+      for (const client of clientSet) {
+        if (client.ws.readyState === WebSocket.OPEN) {
+          userIds.push(userId);
+          break; // Only need one open tab per user
+        }
+      }
+    }
+    return userIds;
   }
 
   /**

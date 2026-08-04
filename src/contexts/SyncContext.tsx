@@ -112,8 +112,24 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
       return;
     }
 
-    // Skip if already initializing or initialized
-    if (initializingRef.current || deltaSyncManager.isReady()) {
+    // If the manager is already initialized AND connected, nothing to do.
+    if (deltaSyncManager.isReady()) {
+      const state = deltaSyncManager.getState();
+      if (state.connectionStatus === 'connected') {
+        return; // Already connected — no action needed
+      }
+      // Manager is initialized but WebSocket is not connected — shut down
+      // and re-initialize to get a fresh connection.
+      console.info('[SyncContext] Manager initialized but WebSocket not connected, re-initializing...');
+      deltaSyncManager.shutdown();
+    }
+
+    // Guard against duplicate concurrent initialization attempts (e.g. React
+    // StrictMode double-invoke). We reset this guard in the cleanup so a
+    // subsequent mount can proceed. `deltaSyncManager.initialize()` has its
+    // own `isInitialized` guard, so even if two attempts race, only the
+    // first will actually connect; the second will no-op.
+    if (initializingRef.current) {
       return;
     }
 
@@ -139,10 +155,13 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
           await deltaSyncManager.initialize(token, fetchWebSocketToken);
         } else {
           console.warn('[SyncContext] Failed to get WebSocket token, running in manual sync mode');
-          initializingRef.current = false;
         }
       } catch (error) {
         console.warn('[SyncContext] Failed to initialize real-time sync:', error);
+      } finally {
+        // Always reset the guard so a future re-mount (StrictMode or after
+        // a failed attempt) can retry. `deltaSyncManager.isReady()` is the
+        // source of truth for whether initialization succeeded.
         initializingRef.current = false;
       }
     };
@@ -151,6 +170,12 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
 
     return () => {
       cancelled = true;
+      // Reset the initializing guard on cleanup so a subsequent mount
+      // (e.g. React StrictMode double-invoke or re-render after a failed
+      // attempt) can re-run initialization. Without this, the guard stays
+      // true forever if the async init is cancelled mid-flight, which
+      // prevents the WebSocket from ever connecting after a page refresh.
+      initializingRef.current = false;
     };
   }, [isAuthenticated, fetchWebSocketToken]);
 
@@ -210,14 +235,37 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     if (!isAuthenticated) return;
     
     try {
+      // If the manager was shut down (e.g. after a disconnect or navigation),
+      // fully re-initialize it with a fresh token instead of trying to
+      // reconnect on a dead instance.
+      if (!deltaSyncManager.isReady()) {
+        console.info('[SyncContext] Sync manager not initialized, doing full re-init...');
+        const token = await fetchWebSocketToken();
+        if (token) {
+          await deltaSyncManager.initialize(token, fetchWebSocketToken);
+          return;
+        }
+        console.warn('[SyncContext] Failed to fetch token for re-init');
+        return;
+      }
+
+      // Manager is still alive — try token refresh first
       const refreshed = await deltaSyncManager.refreshTokenAndReconnect();
       if (!refreshed) {
-        console.warn('[SyncContext] Failed to refresh connection');
+        const token = await fetchWebSocketToken();
+        if (token) {
+          const rebound = deltaSyncManager.reconnectWithToken(token, fetchWebSocketToken);
+          if (!rebound) {
+            console.warn('[SyncContext] Failed to reconnect with fallback token');
+          }
+        } else {
+          console.warn('[SyncContext] Failed to fetch fallback token');
+        }
       }
     } catch (error) {
       console.error('[SyncContext] Error refreshing connection:', error);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, fetchWebSocketToken]);
 
   // Computed values
   const isRealTimeActive = syncState.connectionStatus === 'connected';

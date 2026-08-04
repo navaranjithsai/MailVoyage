@@ -126,19 +126,19 @@ export const setupMailServerSchema = z.object({
 });
 
 export const sendMailSchema = z.object({
-  accountCode: z.string().min(3, 'Account code is required'),
-  to: z.array(z.string().email('Invalid email address')).min(1, 'At least one recipient is required'),
-  cc: z.array(z.string().email('Invalid email address')).optional(),
-  bcc: z.array(z.string().email('Invalid email address')).optional(),
-  subject: z.string().min(1, 'Subject is required'),
-  html: z.string().min(1, 'Email body is required'),
+  accountCode: z.string().min(3, 'Account code is required').max(64, 'Account code is too long'),
+  to: z.array(z.string().email('Invalid email address')).min(1, 'At least one recipient is required').max(50, 'Too many recipients'),
+  cc: z.array(z.string().email('Invalid email address')).max(50, 'Too many CC recipients').optional(),
+  bcc: z.array(z.string().email('Invalid email address')).max(50, 'Too many BCC recipients').optional(),
+  subject: z.string().min(1, 'Subject is required').max(998, 'Subject is too long'),
+  html: z.string().min(1, 'Email body is required').max(1_000_000, 'Email body is too large'),
   text: z.string().optional(),
   attachments: z.array(z.object({
-    filename: z.string(),
-    content: z.string(), // base64 encoded
-    contentType: z.string().optional(),
+    filename: z.string().min(1).max(255).regex(/^[^\r\n\\/]+$/, 'Invalid attachment filename'),
+    content: z.string().min(1), // base64 encoded
+    contentType: z.string().max(255).optional(),
     size: z.number().optional(), // Size in bytes
-  })).optional(),
+  })).max(20, 'Too many attachments').optional(),
 });
 
 export const inboxFlagUpdatesSchema = z.object({

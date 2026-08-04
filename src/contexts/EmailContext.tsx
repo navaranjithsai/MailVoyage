@@ -33,6 +33,7 @@ export interface Email {
     name: string;
     size: string;
     type: string;
+    content?: string;
   }>;
   isImportant: boolean;
   timestamp: Date;
@@ -131,6 +132,7 @@ export function inboxRecordToEmail(record: InboxMailRecord): Email {
       name: a.filename,
       size: formatSize(a.size),
       type: a.contentType,
+        content: a.content,
     })),
     isImportant: record.isStarred,
     timestamp: date,
@@ -256,6 +258,18 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const markAsRead = useCallback(async (emailId: string) => {
     if (!isAuthenticated) return;
+    const email = emails.find(e => e.id === emailId);
+    // Skip if already read — avoid enqueuing redundant flag updates.
+    // The email may not be in the `emails` array (e.g. EmailPage loads
+    // directly from Dexie), so fall back to the Dexie record to confirm
+    // the read state before enqueuing a flag update. Without this fallback,
+    // every email view would enqueue a redundant flag update that triggers
+    // a server-side sync_required signal (feedback loop every ~2 min).
+    if (email?.isRead) return;
+    if (!email) {
+      const record = await getInboxMailById(emailId);
+      if (record?.isRead) return;
+    }
     await updateMailReadStatus(emailId, true);
     const cacheId = parseCacheId(emailId);
     if (cacheId) {
@@ -263,7 +277,7 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
     setEmails(prev => prev.map(e => e.id === emailId ? { ...e, isRead: true } : e));
     setUnreadCount(prev => Math.max(0, prev - 1));
-  }, [isAuthenticated]);
+  }, [isAuthenticated, emails]);
 
   const markAsUnread = useCallback(async (emailId: string) => {
     if (!isAuthenticated) return;

@@ -56,10 +56,17 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
 
   const currentAttachment = attachments[currentIndex];
 
-  // Generate blob URL when attachment changes
+  // Track the actual content+type so we only regenerate the blob URL when
+  // the underlying data changes — not when the parent re-renders with a new
+  // array reference containing the same data.
+  const contentKey = currentAttachment
+    ? `${currentAttachment.filename}:${currentAttachment.contentType}:${currentAttachment.content?.length ?? 0}`
+    : '';
+
+  // Generate blob URL when attachment content actually changes.
+  // Includes robust error handling for invalid/corrupt base64 data.
   useEffect(() => {
     if (!currentAttachment?.content) {
-       
       setError('No content available for this attachment');
       setIsLoading(false);
       return;
@@ -68,30 +75,42 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
     setIsLoading(true);
     setError(null);
 
+    let isMounted = true;
+
     try {
       const url = base64ToBlobUrl(currentAttachment.content, currentAttachment.contentType);
-      if (url) {
-        blobUrlRef.current = url;
-        setBlobUrl(url);
-        setIsLoading(false);
+      if (isMounted) {
+        if (url) {
+          blobUrlRef.current = url;
+          setBlobUrl(url);
+          setIsLoading(false);
+        } else {
+          setError('Failed to load attachment');
+          setIsLoading(false);
+        }
       } else {
-        setError('Failed to load attachment');
-        setIsLoading(false);
+        // Unmounted during blob creation — clean up immediately
+        revokeBlobUrl(url);
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
       console.error('Error loading attachment:', err);
-      setError('Failed to load attachment');
-      setIsLoading(false);
+      if (isMounted) {
+        setError(`Failed to load attachment: ${message}`);
+        setIsLoading(false);
+      }
     }
 
-    // Cleanup blob URL on unmount or when attachment changes
+    // Cleanup blob URL on unmount or when content changes
     return () => {
+      isMounted = false;
       if (blobUrlRef.current) {
         revokeBlobUrl(blobUrlRef.current);
         blobUrlRef.current = '';
       }
     };
-  }, [currentAttachment]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- use contentKey to avoid re-running on parent re-renders
+  }, [contentKey]);
 
   // Reset index when modal opens
   useEffect(() => {

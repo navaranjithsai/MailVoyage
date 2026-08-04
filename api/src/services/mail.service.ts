@@ -197,6 +197,39 @@ interface SendMailPayload {
   }>;
 }
 
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+
+const normalizeHeaderValue = (value: string): string => {
+  const trimmed = value.trim();
+  if (/\r|\n/.test(trimmed)) {
+    throw new AppError('Invalid header value', 400, true, { general: 'Header values cannot contain line breaks.' });
+  }
+  return trimmed;
+};
+
+const normalizeAttachmentFilename = (filename: string): string => {
+  const sanitized = filename.trim().replace(/[\\/]/g, '_').replace(/[\r\n]/g, '');
+  if (!sanitized || sanitized.length > 255) {
+    throw new AppError('Invalid attachment filename', 400, true, { general: 'Attachment filenames must be between 1 and 255 characters.' });
+  }
+
+  return sanitized;
+};
+
+const normalizeBase64Attachment = (content: string): Buffer => {
+  const trimmed = content.trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed) || trimmed.length % 4 !== 0) {
+    throw new AppError('Invalid attachment content', 400, true, { general: 'Attachment content must be valid base64.' });
+  }
+
+  const buffer = Buffer.from(trimmed, 'base64');
+  if (buffer.byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new AppError('Attachment too large', 413, true, { general: 'Each attachment must be 15 MB or smaller.' });
+  }
+
+  return buffer;
+};
+
 /**
  * Send email using user's email account credentials
  * Fetches account by accountCode from either email_accounts or smtp_accounts
@@ -299,6 +332,8 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       connectionTimeout: 60000, // 60 seconds
       greetingTimeout: 30000, // 30 seconds
       socketTimeout: 60000, // 60 seconds
+      disableFileAccess: true,
+      disableUrlAccess: true,
     };
     
     // TLS configuration
@@ -351,26 +386,30 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       from: string; to: string; subject: string; html: string; text?: string;
       cc?: string; bcc?: string;
       attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
+      disableFileAccess?: boolean;
+      disableUrlAccess?: boolean;
     } = {
       from: `${fromEmail} <${fromEmail}>`,
       to: payload.to.join(', '),
-      subject: payload.subject,
+      subject: normalizeHeaderValue(payload.subject),
       html: payload.html,
       text: payload.text || undefined,
+      disableFileAccess: true,
+      disableUrlAccess: true,
     };
     
     if (payload.cc && payload.cc.length > 0) {
-      mailOptions.cc = payload.cc.join(', ');
+      mailOptions.cc = payload.cc.map(normalizeHeaderValue).join(', ');
     }
     
     if (payload.bcc && payload.bcc.length > 0) {
-      mailOptions.bcc = payload.bcc.join(', ');
+      mailOptions.bcc = payload.bcc.map(normalizeHeaderValue).join(', ');
     }
     
     if (payload.attachments && payload.attachments.length > 0) {
       mailOptions.attachments = payload.attachments.map(att => ({
-        filename: att.filename,
-        content: Buffer.from(att.content, 'base64'),
+        filename: normalizeAttachmentFilename(att.filename),
+        content: normalizeBase64Attachment(att.content),
         contentType: att.contentType,
       }));
     }

@@ -72,6 +72,31 @@ interface AutoConfig {
   outgoingSecurity: 'SSL' | 'STARTTLS' | 'NONE';
 }
 
+const extractSafeEmailDomain = (email: string): string | null => {
+  const domain = email.split('@')[1]?.trim().toLowerCase();
+  if (!domain) {
+    return null;
+  }
+
+  if (domain.length > 253 || domain.includes('..')) {
+    return null;
+  }
+
+  if (!/^(?!-)[a-z0-9.-]+(?<!-)$/i.test(domain)) {
+    return null;
+  }
+
+  if (domain === 'localhost' || domain.endsWith('.localhost') || domain === 'local' || domain.endsWith('.local')) {
+    return null;
+  }
+
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(domain) || /^\[[0-9a-f:.]+\]$/i.test(domain)) {
+    return null;
+  }
+
+  return domain;
+};
+
 // Get all email accounts for a user
 export const getEmailAccountsByUserId = async (userId: string): Promise<EmailAccount[]> => {
   const client = await pool.connect();
@@ -355,77 +380,57 @@ export const deleteEmailAccount = async (accountId: string, userId: string): Pro
 };
 
 // Get auto-configuration for a domain
-export const getAutoConfigForDomain = async (domain: string, email?: string): Promise<AutoConfig | null> => {
+export const getAutoConfigForDomain = async (domain: string, _email?: string): Promise<AutoConfig | null> => {
   try {
-    // Try to fetch from Thunderbird autoconfig service
-    const autoconfigUrl = `https://autoconfig.thunderbird.net/v1.1/${domain}`;
-    logger.info(`Fetching autoconfig for domain: ${domain} from ${autoconfigUrl}`);
-
-    // Create AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-
-    const response = await fetch(autoconfigUrl, {
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      logger.warn(`Thunderbird autoconfig fetch failed for ${domain}: ${response.status}`);
-    } else {
-      const xmlText = await response.text();
-      logger.debug(`Thunderbird autoconfig XML received for ${domain}:`, { xmlLength: xmlText.length });
-
-      // Parse the XML to extract configuration
-      const config = parseThunderbirdAutoconfig(xmlText);
-
-      if (config) {
-        logger.info(`Successfully parsed Thunderbird autoconfig for ${domain}:`, config);
-        return config;
-      }
-
-      logger.warn(`Failed to parse Thunderbird autoconfig XML for ${domain}`);
+    const safeDomain = extractSafeEmailDomain(`user@${domain}`);
+    if (!safeDomain) {
+      logger.warn(`Rejected unsafe autoconfig domain: ${domain}`);
+      return null;
     }
 
-    // Fallback: Try ISPDB autoconfig service
-    if (email) {
-      const ispdbUrl = `https://autoconfig.${domain}/mail/config-v1.1.xml?emailaddress=${encodeURIComponent(email)}`;
-      logger.info(`Trying ISPDB autoconfig for domain: ${domain} with email: ${email} from ${ispdbUrl}`);
+    const fetchAutoconfigXml = async (url: string, source: string): Promise<AutoConfig | null> => {
+      logger.info(`Fetching autoconfig for domain: ${safeDomain} from ${source}`);
 
-      const ispdbController = new AbortController();
-      const ispdbTimeoutId = setTimeout(() => ispdbController.abort(), 10000); // 10 second timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       try {
-        const ispdbResponse = await fetch(ispdbUrl, {
-          signal: ispdbController.signal,
-        });
+        const response = await fetch(url, { signal: controller.signal });
 
-        clearTimeout(ispdbTimeoutId);
-
-        if (ispdbResponse.ok) {
-          const ispdbXmlText = await ispdbResponse.text();
-          logger.debug(`ISPDB autoconfig XML received for ${domain}:`, { xmlLength: ispdbXmlText.length });
-
-          // Parse the XML to extract configuration
-          const ispdbConfig = parseThunderbirdAutoconfig(ispdbXmlText);
-
-          if (ispdbConfig) {
-            logger.info(`Successfully parsed ISPDB autoconfig for ${domain}:`, ispdbConfig);
-            return ispdbConfig;
-          }
-
-          logger.warn(`Failed to parse ISPDB autoconfig XML for ${domain}`);
-        } else {
-          logger.warn(`ISPDB autoconfig fetch failed for ${domain}: ${ispdbResponse.status}`);
+        if (!response.ok) {
+          logger.warn(`${source} autoconfig fetch failed for ${safeDomain}: ${response.status}`);
+          return null;
         }
-      } catch (ispdbError) {
-        logger.error(`Error fetching ISPDB autoconfig for ${domain}:`, ispdbError);
-        clearTimeout(ispdbTimeoutId);
+
+        const xmlText = await response.text();
+        logger.debug(`${source} autoconfig XML received for ${safeDomain}:`, { xmlLength: xmlText.length });
+
+        const config = parseThunderbirdAutoconfig(xmlText);
+        if (config) {
+          logger.info(`Successfully parsed ${source} autoconfig for ${safeDomain}:`, config);
+          return config;
+        }
+
+        logger.warn(`Failed to parse ${source} autoconfig XML for ${safeDomain}`);
+        return null;
+      } finally {
+        clearTimeout(timeoutId);
       }
+    };
+
+    const thunderbirdUrl = `https://autoconfig.thunderbird.net/v1.1/${encodeURIComponent(safeDomain)}`;
+    const thunderbirdConfig = await fetchAutoconfigXml(thunderbirdUrl, 'Thunderbird');
+    if (thunderbirdConfig) {
+      return thunderbirdConfig;
     }
 
-    logger.warn(`No autoconfig found for domain: ${domain}`);
+    const legacyUrl = `https://autoconfig.${safeDomain}/mail/config-v1.1.xml?emailaddress=${encodeURIComponent(_email || `user@${safeDomain}`)}`;
+    const legacyConfig = await fetchAutoconfigXml(legacyUrl, 'legacy');
+    if (legacyConfig) {
+      return legacyConfig;
+    }
+
+    logger.warn(`No autoconfig found for domain: ${safeDomain}`);
     return null;
   } catch (error) {
     logger.error(`Error getting auto-config for ${domain}:`, error);
@@ -443,7 +448,8 @@ const parseThunderbirdAutoconfig = (xmlText: string): AutoConfig | null => {
     let incomingConfig: { type: string; hostname: string; port: number; socketType: string } | null = null;
     let outgoingConfig: { hostname: string; port: number; socketType: string } | null = null;
 
-    // Parse incoming servers - prioritize POP3 over IMAP
+    // Parse incoming servers — collect both IMAP and POP3 configs.
+    // IMAP is preferred (see selection logic below).
     let incomingMatch;
     const pop3Configs: Array<{ type: string; hostname: string; port: number; socketType: string }> = [];
     const imapConfigs: Array<{ type: string; hostname: string; port: number; socketType: string }> = [];
@@ -464,9 +470,10 @@ const parseThunderbirdAutoconfig = (xmlText: string): AutoConfig | null => {
           socketType: socketTypeMatch ? socketTypeMatch[1] : 'SSL'
         };
 
-        if (serverType === 'pop3') {
+        const normalizedType = serverType.toLowerCase().trim();
+        if (normalizedType === 'pop3') {
           pop3Configs.push(config);
-        } else if (serverType === 'imap') {
+        } else if (normalizedType === 'imap') {
           imapConfigs.push(config);
         }
       }
@@ -486,7 +493,7 @@ const parseThunderbirdAutoconfig = (xmlText: string): AutoConfig | null => {
       const serverType = outgoingMatch[1];
       const serverContent = outgoingMatch[2];
 
-      if (serverType === 'smtp') {
+      if (serverType.toLowerCase().trim() === 'smtp') {
         const hostnameMatch = serverContent.match(/<hostname>(.*?)<\/hostname>/);
         const portMatch = serverContent.match(/<port>(.*?)<\/port>/);
         const socketTypeMatch = serverContent.match(/<socketType>(.*?)<\/socketType>/);

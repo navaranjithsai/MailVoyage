@@ -5,7 +5,7 @@ import Button from '@/components/ui/Button';
 import { toast } from '@/lib/toast';
 import DOMPurify from 'dompurify';
 import { apiFetch } from '@/lib/apiFetch';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router';
 import { injectEmailStyles, formatFileSize } from '@/lib/emailStyles';
 import {
   saveDraft,

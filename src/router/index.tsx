@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react';
 // Remove BrowserRouter import, it's now in App.tsx
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 // ... other imports ...
 import { useAuth } from '@/contexts/AuthContext';
 import { useSync } from '@/contexts/SyncContext';

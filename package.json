@@ -1,7 +1,7 @@
 {
   "name": "mailvoyage",
   "description": "MailVoyage - A modern email client with offline-first architecture",
-  "version": "2026.6.2",
+  "version": "2026.7.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -31,7 +31,8 @@
     "test:phase5:web": "vitest run --config vitest.config.ts tests/phase5 --passWithNoTests",
     "test:phase5:api": "npm --prefix api run test:phase5",
     "test:phase5": "npm run test:phase5:web && npm run test:phase5:api",
-    "test:all:phases": "npm run test:phase1 && npm run test:phase2 && npm run test:phase3 && npm run test:phase4 && npm run test:phase5",
+    "test:phase6": "npm --prefix api run test:phase6",
+    "test:all:phases": "npm run test:phase1 && npm run test:phase2 && npm run test:phase3 && npm run test:phase4 && npm run test:phase5 && npm run test:phase6",
     "test:coverage:all": "npm run test:coverage && npm --prefix api run test:coverage",
     "test:clean": "rimraf coverage .vitest api/coverage api/.vitest",
     "test:ui": "node scripts/test-runner-ui.mjs",
@@ -57,7 +58,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-hook-form": "^7.77.0",
-    "react-router-dom": "^7.16.0",
+    "react-router": "^8.3.0",
     "react-toastify": "^11.1.0",
     "tailwind-animate": "^0.2.10"
   },
@@ -73,6 +74,7 @@
     "@vitest/coverage-v8": "^4.1.8",
     "autoprefixer": "^10.5.0",
     "concurrently": "^10.0.1",
+    "esbuild": "^0.28.1",
     "eslint": "^10.4.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",

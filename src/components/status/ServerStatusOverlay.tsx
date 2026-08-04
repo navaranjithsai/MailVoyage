@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { apiFetch } from '@/lib/apiFetch';

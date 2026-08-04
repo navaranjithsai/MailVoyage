@@ -274,6 +274,14 @@ class DeltaSyncManager {
       pendingSync.tables.clear();
       pendingSync.since = null;
     }
+
+    // Cancel any pending debounced live sync
+    if (pendingLiveSync.timeout) {
+      clearTimeout(pendingLiveSync.timeout);
+      pendingLiveSync.timeout = null;
+      pendingLiveSync.tables.clear();
+      pendingLiveSync.since = null;
+    }
     
     // Only reset connection-related state, preserve lastSync
     this.updateState({
@@ -413,6 +421,25 @@ class DeltaSyncManager {
     return false;
   }
 
+  /**
+   * Reconnect WebSocket with an explicitly supplied fresh token.
+   * Use this as a fallback when the stored refresh callback is unavailable.
+   */
+  reconnectWithToken(token: string, tokenRefresh?: TokenRefreshCallback): boolean {
+    if (!this.isInitialized) {
+      return false;
+    }
+
+    if (tokenRefresh) {
+      this.tokenRefreshCallback = tokenRefresh;
+    }
+
+    this.currentToken = token;
+    this.isRefreshingToken = false;
+    wsClient.updateToken(token);
+    return true;
+  }
+
   // ============================================================================
   // Private Methods
   // ============================================================================
@@ -463,15 +490,20 @@ class DeltaSyncManager {
 
     if (signal.type === 'inbox_sync_complete') {
       console.info(`[DeltaSync] Inbox sync complete: ${signal.message}`);
-      // Trigger an inbox_mails sync so the client refreshes its local cache
+      // Use the CACHE-based sync (not live IMAP) to refresh local Dexie.
+      // The server-side cache was just updated by the sync, so reading from
+      // cache is fast and reflects the latest state.
+      // IMPORTANT: Do NOT use debouncedSyncLive() here — that would call
+      // /api/inbox/sync again, which would send another inbox_sync_complete
+      // signal, creating an infinite feedback loop.
       debouncedSync(['inbox_mails']);
-      // Dispatch a custom event so InboxPage can refresh immediately
       window.dispatchEvent(new CustomEvent('inbox:sync-complete', { detail: signal.data }));
     }
 
     if (signal.type === 'inbox_new_mail') {
       console.info(`[DeltaSync] New mail notification: ${signal.message}`);
-      debouncedSync(['inbox_mails']);
+      // Use LIVE sync to pull the new email from the mail server
+      debouncedSyncLive(['inbox_mails']);
       window.dispatchEvent(new CustomEvent('inbox:new-mail', { detail: signal.data }));
     }
 
@@ -532,16 +564,28 @@ class DeltaSyncManager {
     const now = Date.now();
     const hasRecentSync = lastSyncTimestamp && (now - lastSyncTimestamp) < INITIAL_SYNC_GRACE_PERIOD_MS;
     const hasCachedData = sentMails.length > 0 || inboxMails.length > 0;
+    let forceServerSync = false;
+
+    try {
+      const lastLoginAtRaw = sessionStorage.getItem('lastLoginAt');
+      const lastLoginAt = lastLoginAtRaw ? Number(lastLoginAtRaw) : 0;
+      if (Number.isFinite(lastLoginAt) && lastLoginAt > 0) {
+        forceServerSync = !lastSyncTimestamp || lastLoginAt > lastSyncTimestamp;
+        sessionStorage.removeItem('lastLoginAt');
+      }
+    } catch {
+      // Ignore storage access failures and fall back to normal cache logic.
+    }
     
-    if (hasRecentSync && hasCachedData) {
+    if (!forceServerSync && hasRecentSync && hasCachedData) {
       console.info(`[DeltaSync] Skipping initial API sync - last sync was ${Math.round((now - lastSyncTimestamp!) / 1000)}s ago`);
       return;
     }
 
     // Only sync with server if online AND we need fresh data
     // WebSocket will trigger sync when server has updates
-    if (this.state.isOnline && !hasCachedData) {
-      console.info('[DeltaSync] No cached data, performing initial API sync...');
+    if (this.state.isOnline && (!hasCachedData || forceServerSync)) {
+      console.info('[DeltaSync] Performing initial API sync (force=' + forceServerSync + ', hasCachedData=' + hasCachedData + ')...');
       await this.manualSync();
     } else if (this.state.isOnline) {
       console.info('[DeltaSync] Waiting for WebSocket to signal updates (cache available)');
@@ -666,6 +710,20 @@ async function executeDeltaSync(
     deltaSyncManager.updateState({ isSyncing: false });
 
     console.info(`[DeltaSync] Sync complete: ${result.updated} updated, ${result.deleted} deleted`);
+
+    // Notify the UI that local cache was refreshed so pages (Dashboard,
+    // Inbox, etc.) can re-read from Dexie and update their views. This is
+    // especially important for the `sync_required` signal path (triggered
+    // by flag-updates), which does not dispatch `inbox:sync-complete` from
+    // handleSyncSignal. Without this event, the dashboard would show stale
+    // data even though Dexie was just updated.
+    if (tables.includes('inbox_mails') && result.updated >= 0) {
+      window.dispatchEvent(new CustomEvent('inbox:sync-complete'));
+    }
+    if (tables.includes('sent_mails') && result.updated >= 0) {
+      window.dispatchEvent(new CustomEvent('sent:sync-complete'));
+    }
+
     return result;
 
   } catch (error: unknown) {
@@ -758,6 +816,10 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
 
     for (const acc of accounts) {
       try {
+        // Use the cache endpoint (fast server-DB read, no IMAP connection).
+        // The live /api/inbox/sync endpoint is only called by the explicit
+        // sync/reload buttons in InboxPage to avoid slow IMAP connections
+        // during page-load and login.
         const res = await apiFetch(
           `/api/inbox/cached?accountCode=${encodeURIComponent(acc.accountCode)}`
         );
@@ -822,6 +884,151 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
     console.error('[DeltaSync] Failed to sync inbox mails:', error);
     throw error;
   }
+}
+
+/**
+ * Live inbox sync — calls the /api/inbox/sync endpoint which connects to
+ * the real IMAP/POP3 server and fetches new mails since the last known UID.
+ * This is used by WebSocket push notifications (inbox_new_mail,
+ * inbox_sync_complete) so newly arrived emails show up immediately.
+ *
+ * Unlike syncInboxMails() which reads from the server DB cache (fast but
+ * may be stale), this triggers a real mail-server fetch — use sparingly.
+ */
+async function syncInboxMailsLive(): Promise<{ updated: number; deleted: number }> {
+  try {
+    const emailAccountsStr = localStorage.getItem('emailAccounts');
+    if (!emailAccountsStr) {
+      return { updated: 0, deleted: 0 };
+    }
+
+    const userId = getStoredUserId();
+    const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
+    const accounts: Array<{ accountCode: string }> = JSON.parse(emailAccountsStr);
+    let totalUpdated = 0;
+
+    for (const acc of accounts) {
+      try {
+        // Get the highest UID we have locally
+        const { getHighestUid } = await import('./db');
+        const sinceUid = await getHighestUid(acc.accountCode);
+
+        // Call the live sync endpoint (triggers IMAP/POP3 fetch)
+        const res = await apiFetch('/api/inbox/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountCode: acc.accountCode,
+            sinceUid: sinceUid > 0 ? sinceUid : undefined,
+          }),
+        });
+        const resObj = res as Record<string, unknown>;
+        const dataObj = resObj?.data as Record<string, unknown> | undefined;
+
+        const serverMails = ((dataObj?.mails || resObj?.mails || []) as ApiInboxMail[]);
+        if (serverMails.length) {
+          const mails: InboxMailRecord[] = serverMails.map((m) => ({
+            id: String(m.id ?? `${m.accountCode || acc.accountCode}:${m.uid}`),
+            uid: m.uid ?? 0,
+            accountId: m.accountCode || acc.accountCode,
+            mailbox: m.mailbox || 'INBOX',
+            messageId: m.message_id || m.messageId,
+            fromAddress: m.from_address || m.fromAddress || '',
+            fromName: m.from_name || m.fromName || '',
+            toAddresses: (Array.isArray(m.to_addresses || m.toAddresses) ? (m.to_addresses || m.toAddresses) : []) as string[],
+            ccAddresses: (Array.isArray(m.cc_addresses || m.ccAddresses) ? (m.cc_addresses || m.ccAddresses) : []) as string[],
+            bccAddresses: [],
+            subject: m.subject || '(No Subject)',
+            htmlBody: m.html_body || m.htmlBody || null,
+            textBody: m.text_body || m.textBody || null,
+            date: m.date || new Date().toISOString(),
+            isRead: (() => {
+              const base = m.is_read ?? m.isRead ?? false;
+              const cacheId = parseCacheId(m.id);
+              const override = cacheId ? overrideMap.get(cacheId) : undefined;
+              return override?.isRead ?? base;
+            })(),
+            isStarred: (() => {
+              const base = m.is_starred ?? m.isStarred ?? false;
+              const cacheId = parseCacheId(m.id);
+              const override = cacheId ? overrideMap.get(cacheId) : undefined;
+              return override?.isStarred ?? base;
+            })(),
+            hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
+            attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
+            labels: m.labels || [],
+            syncedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
+          }));
+
+          await upsertInboxMails(mails);
+          totalUpdated += mails.length;
+        }
+      } catch (err) {
+        console.warn(`[DeltaSync] Live sync failed for ${acc.accountCode}:`, err);
+      }
+    }
+
+    return { updated: totalUpdated, deleted: 0 };
+  } catch (error) {
+    console.error('[DeltaSync] Failed to live-sync inbox mails:', error);
+    throw error;
+  }
+}
+
+/**
+ * Debounced live sync — like debouncedSync but triggers the live IMAP
+ * sync endpoint (syncInboxMailsLive) instead of the cache read.
+ * Used for WebSocket push events (inbox_new_mail, inbox_sync_complete)
+ * so newly arrived emails are fetched from the actual mail server.
+ */
+const pendingLiveSync: DebouncedCall = {
+  tables: new Set(),
+  since: null,
+  timeout: null
+};
+
+function debouncedSyncLive(tables: SyncTable[]): void {
+  tables.forEach(t => pendingLiveSync.tables.add(t));
+
+  if (pendingLiveSync.timeout) {
+    clearTimeout(pendingLiveSync.timeout);
+  }
+
+  pendingLiveSync.timeout = setTimeout(async () => {
+    pendingLiveSync.tables.clear();
+    pendingLiveSync.since = null;
+    pendingLiveSync.timeout = null;
+
+    if (!deltaSyncManager.isReady()) {
+      console.debug('[DeltaSync] Debounced live sync skipped — manager shut down');
+      return;
+    }
+
+    console.info('[DeltaSync] Executing debounced live sync for:', tables.join(', '));
+    try {
+      // Only inbox_mails supports the live sync path
+      if (tables.includes('inbox_mails')) {
+        const liveResult = await syncInboxMailsLive();
+        // Notify the UI that the local cache was refreshed so pages
+        // (Inbox, Dashboard) re-read from Dexie and show the new mail.
+        // The 'inbox:new-mail' event dispatched in handleSyncSignal fires
+        // BEFORE the sync completes; this event fires AFTER, ensuring the
+        // UI refreshes with the freshly upserted data.
+        if (liveResult.updated > 0) {
+          window.dispatchEvent(new CustomEvent('inbox:sync-complete'));
+        }
+      }
+      // For other tables (sent_mails, etc.), fall back to normal sync
+      const otherTables = tables.filter(t => t !== 'inbox_mails');
+      if (otherTables.length > 0) {
+        await executeDeltaSync(otherTables);
+      }
+    } catch (error) {
+      console.error('[DeltaSync] Debounced live sync error:', error);
+    }
+  }, DEBOUNCE_MS);
 }
 
 function parseCacheId(value: unknown): number | null {

@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect, useRef, useCallback, ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { toast } from 'react-toastify';
 import { apiFetch } from '../lib/apiFetch';
 import { fetchAll } from '../lib/dataSync';
@@ -255,9 +255,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       setUser(null);
       localStorage.removeItem('authUser');
+      try {
+        sessionStorage.removeItem('lastLoginAt');
+      } catch {
+        // Ignore sessionStorage failures during logout cleanup.
+      }
       clearAllTabValidations();
 
       try {
+        // Flush any pending flag updates to the server BEFORE clearing the
+        // database. This ensures read/star/unread changes are persisted on
+        // the server so they survive a logout + re-login cycle. Without
+        // this, pending queue entries would be lost when Dexie is cleared.
+        await flagSync.flush();
+        // Now shut down the sync engine. Called AFTER flush so the queue
+        // has a chance to drain. Note: flush() is fire-and-forget with
+        // keepalive, so it completes even if the page is about to unload.
         await flagSync.shutdown(true);
       } catch (flagError) {
         console.warn('AuthContext: Flag sync shutdown failed:', flagError);
@@ -314,6 +327,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const tabSessionId = getTabSessionId();
     setUser(userData);
     localStorage.setItem('authUser', JSON.stringify(userData));
+    try {
+      sessionStorage.setItem('lastLoginAt', String(Date.now()));
+    } catch (error) {
+      console.warn('AuthContext: Failed to persist login sync marker:', error);
+    }
     // On login, mark this tab session as validated since we just authenticated
     setSessionValidationState(tabSessionId, true);
     console.log('AuthContext: User logged in, authUser stored. Tab session marked as validated.');

@@ -287,15 +287,20 @@ export async function fetchSentMails(
 }
 
 /**
- * Fetch inbox mails from the API using the new inbox sync endpoint.
- * Gets cached mails from server, then saves to local encrypted Dexie.
+ * Fetch inbox mails from the API using the cache endpoint (fast).
+ * Gets mails from the server-side inbox_cache DB table — this does NOT
+ * connect to the IMAP/POP3 server, so it's instant and safe to call
+ * on login/page-load. The InboxPage sync/reload buttons call /api/inbox/sync
+ * separately for live mail-server access.
+ *
+ * Saves fetched mails to local encrypted Dexie.
  */
 export async function fetchInboxMails(
   _mailbox: string = 'INBOX'
 ): Promise<FetchResult<InboxResult>> {
   if (!isUserLoggedIn()) return { success: false, error: 'Not authenticated' };
   try {
-    console.log('🔄 Fetching cached inbox mails from server...');
+    console.log('🔄 Fetching inbox mails from server cache...');
 
     // Step 1: Get the list of email accounts
     const emailAccountsStr = localStorage.getItem('emailAccounts');
@@ -307,7 +312,7 @@ export async function fetchInboxMails(
     const accounts: Array<{ accountCode: string }> = JSON.parse(emailAccountsStr);
     let allMails: ApiInboxMail[] = [];
 
-    // Step 2: For each account, get cached mails from server DB
+    // Step 2: For each account, get cached mails from server DB (fast, no IMAP)
     for (const acc of accounts) {
       try {
         const res = await apiFetch(

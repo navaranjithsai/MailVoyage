@@ -19,7 +19,7 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import {
@@ -163,12 +163,36 @@ const InboxPage: React.FC = () => {
       accountCode: selectedAccount.accountCode,
       currentPage,
       filterMode,
-      searchQuery,
-      showSearchBar,
+      // Do NOT persist searchQuery or showSearchBar — the search bar should
+      // always start closed on navigation, and the user re-opens it if needed.
+      searchQuery: '',
+      showSearchBar: false,
       scrollY: window.scrollY,
     };
     sessionStorage.setItem(INBOX_STATE_KEY, JSON.stringify(state));
-  }, [selectedAccount, currentPage, filterMode, searchQuery, showSearchBar]);
+  }, [selectedAccount, currentPage, filterMode]);
+
+  // Use a ref to hold the latest save function — the unmount effect can
+  // call it without depending on its reference changing each render.
+  const savePageStateRef = useRef<() => void>(() => {});
+
+  // Keep the ref in sync with the latest savePageState. Not an effect —
+  // ref assignment during render is safe here because React's cleanup
+  // runs synchronously during unmount, and the ref is only updated on
+  // re-render (not during the same render cycle).
+  useEffect(() => {
+    savePageStateRef.current = savePageState;
+  }, [savePageState]);
+
+  // Save page state on unmount so navigating away (via sidebar, back button,
+  // etc.) preserves the selected account. Without this, switching accounts
+  // and then navigating to another page (without clicking a mail) would
+  // lose the account selection because sessionStorage still held the old one.
+  useEffect(() => {
+    return () => {
+      savePageStateRef.current();
+    };
+  }, []);
 
   // ── Load accounts ────────────────────────────────────────────────────
 
@@ -190,8 +214,9 @@ const InboxPage: React.FC = () => {
               setSelectedAccount(match);
               setCurrentPage(saved.currentPage ?? 1);
               setFilterMode(saved.filterMode ?? 'all');
-              setSearchQuery(saved.searchQuery ?? '');
-              setShowSearchBar(saved.showSearchBar ?? false);
+              // Do NOT restore searchQuery or showSearchBar — always start closed
+              setSearchQuery('');
+              setShowSearchBar(false);
               if (typeof saved.scrollY === 'number') {
                 pendingScrollRestore.current = saved.scrollY;
               }
@@ -350,13 +375,19 @@ const InboxPage: React.FC = () => {
     const handleNewMail = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       console.info('[InboxPage] New mail notification:', detail);
-      // Auto-refresh if the event matches the selected account
+
+      // Always show a toast notification so the user knows new mail arrived,
+      // even if they're currently viewing a different account.
+      toast.info(detail?.count === 1
+        ? `New email${detail?.subject ? `: ${detail.subject}` : ''}${detail?.accountCode ? ` (${detail.accountCode})` : ''}`
+        : `${detail?.count || ''} new emails${detail?.accountCode ? ` (${detail.accountCode})` : ''}`);
+
+      // Auto-refresh the visible list only if the event matches the
+      // selected account — avoids a jarring list reload while the user is
+      // reading a different account's inbox.
       if (!detail?.accountCode || detail.accountCode === selectedAccount?.accountCode) {
         if (isMobile) loadMobileMails(true);
         else loadMails(currentPage);
-        toast.info(detail?.count === 1
-          ? `New email${detail?.subject ? `: ${detail.subject}` : ''}`
-          : `${detail?.count || ''} new emails`);
       }
     };
 
@@ -518,9 +549,17 @@ const InboxPage: React.FC = () => {
   // ── Refresh from Mail Server (full re-fetch, replaces all emails) ────
 
   const [isRefreshingFromServer, setIsRefreshingFromServer] = useState(false);
+  const [showReloadConfirm, setShowReloadConfirm] = useState(false);
 
   const handleRefreshFromServer = useCallback(async () => {
     if (!selectedAccount || isRefreshingFromServer) return;
+    // Show confirmation dialog before proceeding with full re-fetch
+    setShowReloadConfirm(true);
+  }, [selectedAccount, isRefreshingFromServer]);
+
+  const confirmRefreshFromServer = useCallback(async () => {
+    setShowReloadConfirm(false);
+    if (!selectedAccount) return;
     try {
       setIsRefreshingFromServer(true);
       setError(null);
@@ -568,7 +607,7 @@ const InboxPage: React.FC = () => {
     } finally {
       setIsRefreshingFromServer(false);
     }
-  }, [selectedAccount, isRefreshingFromServer, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails, mapServerMailToRecord]);
+  }, [selectedAccount, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails, mapServerMailToRecord]);
 
   // ── Search ───────────────────────────────────────────────────────────
 
@@ -739,7 +778,8 @@ const InboxPage: React.FC = () => {
 
   const handleMailClick = (mail: InboxMailRecord) => {
     savePageState();
-    navigate(`/email/${mail.id}?type=inbox`);
+    const detailId = mail.messageId || mail.id;
+    navigate(`/email/${encodeURIComponent(detailId)}?type=inbox`);
   };
 
   const handleReadToggle = async (e: React.MouseEvent, mail: InboxMailRecord) => {
@@ -794,8 +834,8 @@ const InboxPage: React.FC = () => {
         accountCode: selectedAccount.accountCode,
         currentPage: page,
         filterMode,
-        searchQuery,
-        showSearchBar,
+        searchQuery: '',
+        showSearchBar: false,
         scrollY: 0,
       };
       sessionStorage.setItem(INBOX_STATE_KEY, JSON.stringify(state));
@@ -939,6 +979,21 @@ const InboxPage: React.FC = () => {
                           onClick={() => {
                             setSelectedAccount(acc);
                             setShowAccountDropdown(false);
+                            // Persist the newly selected account so it
+                            // restores on next visit / page navigation.
+                            // Without this, sessionStorage still holds the
+                            // old account and the dropdown would switch back.
+                            if (acc) {
+                              sessionStorage.setItem(INBOX_STATE_KEY, JSON.stringify({
+                                accountCode: acc.accountCode,
+                                currentPage: 1,
+                                filterMode: 'all',
+                                searchQuery: '',
+                                showSearchBar: false,
+                                scrollY: 0,
+                              }));
+                              didRestoreState.current = false;
+                            }
                           }}
                           className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center gap-2 ${
                             selectedAccount?.id === acc.id
@@ -1387,6 +1442,26 @@ const InboxPage: React.FC = () => {
         message={`Delete "${mailToDelete?.subject || '(No Subject)'}"? This cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
+      />
+
+      {/* ── Reload from Server Confirmation ──────────────────────── */}
+      <ConfirmDialog
+        isOpen={showReloadConfirm}
+        onCancel={() => setShowReloadConfirm(false)}
+        onConfirm={confirmRefreshFromServer}
+        title="Reload from Server"
+        variant="warning"
+        confirmLabel="Reload All"
+        message={[
+          `Account: ${selectedAccount?.email || 'Unknown'}`,
+          `Server Type: ${selectedAccount?.incomingType || 'IMAP'}`,
+          '',
+          'This will clear your local inbox cache and fetch all emails fresh from the mail server. This may take a while depending on how many messages you have.',
+          '',
+          selectedAccount?.incomingType === 'POP3'
+            ? '⚠ Note: Your account uses POP3. If you cancel, existing cached emails will be retained — it is safe to cancel.'
+            : 'Note: If you cancel now, your existing cached emails will be retained.',
+        ].join('\n')}
       />
     </motion.div>
   );

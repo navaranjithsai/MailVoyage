@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import Sidebar from './Sidebar';
 import Flowbar from './Flowbar';
 import { STORAGE_KEYS, isDesktopWidth } from '@/lib/navigation';

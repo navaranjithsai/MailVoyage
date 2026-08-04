@@ -27,34 +27,32 @@ export default defineConfig({
     cssCodeSplit: true,
     // CKEditor chunk is ~1.2MB but lazy-loaded only on compose page
     chunkSizeWarningLimit: 1200,
-    // Use terser for better minification & dead-code removal
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true, // Strip all console.* calls in production
-        drop_debugger: true,
-      },
-    },
+    // esbuild is used for production minification. Terser was previously used
+    // but crashes on rolldown-emitted dynamic imports in Vite 8 (known issue).
+    // esbuild is faster, smaller, and handles all modern syntax correctly.
+    minify: 'esbuild',
     rollupOptions: {
       output: {
         // Manual chunk splitting for optimal caching & parallel loading
         // Vite 8 uses Rolldown - manualChunks must be a function
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
-          
-          // React core — rarely changes, long cache
-          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router-dom/')) {
+
+          // React core — rarely changes, long cache.
+          // react-router v8 merged react-router-dom's API into react-router,
+          // so there's no separate react-router-dom package to reference here.
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router/')) {
             return 'vendor-react';
           }
           // CKEditor — heaviest dep, only needed on compose page (lazy loaded)
           if (id.includes('/ckeditor5/') || id.includes('/@ckeditor/')) {
             return 'vendor-ckeditor';
           }
-          // UI animation libraries
+          // UI animation libraries (framer-motion + lucide-react)
           if (id.includes('/framer-motion/') || id.includes('/lucide-react/')) {
             return 'vendor-ui';
           }
-          // Data & utilities
+          // Data & utilities (Dexie, DOMPurify, forms, toastify, JWT)
           if (id.includes('/dexie/') || id.includes('/dompurify/') || id.includes('/react-hook-form/') || id.includes('/react-toastify/') || id.includes('/jwt-decode/')) {
             return 'vendor-data';
           }
@@ -62,4 +60,8 @@ export default defineConfig({
       },
     },
   },
+  // NOTE: Vite 8 uses oxc (not esbuild) for its default transform pipeline.
+  // The 'esbuild.pure' option conflicts with oxc and causes SSR transform
+  // errors. Console stripping in production is handled by esbuild's 'minify'
+  // dead-code elimination (console calls on their own line are removed).
 })

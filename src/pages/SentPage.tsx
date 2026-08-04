@@ -16,7 +16,7 @@ import {
   ChevronDown,
   ExternalLink
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import { getSentMailsPaginated, deleteSentMails } from '@/lib/db';

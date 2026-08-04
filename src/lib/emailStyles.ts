@@ -810,7 +810,23 @@ export const injectEmailStyles = (): void => {
  */
 export const base64ToBlobUrl = (base64Content: string, contentType: string): string => {
   try {
-    const byteCharacters = atob(base64Content);
+    if (!base64Content || typeof base64Content !== 'string') {
+      console.warn('base64ToBlobUrl: invalid or empty content');
+      return '';
+    }
+
+    // Strip data: URL prefix if present (e.g., "data:image/png;base64,...")
+    const cleanBase64 = base64Content.includes(';base64,')
+      ? base64Content.split(';base64,')[1]
+      : base64Content;
+
+    // Validate base64 format
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+      console.warn('base64ToBlobUrl: content is not valid base64');
+      return '';
+    }
+
+    const byteCharacters = atob(cleanBase64);
     const byteNumbers = new Array(byteCharacters.length);
     for (let i = 0; i < byteCharacters.length; i++) {
       byteNumbers[i] = byteCharacters.charCodeAt(i);
@@ -819,7 +835,8 @@ export const base64ToBlobUrl = (base64Content: string, contentType: string): str
     const blob = new Blob([byteArray], { type: contentType });
     return URL.createObjectURL(blob);
   } catch (error) {
-    console.error('Error converting base64 to blob:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Error converting base64 to blob:', message);
     return '';
   }
 };

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, Send, Eye, Download } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useEmail, Email, inboxRecordToEmail } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
-import { getSentMailByThreadId, getInboxMailById } from '@/lib/db';
+import { getSentMailByThreadId, getInboxMailById, getInboxMailByMessageId } from '@/lib/db';
 import { injectEmailStyles, sanitizeEmailHtml, formatFileSize } from '@/lib/emailStyles';
 import { toast } from '@/lib/toast';
 import AttachmentViewer, { AttachmentData } from '@/components/common/AttachmentViewer';
@@ -23,6 +23,21 @@ interface AttachmentWithContent {
   size: number;
   content?: string;
 }
+
+interface EmailAttachment {
+  id: string;
+  name: string;
+  size: string;
+  type: string;
+  content?: string;
+}
+
+const toAttachmentViewerData = (attachment: AttachmentWithContent | EmailAttachment): AttachmentData => ({
+  filename: 'filename' in attachment ? attachment.filename : attachment.name,
+  contentType: 'contentType' in attachment ? attachment.contentType : attachment.type,
+  size: typeof attachment.size === 'number' ? attachment.size : Number.parseFloat(attachment.size) || 0,
+  content: attachment.content,
+});
 
 // Type for sent mail from API
 interface SentMailDetail {
@@ -53,7 +68,7 @@ const EmailPage: React.FC = () => {
   const [showActions, setShowActions] = useState(false);
   
   // Attachment viewer state
-  const [selectedAttachment, setSelectedAttachment] = useState<AttachmentWithContent | null>(null);
+  const [selectedAttachment, setSelectedAttachment] = useState<AttachmentData | null>(null);
   const [showAttachmentViewer, setShowAttachmentViewer] = useState(false);
   
   // Inline images from HTML content
@@ -242,6 +257,11 @@ const EmailPage: React.FC = () => {
       // Try context first (already in memory)
       const found = emails.find(e => e.id === id);
       if (found) return found;
+      const decodedId = id ? decodeURIComponent(id) : id;
+      if (decodedId) {
+        const byMessageId = await getInboxMailByMessageId(decodedId);
+        if (byMessageId) return inboxRecordToEmail(byMessageId);
+      }
       // Fall back to Dexie (handles deep-links before context loads)
       const record = await getInboxMailById(id!);
       if (record) return inboxRecordToEmail(record);
@@ -274,7 +294,17 @@ const EmailPage: React.FC = () => {
           if (foundEmail) {
             setEmail(foundEmail);
             setSentMail(null);
-            markAsRead(foundEmail.id);
+            // Only enqueue a flag update if the email is actually unread.
+            // EmailPage loads the record directly from Dexie (not from the
+            // EmailContext `emails` array), so the skip-if-read guard inside
+            // markAsRead (which looks up the email in `emails`) would miss
+            // and enqueue a redundant flag update on every page load — even
+            // for already-read emails. That caused flag-updates to fire
+            // every ~2 minutes (the poller cycle) because each redundant
+            // update triggered a server-side sync_required signal.
+            if (!foundEmail.isRead) {
+              markAsRead(foundEmail.id);
+            }
           } else {
             setEmail(null);
           }
@@ -433,13 +463,13 @@ const EmailPage: React.FC = () => {
   };
 
   // Handle opening attachment in viewer
-  const handleOpenAttachment = (attachment: AttachmentWithContent) => {
-    setSelectedAttachment(attachment);
+  const handleOpenAttachment = (attachment: AttachmentWithContent | EmailAttachment) => {
+    setSelectedAttachment(toAttachmentViewerData(attachment));
     setShowAttachmentViewer(true);
   };
 
   // Handle downloading attachment
-  const handleDownloadAttachment = (attachment: AttachmentWithContent) => {
+  const handleDownloadAttachment = (attachment: AttachmentWithContent | EmailAttachment) => {
     if (!attachment.content) {
       console.error('No content available for download');
       return;
@@ -453,13 +483,13 @@ const EmailPage: React.FC = () => {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: attachment.contentType });
+      const blob = new Blob([byteArray], { type: 'contentType' in attachment ? attachment.contentType : attachment.type });
       
       // Create download link
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = attachment.filename;
+      link.download = 'filename' in attachment ? attachment.filename : attachment.name;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -719,12 +749,12 @@ const EmailPage: React.FC = () => {
         {/* Attachment Viewer Modal - for regular attachments */}
         {selectedAttachment && showAttachmentViewer && (
           <AttachmentViewer
-            attachments={[{
+            attachments={selectedAttachment ? [{
               filename: selectedAttachment.filename,
               contentType: selectedAttachment.contentType,
               content: selectedAttachment.content || '',
               size: selectedAttachment.size
-            }]}
+            }] : []}
             initialIndex={0}
             isOpen={showAttachmentViewer}
             onClose={handleCloseAttachmentViewer}
@@ -912,7 +942,29 @@ const EmailPage: React.FC = () => {
                           </p>
                         </div>
                       </div>
-                      <span className="text-xs text-gray-400 italic">Stored on server</span>
+                      <div className="flex items-center gap-2">
+                        {attachment.content && (
+                          <Button
+                            variant="outline"
+                            size="small"
+                            onClick={() => handleOpenAttachment(attachment)}
+                            className="flex items-center gap-1"
+                          >
+                            <Eye size={14} />
+                            Open
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="small"
+                          onClick={() => handleDownloadAttachment(attachment)}
+                          disabled={!attachment.content}
+                          className="flex items-center gap-1"
+                        >
+                          <Download size={14} />
+                          Download
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>

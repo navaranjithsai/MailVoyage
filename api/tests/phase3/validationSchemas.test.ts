@@ -9,6 +9,7 @@ import {
   loginTwoFactorVerifySchema,
   registerSchema,
   resetPasswordSchema,
+  sendMailSchema,
   smtpAccountSchema,
   twoFactorDisableSchema,
   twoFactorRecoveryRegenerateSchema,
@@ -86,6 +87,44 @@ describe('api validation schemas', () => {
       port: 587,
       password: 'app-password',
       security: 'STARTTLS',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('sendMailSchema rejects unsafe attachment filenames', () => {
+    const parsed = sendMailSchema.safeParse({
+      accountCode: 'ABC',
+      to: ['recipient@example.com'],
+      subject: 'Hello',
+      html: '<p>Hello</p>',
+      attachments: [
+        {
+          filename: '../.env',
+          content: 'SGVsbG8=',
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('sendMailSchema accepts a bounded secure payload', () => {
+    const parsed = sendMailSchema.safeParse({
+      accountCode: 'ABC',
+      to: ['recipient@example.com'],
+      cc: ['copy@example.com'],
+      bcc: ['blind@example.com'],
+      subject: 'Hello',
+      html: '<p>Hello</p>',
+      attachments: [
+        {
+          filename: 'report.pdf',
+          content: 'SGVsbG8=',
+          contentType: 'application/pdf',
+          size: 5,
+        },
+      ],
     });
 
     expect(parsed.success).toBe(true);

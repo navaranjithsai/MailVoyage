@@ -4,6 +4,13 @@ import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
 
+const escapeHtml = (value: string): string => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 // Create nodemailer transporter
 const createTransporter = () => {
   if (!config.smtp.user || !config.smtp.pass) {
@@ -24,6 +31,8 @@ const createTransporter = () => {
     },
     // Enable STARTTLS for non-secure connections
     requireTLS: !config.smtp.secure,
+    disableFileAccess: true,
+    disableUrlAccess: true,
   });
 };
 
@@ -69,6 +78,8 @@ export const sendOTPEmail = async (email: string, username: string, otp: string)
       from: `"${config.smtp.fromName}" <${config.smtp.fromEmail}>`,
       to: email,
       subject: 'Password Reset OTP - MailVoyage',
+      disableFileAccess: true,
+      disableUrlAccess: true,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9fafb;">
           <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -77,7 +88,7 @@ export const sendOTPEmail = async (email: string, username: string, otp: string)
             </div>
             
             <div style="margin-bottom: 30px;">
-              <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">Hello ${username},</p>
+              <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">Hello ${escapeHtml(username)},</p>
               <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">
                 You have requested to reset your password for your MailVoyage account. Please use the following OTP to proceed:
               </p>
@@ -111,7 +122,7 @@ export const sendOTPEmail = async (email: string, username: string, otp: string)
       text: `
         Password Reset Request - MailVoyage
         
-        Hello ${username},
+        Hello ${escapeHtml(username)},
         
         You have requested to reset your password for your MailVoyage account.
         
@@ -162,11 +173,13 @@ export const sendTwoFactorLoginOTPEmail = async (
       from: `"${config.smtp.fromName}" <${config.smtp.fromEmail}>`,
       to: email,
       subject: 'Your MailVoyage login verification code',
+      disableFileAccess: true,
+      disableUrlAccess: true,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9fafb;">
           <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <h1 style="color: #1f2937; margin: 0 0 20px 0; font-size: 24px; text-align: center;">Two-factor verification</h1>
-            <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">Hello ${username},</p>
+            <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">Hello ${escapeHtml(username)},</p>
             <p style="color: #4b5563; margin: 0 0 16px 0; font-size: 16px;">
               Use this one-time code to complete your sign-in:
             </p>
@@ -189,7 +202,7 @@ export const sendTwoFactorLoginOTPEmail = async (
       text: `
         Two-factor verification - MailVoyage
 
-        Hello ${username},
+        Hello ${escapeHtml(username)},
 
         Use this one-time code to complete your sign-in:
         ${otp}

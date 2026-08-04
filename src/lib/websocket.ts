@@ -54,6 +54,7 @@ class WebSocketClient {
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private wakeupInterval: ReturnType<typeof setInterval> | null = null;
   private token: string | null = null;
   private isManualDisconnect = false;
   private authFailureCount = 0;
@@ -70,10 +71,10 @@ class WebSocketClient {
   private static readonly DEFAULT_CONFIG: Required<WebSocketConfig> = {
     baseUrl: '',
     autoReconnect: true,
-    maxReconnectAttempts: 10,
+    maxReconnectAttempts: 50,       // Increased from 10 to 50 for better resilience
     reconnectDelay: 1000,
     maxReconnectDelay: 30000,
-    heartbeatInterval: 25000, // 25 seconds (server expects 30s)
+    heartbeatInterval: 20000,       // 20 seconds — slightly faster than server's 30s to stay alive
   };
 
   constructor(config: WebSocketConfig = {}) {
@@ -272,6 +273,12 @@ class WebSocketClient {
           if (signal.message === 'Authentication successful') {
             console.info('[WebSocket] Authenticated successfully');
             this.authFailureCount = 0;
+            this.reconnectAttempts = 0;
+            // Clear the periodic wakeup timer — we're connected now
+            if (this.wakeupInterval) {
+              clearInterval(this.wakeupInterval);
+              this.wakeupInterval = null;
+            }
             this.setStatus('connected');
             this.startHeartbeat();
           }
@@ -386,7 +393,19 @@ class WebSocketClient {
     }
 
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      console.warn('[WebSocket] Max reconnection attempts reached, falling back to manual sync mode');
+      console.warn('[WebSocket] Max reconnection attempts reached, falling back to manual sync mode. Will retry in 60s.');
+      // Schedule a recurring wakeup attempt every 60s so the WebSocket
+      // auto-recovers when the network/stabilizes without requiring the
+      // user to click "Reconnect" manually.
+      if (!this.wakeupInterval) {
+        this.wakeupInterval = setInterval(() => {
+          if (this.status === 'disconnected' && !this.isManualDisconnect) {
+            console.info('[WebSocket] Periodic wakeup: retrying connection...');
+            this.reconnectAttempts = 0;
+            this.scheduleReconnect();
+          }
+        }, 60000);
+      }
       return;
     }
 
@@ -497,6 +516,11 @@ class WebSocketClient {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
+    }
+
+    if (this.wakeupInterval) {
+      clearInterval(this.wakeupInterval);
+      this.wakeupInterval = null;
     }
 
     if (this.ws) {

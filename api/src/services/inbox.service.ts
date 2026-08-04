@@ -8,14 +8,59 @@ import { AppError } from '../utils/errors.js';
 import { tryDecrypt } from '../utils/crypto.js';
 
 /**
- * Convert a POP3 UIDL string into a stable positive integer.
- * POP3 message numbers are transient (change on deletion), so we hash
- * the UIDL value to produce a deterministic numeric UID.
+ * Convert a stable POP3 message fingerprint into a positive integer UID.
+ * We hash the raw message so the cache can upsert across reloads even when
+ * POP3 message numbers shift after deletions.
  */
-function pop3UidlToNumericUid(uidlStr: string): number {
-  const hash = crypto.createHash('md5').update(uidlStr).digest();
+function pop3FingerprintToNumericUid(fingerprint: string): number {
+  const hash = crypto.createHash('md5').update(fingerprint).digest();
   // Use first 4 bytes as unsigned 32-bit int (always positive)
   return hash.readUInt32BE(0);
+}
+
+// ============================================================================
+// Per-account sync mutex — prevents concurrent POP3/IMAP connections to the
+// same account. Gmail POP3 only allows one session at a time, and concurrent
+// IMAP sessions can also cause "bad command" errors.
+// ============================================================================
+
+const accountSyncLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Serialize concurrent fetch calls for the same account+mailbox.
+ * If a sync is already in-flight, the second caller will wait for the first
+ * to finish (sharing the same result) instead of opening a competing
+ * connection.
+ */
+async function withAccountSyncLock<T>(
+  userId: string,
+  accountCode: string,
+  mailbox: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const lockKey = `${userId}:${accountCode}:${mailbox}`;
+  const existing = accountSyncLocks.get(lockKey);
+
+  if (existing) {
+    logger.debug(`[InboxService] Sync already in-flight for ${lockKey}, waiting…`);
+    await existing.catch(() => { /* ignore — we'll run our own */ });
+  }
+
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  accountSyncLocks.set(lockKey, promise);
+
+  try {
+    return await fn();
+  } finally {
+    release();
+    // Only delete if we're still the owner
+    if (accountSyncLocks.get(lockKey) === promise) {
+      accountSyncLocks.delete(lockKey);
+    }
+  }
 }
 
 
@@ -45,6 +90,7 @@ export interface InboxMail {
     filename: string;
     contentType: string;
     size: number;
+    content?: string;
   }> | null;
   labels: string[] | null;
   /** @internal POP3 flag for sync logic */
@@ -199,7 +245,13 @@ export async function fetchMailsFromServer(
 
   const creds = await getImapCredentials(userId, accountCode);
 
-  if (creds.incomingType === 'POP3') {
+  // Log the protocol being used so mismatches are visible in server logs.
+  logger.info(`[InboxService] Account ${accountCode} protocol: ${creds.incomingType}, host: ${creds.host}:${creds.port}`);
+
+  // Normalize to uppercase for robust comparison.
+  const protocol = (creds.incomingType || 'IMAP').toUpperCase().trim();
+
+  if (protocol === 'POP3') {
     if (sinceUid) {
       logger.debug(`[POP3] sinceUid=${sinceUid} ignored for POP3 account ${accountCode} (POP3 does not support incremental sync)`);
     }
@@ -249,36 +301,15 @@ async function fetchMailsViaPop3(
     await pop3.connect();
     logger.info(`[POP3] Connected to ${creds.host} for account ${accountCode}`);
 
-    // Get list of message UIDs
-    // POP3 UIDL response varies by server: can be array-of-arrays,
-    // array-of-strings, raw multi-line string, or even an object.
-    const uidListRaw: unknown = await pop3.UIDL();
-    let uidList: Array<[string, string]> = []; // [msgNum, uidlValue]
-
-    if (typeof uidListRaw === 'string') {
-      // Raw multi-line: "1 abc123\r\n2 def456\r\n..."
-      const lines = uidListRaw.split(/\r?\n/).filter((l: string) => l.trim());
-      uidList = lines.map((line: string) => {
-        const parts = line.trim().split(/\s+/);
-        return [parts[0], parts[1] || parts[0]] as [string, string];
-      });
-    } else if (Array.isArray(uidListRaw)) {
-      uidList = uidListRaw.map((item: unknown) => {
-        if (Array.isArray(item)) {
-          return [String(item[0]), String(item[1] ?? item[0])] as [string, string];
-        }
-        if (typeof item === 'string') {
-          const parts = item.trim().split(/\s+/);
-          return [parts[0], parts[1] || parts[0]] as [string, string];
-        }
-        return [String(item), String(item)] as [string, string];
-      });
-    } else if (uidListRaw && typeof uidListRaw === 'object') {
-      // Object form: { '1': 'abc123', '2': 'def456' }
-      uidList = Object.entries(uidListRaw).map(([k, v]) => [k, String(v)] as [string, string]);
-    }
-
-    const totalMessages = uidList.length;
+    const [statInfo] = await pop3.command('STAT');
+    const statLine = String(statInfo).trim();
+    // STAT returns "OK <count> <size>" or just "<count> <size>"
+    const statParts = statLine.split(/\s+/);
+    // Find the first numeric token (the message count)
+    const totalMessages = parseInt(
+      statParts.find(p => /^\d+$/.test(p)) || statParts[1] || '0',
+      10
+    );
     logger.info(`[POP3] Server has ${totalMessages} messages`);
 
     if (totalMessages === 0) {
@@ -287,17 +318,15 @@ async function fetchMailsViaPop3(
     }
 
     // POP3 doesn't support mailboxes or UIDs like IMAP —
-    // paginate by taking the latest N messages (newest = highest msgNum)
-    const startIdx = Math.max(0, totalMessages - page * limit);
-    const endIdx = Math.max(0, totalMessages - (page - 1) * limit);
-    const msgNums = uidList.slice(startIdx, endIdx).reverse();
+    // paginate by taking the latest N message numbers.
+    const endMsgNum = Math.max(1, totalMessages - ((page - 1) * limit));
+    const startMsgNum = Math.max(1, endMsgNum - limit + 1);
+    logger.info(`[POP3] Fetching messages ${startMsgNum}–${endMsgNum} (${endMsgNum - startMsgNum + 1} mails)`);
 
-    logger.info(`[POP3] Fetching messages ${startIdx + 1}–${endIdx} (${msgNums.length} mails)`);
-
-    for (const [msgNum, uidStr] of msgNums) {
+    for (let msgNum = endMsgNum; msgNum >= startMsgNum; msgNum--) {
       try {
         // RETR returns the full message source as a string
-        const rawMessage: string = await pop3.RETR(parseInt(msgNum, 10));
+        const rawMessage: string = await pop3.RETR(msgNum);
         if (!rawMessage) {
           logger.warn(`[POP3] Message ${msgNum} has no content, skipping`);
           continue;
@@ -310,18 +339,21 @@ async function fetchMailsViaPop3(
         const ccAddresses = extractAddresses(parsed.cc);
         const bccAddresses = extractAddresses(parsed.bcc);
 
-        const attachments = parsed.attachments?.map(att => ({
-          filename: att.filename || 'attachment',
-          contentType: att.contentType || 'application/octet-stream',
-          size: att.size || 0,
-        })) || [];
+          const attachments = parsed.attachments?.map(att => ({
+            filename: att.filename || 'attachment',
+            contentType: att.contentType || 'application/octet-stream',
+            size: att.size || 0,
+            content: att.content ? Buffer.from(att.content).toString('base64') : undefined,
+          })) || [];
+
+        const fingerprint = parsed.messageId || rawMessage;
 
         fetchedMails.push({
           id: '',
-          uid: pop3UidlToNumericUid(uidStr), // Stable hash of UIDL value
+          uid: pop3FingerprintToNumericUid(fingerprint), // Stable hash of the message content
           accountCode,
           mailbox: 'INBOX', // POP3 only has one mailbox
-          messageId: parsed.messageId || `pop3:${uidStr}`,  // fallback to UIDL if no Message-ID
+          messageId: parsed.messageId || `pop3:${msgNum}`,  // fallback to message number if no Message-ID
           fromAddress: fromAddresses[0] || 'unknown@unknown.com',
           fromName: extractName(parsed.from),
           toAddresses,
@@ -361,11 +393,19 @@ async function fetchMailsViaPop3(
   } catch (error: unknown) {
     logger.error(`[POP3] Error fetching mails:`, error);
 
+    // Always attempt a clean QUIT — if the socket is already dead,
+    // QUIT will fail silently and we don't propagate that error.
     try { await pop3.QUIT(); } catch { /* best-effort cleanup */ }
 
     if (error instanceof AppError) throw error;
 
-    const errMsg = error instanceof Error ? error.message : String(error);
+    const rawMsg = error instanceof Error ? error.message : String(error);
+    // Gmail/POP3 servers return session tokens in error messages when
+    // concurrent connections conflict — provide a clearer message.
+    const isConcurrencyError = /bad command|already locked|in use/i.test(rawMsg);
+    const errMsg = isConcurrencyError
+      ? `POP3 session conflict for ${accountCode} — another sync may be in progress. ${rawMsg}`
+      : rawMsg;
     throw new AppError(
       `Failed to fetch emails via POP3: ${errMsg}`,
       500,
@@ -389,7 +429,8 @@ async function fetchMailsViaImap(
     page: number;
   }
 ): Promise<FetchFromServerResult> {
-  const { mailbox, limit, sinceUid, page } = options;
+  const { mailbox, limit, page } = options;
+  let sinceUid = options.sinceUid;
   const secure = creds.security === 'SSL';
 
   const imapConfig: ImapFlowOptions = {
@@ -413,6 +454,15 @@ async function fetchMailsViaImap(
   }
 
   const client = new ImapFlow(imapConfig);
+
+  // CRITICAL: ImapFlow emits 'error' events on network drops (ECONNRESET, etc).
+  // Without a handler, Node.js treats this as an unhandled 'error' event and
+  // crashes the entire API server. We attach a no-op handler so the error is
+  // caught by the try/catch below instead.
+  client.on('error', (err: Error) => {
+    logger.warn(`[IMAP] Socket error for ${accountCode} (${creds.host}): ${err.message}`);
+  });
+
   const fetchedMails: InboxMail[] = [];
 
   try {
@@ -431,6 +481,27 @@ async function fetchMailsViaImap(
 
       if (totalMessages === 0) {
         return { mails: [], totalOnServer: 0, fetched: 0 };
+      }
+
+      const highestKnownUid = typeof mb.uidNext === 'number' && mb.uidNext > 0
+        ? mb.uidNext - 1
+        : totalMessages;
+
+      // Detect stale UID tracking: if the stored sinceUid is HIGHER than the
+      // actual highest UID on the server, the mailbox was likely rebuilt
+      // (UIDVALIDITY changed) or the tracking got corrupted. In that case we
+      // must NOT skip the sync — we fall through to a full paginated fetch
+      // so the cache is repopulated and the tracking is corrected.
+      if (sinceUid && sinceUid > highestKnownUid) {
+        logger.warn(
+          `[IMAP] Stale UID tracking for ${accountCode}/${mailbox}: sinceUid=${sinceUid} > highestUid=${highestKnownUid}. ` +
+          `Falling back to full sync to repair tracking.`
+        );
+        // Force a full fetch by ignoring the stale sinceUid
+        sinceUid = undefined;
+      } else if (sinceUid && sinceUid >= highestKnownUid) {
+        logger.info(`[IMAP] No new messages for ${accountCode}/${mailbox} (sinceUid=${sinceUid}, highestUid=${highestKnownUid})`);
+        return { mails: [], totalOnServer: totalMessages, fetched: 0 };
       }
 
       // Determine range to fetch
@@ -472,6 +543,7 @@ async function fetchMailsViaImap(
             filename: att.filename || 'attachment',
             contentType: att.contentType || 'application/octet-stream',
             size: att.size || 0,
+            content: att.content ? Buffer.from(att.content).toString('base64') : undefined,
           })) || [];
 
           const flags = msg.flags ? [...msg.flags] : [];
@@ -505,6 +577,11 @@ async function fetchMailsViaImap(
       lock.release();
     }
 
+    // Capture totalOnServer before logout — client.mailbox is cleared after logout
+    const totalOnServer = (client.mailbox && typeof client.mailbox !== 'boolean')
+      ? client.mailbox.exists || 0
+      : fetchedMails.length;
+
     await client.logout();
     logger.info(`[IMAP] Fetched ${fetchedMails.length} mails from ${mailbox}`);
 
@@ -513,7 +590,7 @@ async function fetchMailsViaImap(
 
     return {
       mails: fetchedMails,
-      totalOnServer: (client.mailbox && typeof client.mailbox !== 'boolean') ? client.mailbox.exists || 0 : fetchedMails.length,
+      totalOnServer,
       fetched: fetchedMails.length,
     };
   } catch (error: unknown) {
@@ -682,7 +759,7 @@ async function updateImapFlagsForUser(
     const [accountCode, mailbox] = key.split('::');
     try {
       const creds = await getImapCredentials(userId, accountCode);
-      if (creds.incomingType === 'POP3') {
+      if ((creds.incomingType || 'IMAP').toUpperCase().trim() === 'POP3') {
         continue;
       }
 
@@ -705,6 +782,10 @@ async function updateImapFlagsForUser(
       }
 
       const client = new ImapFlow(imapConfig);
+      // Prevent ECONNRESET from crashing the server — see main IMAP fetch path.
+      client.on('error', (err: Error) => {
+        logger.warn(`[IMAP] Flag update socket error for ${accountCode} (${creds.host}): ${err.message}`);
+      });
       try {
         await client.connect();
         const lock = await client.getMailboxLock(mailbox || 'INBOX');
@@ -968,6 +1049,12 @@ export async function getLastSyncedUid(
 
 /**
  * Update (or insert) the sync tracking record after a successful sync.
+ *
+ * NOTE: We intentionally do NOT use GREATEST() here. The last_uid must
+ * always reflect the actual highest UID we just synced so that stale
+ * tracking (e.g. after a mailbox rebuild / UIDVALIDITY change) can be
+ * corrected downward. Using GREATEST() would lock in a corrupted high
+ * value forever and prevent any new mail from ever being fetched.
  */
 export async function updateSyncTracking(
   userId: string,
@@ -983,7 +1070,7 @@ export async function updateSyncTracking(
        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
        ON CONFLICT (user_id, account_code, mailbox)
        DO UPDATE SET
-         last_uid = GREATEST(sync_tracking.last_uid, EXCLUDED.last_uid),
+         last_uid = EXCLUDED.last_uid,
          total_on_server = COALESCE(EXCLUDED.total_on_server, sync_tracking.total_on_server),
          last_synced_at = NOW(),
          updated_at = NOW()`,
@@ -1114,7 +1201,7 @@ export async function searchMailsOnServer(
   const creds = await getImapCredentials(userId, accountCode);
 
   // POP3 doesn't support SEARCH
-  if (creds.incomingType === 'POP3') {
+  if ((creds.incomingType || 'IMAP').toUpperCase().trim() === 'POP3') {
     logger.info(`[Search] POP3 account ${accountCode} — server search not supported`);
     return {
       mails: [],
@@ -1142,6 +1229,10 @@ export async function searchMailsOnServer(
   }
 
   const client = new ImapFlow(imapConfig);
+  // Prevent ECONNRESET from crashing the server — see main IMAP fetch path.
+  client.on('error', (err: Error) => {
+    logger.warn(`[Search] Socket error for ${accountCode} (${creds.host}): ${err.message}`);
+  });
   const fetchedMails: InboxMail[] = [];
 
   try {
@@ -1213,6 +1304,7 @@ export async function searchMailsOnServer(
             filename: att.filename || 'attachment',
             contentType: att.contentType || 'application/octet-stream',
             size: att.size || 0,
+            content: att.content ? Buffer.from(att.content).toString('base64') : undefined,
           })) || [];
 
           const flags = msg.flags ? [...msg.flags] : [];
@@ -1311,28 +1403,35 @@ export async function syncInbox(
     }
   }
 
-  const result = await fetchMailsFromServer(userId, accountCode, {
-    mailbox,
-    limit: options.limit,
-    sinceUid: sinceUid > 0 ? sinceUid : undefined,
-    page: options.page,
+  // Serialize concurrent sync calls for the same account+mailbox.
+  // POP3 servers (especially Gmail) only allow one session at a time.
+  return withAccountSyncLock(userId, accountCode, mailbox, async () => {
+    const result = await fetchMailsFromServer(userId, accountCode, {
+      mailbox,
+      limit: options.limit,
+      sinceUid: sinceUid > 0 ? sinceUid : undefined,
+      page: options.page,
+    });
+
+    // Save to server-side cache
+    const saved = await syncMailsToCache(userId, accountCode, result.mails, cacheLimit);
+
+    // Persist the highest UID we just synced.
+    // When stale tracking was detected in fetchMailsViaImap, it falls back
+    // to a full fetch (no sinceUid), which returns the latest mails with
+    // their real UIDs — so this update corrects the stale tracking.
+    if (result.mails.length > 0) {
+      const highestUid = Math.max(...result.mails.map(m => m.uid));
+      await updateSyncTracking(userId, accountCode, mailbox, highestUid, result.totalOnServer);
+      logger.info(`[InboxService] Updated sync tracking: ${accountCode}/${mailbox} lastUid=${highestUid}`);
+    }
+
+    return {
+      ...result,
+      mails: saved.length > 0 ? saved : result.mails,
+      cached: saved.length,
+    };
   });
-
-  // Save to server-side cache
-  const saved = await syncMailsToCache(userId, accountCode, result.mails, cacheLimit);
-
-  // Persist the highest UID we just synced
-  if (result.mails.length > 0) {
-    const highestUid = Math.max(...result.mails.map(m => m.uid));
-    await updateSyncTracking(userId, accountCode, mailbox, highestUid, result.totalOnServer);
-    logger.info(`[InboxService] Updated sync tracking: ${accountCode}/${mailbox} lastUid=${highestUid}`);
-  }
-
-  return {
-    ...result,
-    mails: saved.length > 0 ? saved : result.mails,
-    cached: saved.length,
-  };
 }
 
 /**
