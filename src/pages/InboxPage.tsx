@@ -858,9 +858,22 @@ const InboxPage: React.FC = () => {
   const getPreview = (mail: InboxMailRecord): string => {
     if (mail.textBody) return mail.textBody.substring(0, 120);
     if (mail.htmlBody) {
-      const div = document.createElement('div');
-      div.innerHTML = mail.htmlBody;
-      return (div.textContent || '').substring(0, 120);
+      // SECURITY: same as SentPage — never set innerHTML on untrusted mail.
+      // Pre-strip resource-loading tags, then parse via DOMParser.
+      const noResources = mail.htmlBody
+        .replace(/<img\b[^>]*>/gi, '')
+        .replace(/<image\b[^>]*>/gi, '')
+        .replace(/<link\b[^>]*>/gi, '')
+        .replace(/<source\b[^>]*>/gi, '')
+        .replace(/<video\b[^>]*>[\s\S]*?<\/video>/gi, '')
+        .replace(/<audio\b[^>]*>[\s\S]*?<\/audio>/gi, '')
+        .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
+        .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, '')
+        .replace(/<embed\b[^>]*>/gi, '')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+      const doc = new DOMParser().parseFromString(noResources, 'text/html');
+      return (doc.body?.textContent || '').substring(0, 120);
     }
     return '(No content)';
   };

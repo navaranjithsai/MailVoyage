@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Browser-enforced allowlist also applies during Vite development. -->
+    <!--
+      CSP design notes:
+      - script-src 'self'                          → shuts down XSS at the source
+      - connect-src 'self' ws: wss: + dicebear     → only our API + WS + avatar fetches
+      - object-src 'none', frame-src 'self' blob:  → no plugins, no cross-origin frames
+      - base-uri 'self', form-action 'self'        → no form hijack
+      - img-src 'self' data: blob: https:          → mail remote images render.
+        This is the only relaxed directive; needed for normal mail rendering.
+        Privacy: remote images leak read-state to the sender (standard for
+        email clients — they all allow it, with one user-toggle for blocking).
+        Future enhancement: per-message "Block remote images" toggle.
+      - style-src 'self' 'unsafe-inline' https:    → inline styles (ckeditor +
+        mail HTML) + external stylesheets linked from mail.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' ws: wss: https://api.dicebear.com; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-src 'self' blob:">
 
     <!-- SEO Meta Tags -->
     <title>MailVoyage - Modern & Secure Email Client</title>

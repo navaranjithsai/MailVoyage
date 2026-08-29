@@ -4,6 +4,21 @@ import { AppError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 /**
+ * Extract the authenticated user's numeric id at the controller boundary.
+ * `req.user.id` is always a string (set by auth middleware via `.toString()`),
+ * so the legacy `typeof ... === 'string' ? parseInt(...) : ...` guard had a
+ * dead else-branch. Centralize conversion + validation here once.
+ */
+const requireNumericUserId = (req: Request): number => {
+  const raw = req.user?.id;
+  const userId = Number(raw);
+  if (raw === undefined || raw === null || raw === '' || !Number.isInteger(userId) || userId <= 0) {
+    throw new AppError('Invalid authenticated user id', 401);
+  }
+  return userId;
+};
+
+/**
  * Get paginated list of sent mails for the authenticated user
  */
 export const getSentMails = async (
@@ -22,7 +37,7 @@ export const getSentMails = async (
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100); // Max 100 per page
     const since = req.query.since as string | undefined; // ISO timestamp for delta sync
     
-    const userId = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id;
+    const userId = requireNumericUserId(req);
     const result = await mailService.getSentMailsByUserId(userId, page, limit, since);
     
     res.json({
@@ -58,7 +73,7 @@ export const getSentMailByThreadId = async (
     
     logger.info(`Fetching sent mail with thread ID ${threadId} for user ${user.id}`);
     
-    const userId = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id;
+    const userId = requireNumericUserId(req);
     const mail = await mailService.getSentMailByThreadId(userId, threadId);
     
     if (!mail) {
@@ -98,7 +113,7 @@ export const getSentMailById = async (
     
     logger.info(`Fetching sent mail with ID ${id} for user ${user.id}`);
     
-    const userId = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id;
+    const userId = requireNumericUserId(req);
     const mail = await mailService.getSentMailById(userId, id);
     
     if (!mail) {

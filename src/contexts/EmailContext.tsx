@@ -74,9 +74,37 @@ const EmailContext = createContext<EmailContextType | undefined>(undefined);
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * Strip HTML tags from an email body for preview text.
+ *
+ * SECURITY: Never use `div.innerHTML = untrustedHtml` here — even on a
+ * detached element, the browser's HTML parser will eagerly fetch external
+ * resources (<img src>, <image href>, <link>, CSS url()s, etc.) from raw
+ * mail content, leaking user IP and acting as a tracking pixel every time
+ * the inbox list re-renders.
+ *
+ * Instead use DOMParser with 'text/html', then drop resource-bearing
+ * elements BEFORE walking the tree. DOMParser does not trigger fetches
+ * for subresources during parse, and the stripped sanitizer pass means
+ * even if anything slips through, there is no `src` left to fetch.
+ */
 function stripHtml(html: string): string {
-  const div = document.createElement('div');
-  div.innerHTML = html;
+  // Remove resource-loading tags entirely before parsing — defensive in
+  // depth, in case DOMParser behavior changes.
+  const noResources = html
+    .replace(/<img\b[^>]*>/gi, '')
+    .replace(/<image\b[^>]*>/gi, '')
+    .replace(/<link\b[^>]*>/gi, '')
+    .replace(/<source\b[^>]*>/gi, '')
+    .replace(/<video\b[^>]*>[\s\S]*?<\/video>/gi, '')
+    .replace(/<audio\b[^>]*>[\s\S]*?<\/audio>/gi, '')
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed\b[^>]*>/gi, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+  const doc = new DOMParser().parseFromString(noResources, 'text/html');
+  const div = doc.body;
   return (div.textContent || div.innerText || '').trim();
 }
 

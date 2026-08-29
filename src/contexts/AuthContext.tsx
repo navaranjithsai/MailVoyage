@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import { toast } from 'react-toastify';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '../lib/apiFetch';
 import { fetchAll } from '../lib/dataSync';
 import { performCompleteLogout } from '../lib/storageCleanup';
@@ -24,6 +24,8 @@ interface AuthContextType {
   getTabSessionInfo: () => { tabSessionId: string; isValidated: boolean; };
   clearTabValidation: () => void;
 }
+
+export const AUTH_USER_UPDATED_EVENT = 'mailvoyage:auth-user-updated';
 
 // ── Session storage helpers (module-level for stable references) ──────────────
 
@@ -57,7 +59,8 @@ const removeSessionItem = (key: string): boolean => {
 };
 
 const generateTabSessionId = (): string => {
-  return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // substr() is deprecated — use slice() here.
+  return `tab_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 };
 
 const getTabSessionId = (): string => {
@@ -194,6 +197,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []); // navigate dependency removed as it's stable
 
   useEffect(() => {
+    const handleUserUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<User>).detail;
+      if (detail?.id !== undefined && detail.username && detail.email) {
+        setUser(detail);
+      }
+    };
+
+    window.addEventListener(AUTH_USER_UPDATED_EVENT, handleUserUpdated);
+    return () => window.removeEventListener(AUTH_USER_UPDATED_EVENT, handleUserUpdated);
+  }, []);
+
+  useEffect(() => {
     if (user?.id) {
       void flagSync.initialize(String(user.id));
       return;
@@ -246,6 +261,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       if (options.callApi) {
         try {
+          // Persist read/star changes while the current cookie and session are
+          // still valid. The drain uses an awaited REST ACK and is bounded so
+          // logout cannot hang indefinitely on a broken network.
+          const drained = await flagSync.drainBeforeLogout();
+          if (!drained) {
+            console.warn('AuthContext: Timed out draining pending flag updates before logout');
+          }
+        } catch (flagError) {
+          console.warn('AuthContext: Flag sync drain failed before logout:', flagError);
+        }
+      }
+
+      if (options.callApi) {
+        try {
           await apiFetch('/api/auth/logout', { method: 'POST' });
           console.log('AuthContext: Logout API call successful');
         } catch (error: unknown) {
@@ -263,14 +292,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       clearAllTabValidations();
 
       try {
-        // Flush any pending flag updates to the server BEFORE clearing the
-        // database. This ensures read/star/unread changes are persisted on
-        // the server so they survive a logout + re-login cycle. Without
-        // this, pending queue entries would be lost when Dexie is cleared.
-        await flagSync.flush();
-        // Now shut down the sync engine. Called AFTER flush so the queue
-        // has a chance to drain. Note: flush() is fire-and-forget with
-        // keepalive, so it completes even if the page is about to unload.
         await flagSync.shutdown(true);
       } catch (flagError) {
         console.warn('AuthContext: Flag sync shutdown failed:', flagError);

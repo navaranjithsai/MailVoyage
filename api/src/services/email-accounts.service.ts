@@ -163,9 +163,15 @@ export const createEmailAccount = async (accountData: EmailAccount): Promise<Ema
 
     let finalAccountData = { ...accountData };
 
-    // If autoconfig is requested, try to get configuration
+    // If autoconfig is requested, try to get configuration.
+    // Use extractSafeEmailDomain (validates '@' presence + domain format)
+    // instead of a raw split so a malformed email can't pass `undefined`
+    // to the autoconfig lookup.
     if (accountData.autoconfig) {
-      const domain = accountData.email.split('@')[1];
+      const domain = extractSafeEmailDomain(accountData.email);
+      if (!domain) {
+        throw new Error('Invalid email address — cannot determine domain for auto-configuration.');
+      }
       const autoConfig = await getAutoConfigForDomain(domain, accountData.email);
       
       if (autoConfig) {
@@ -191,7 +197,23 @@ export const createEmailAccount = async (accountData: EmailAccount): Promise<Ema
     // Set default values
     const incomingUsername = finalAccountData.incomingUsername || finalAccountData.email;
     const outgoingUsername = finalAccountData.outgoingUsername || finalAccountData.email;
-    const accountCode = generateAccountCode();
+
+    // Generate a unique account code (retry on collision). With only 36^3
+    // possible codes, un-checked single-shot generation hits the birthday
+    // bound (~50% collision at ~255 accounts). Match the retry logic used by
+    // SMTP account creation so both account types behave consistently.
+    let accountCode = generateAccountCode();
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const codeCheck = await client.query(
+        'SELECT 1 FROM email_accounts WHERE account_code = $1',
+        [accountCode]
+      );
+      if (codeCheck.rows.length === 0) break;
+      accountCode = generateAccountCode();
+      if (attempt === 99) {
+        throw new Error('Failed to generate unique account code');
+      }
+    }
     
     const insertQuery = `
       INSERT INTO email_accounts (

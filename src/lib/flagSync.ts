@@ -43,12 +43,6 @@ const BACKOFF_BASE_MS = 30 * 1000;
 const BACKOFF_MAX_MS = 30 * 60 * 1000;
 const WS_ACK_TIMEOUT_MS = 30 * 1000;
 
-enum BatchState {
-  Idle = 'idle',
-  SendingWs = 'sending-ws',
-  SendingRest = 'sending-rest',
-}
-
 class FlagSyncManager {
   private userId: string | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -58,7 +52,6 @@ class FlagSyncManager {
   private ackTimeout: ReturnType<typeof setTimeout> | null = null;
   private backoffUntil: number | null = null;
   private backoffStep = 0;
-  private batchState: BatchState = BatchState.Idle;
   private isInitialized = false;
   private wsUnsubscribe: (() => void) | null = null;
   private wsStatusUnsubscribe: (() => void) | null = null;
@@ -88,6 +81,11 @@ class FlagSyncManager {
   };
 
   private readonly onWsStatus = (status: ConnectionStatus) => {
+    if (status === 'connected') {
+      void this.scheduleFlush();
+      return;
+    }
+
     if (!this.inFlight || this.inFlight.transport !== 'ws') return;
     if (status === 'disconnected' || status === 'auth_failed') {
       void this.handleWsFailure('WebSocket disconnected');
@@ -198,7 +196,7 @@ class FlagSyncManager {
     void this.scheduleFlush();
   }
 
-  async flush(options?: { keepalive?: boolean; fireAndForget?: boolean }): Promise<void> {
+  async flush(options?: { keepalive?: boolean; fireAndForget?: boolean; forceRest?: boolean }): Promise<void> {
     if (!this.userId || this.inFlight) return;
     if (!navigator.onLine) {
       void this.scheduleFlush();
@@ -227,7 +225,7 @@ class FlagSyncManager {
 
     const recordIds = records.map((record) => record.id);
     const cacheIds = records.map((record) => record.cacheId);
-    const useWebSocket = !options?.fireAndForget && wsClient.isConnected();
+    const useWebSocket = !options?.fireAndForget && !options?.forceRest && wsClient.isConnected();
     this.inFlight = { batchId, recordIds, cacheIds, transport: useWebSocket ? 'ws' : 'rest' };
 
     try {
@@ -241,11 +239,9 @@ class FlagSyncManager {
       };
 
       if (useWebSocket) {
-        this.batchState = BatchState.SendingWs;
         const sent = wsClient.sendMessage({ type: 'flag_update', ...payload });
         if (!sent) {
           this.inFlight.transport = 'rest';
-          this.batchState = BatchState.SendingRest;
           await this.sendViaRest(payload, options);
         } else {
           this.setAckTimeout(batchId);
@@ -253,7 +249,6 @@ class FlagSyncManager {
         return;
       }
 
-      this.batchState = BatchState.SendingRest;
       await this.sendViaRest(payload, options);
     } catch (error) {
       await this.handleFlushError(error);
@@ -267,6 +262,57 @@ class FlagSyncManager {
       this.abortController = null;
     }
     this.clearAckTimeout();
+  }
+
+  /**
+   * Persist all queued changes before an explicit logout revokes the session.
+   * REST is used deliberately because its ACK is awaitable; WebSocket flush()
+   * returns after send and can still be awaiting an ACK when shutdown clears
+   * IndexedDB. Returns false when the bounded drain cannot complete.
+   */
+  async drainBeforeLogout(timeoutMs: number = 8000): Promise<boolean> {
+    if (!this.userId) return true;
+
+    const deadline = Date.now() + timeoutMs;
+    this.clearTimer();
+    this.resetBackoff();
+
+    while (Date.now() < deadline && this.userId) {
+      if (this.inFlight) {
+        const activeBatchId = this.inFlight.batchId;
+        await this.waitForBatchToSettle(activeBatchId, Math.min(1000, deadline - Date.now()));
+
+        if (this.inFlight?.batchId === activeBatchId) {
+          await this.handleFlushError(new Error('Logout drain switching batch to REST'));
+          this.finalizeInFlight();
+          this.resetBackoff();
+        }
+      }
+
+      await this.flush({ forceRest: true });
+
+      const pending = await getFlagUpdatesByStatus(this.userId, 'pending');
+      const inFlight = await getFlagUpdatesByStatus(this.userId, 'in-flight');
+      if (pending.length === 0 && inFlight.length === 0 && !this.inFlight) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private waitForBatchToSettle(batchId: string, timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      const check = () => {
+        if (!this.inFlight || this.inFlight.batchId !== batchId || Date.now() - startedAt >= timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(check, 25);
+      };
+      check();
+    });
   }
 
   private clearTimer(): void {
@@ -343,8 +389,13 @@ class FlagSyncManager {
 
     this.resetBackoff();
 
+    // Guard instead of `this.userId!`: shutdown() can nullify userId while an
+    // async ACK is in flight. Dropping the update processing here is safe —
+    // logout clears the queue intentionally.
+    if (!this.userId) return false;
+
     const accepted = new Set(ack.acceptedIds || []);
-    const pendingUpdates = await getFlagUpdatesByStatus(this.userId!, 'in-flight');
+    const pendingUpdates = await getFlagUpdatesByStatus(this.userId, 'in-flight');
     const batchRecords = pendingUpdates.filter((record) => this.inFlight?.recordIds.includes(record.id));
 
     const deleteIds: string[] = [];
@@ -461,7 +512,6 @@ class FlagSyncManager {
     this.clearAckTimeout();
     this.abortController = null;
     this.inFlight = null;
-    this.batchState = BatchState.Idle;
   }
 
   private notifyAck(ack: FlagUpdateAck): void {
@@ -485,6 +535,15 @@ class FlagSyncManager {
 
     const pending = await getFlagUpdatesByStatus(this.userId, 'pending');
     if (pending.length === 0) return;
+
+    // Online WebSocket mode is the real-time path: send immediately and keep
+    // the record until the server ACKs it. The five-minute cooldown is only
+    // for REST/offline batching; applying it here lets a page refresh race
+    // ahead of the server update and restore stale read/star state.
+    if (wsClient.isConnected() && navigator.onLine) {
+      void this.flush();
+      return;
+    }
 
     const coalesced = this.coalesceUpdates(pending);
     if (coalesced.length >= BATCH_SIZE) {
@@ -510,7 +569,7 @@ class FlagSyncManager {
 
   private async sendViaRest(
     payload: { batchId: string; updates: Array<{ cacheId: number; isRead?: boolean; isStarred?: boolean }> },
-    options?: { keepalive?: boolean; fireAndForget?: boolean }
+    options?: { keepalive?: boolean; fireAndForget?: boolean; forceRest?: boolean }
   ): Promise<void> {
     const controller = new AbortController();
     this.abortController = controller;

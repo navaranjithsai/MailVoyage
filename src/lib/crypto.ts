@@ -79,9 +79,29 @@ const ENC_PREFIX = 'mv.enc$';
 const KEY_STORAGE_KEY = 'mv-enc-key';
 
 /**
+ * Convert a Uint8Array to a base64 string in chunks.
+ * `String.fromCharCode(...bytes)` spreads all bytes onto the call stack and
+ * blows up (stack overflow) for large payloads like encrypted mail bodies.
+ * Chunking keeps the operation safe for any size.
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK_SIZE = 0x8000; // 32768 bytes per chunk — safe call-stack size
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
+}
+
+/**
  * Derive or retrieve the per-user encryption key.
  * Key is stored in localStorage so it survives tab close / page refresh.
  * It is destroyed on logout when localStorage.clear() is called.
+ *
+ * SECURITY NOTE (known trade-off): the key lives in localStorage, so any XSS
+ * can read it and decrypt locally stored mail. Accepting this for now to keep
+ * offline data readable across reloads; revisit if stricter protection is
+ * required (e.g. derive the key from the session).
  */
 async function getEncryptionKey(): Promise<CryptoKey> {
   let rawKey = localStorage.getItem(KEY_STORAGE_KEY);
@@ -90,7 +110,7 @@ async function getEncryptionKey(): Promise<CryptoKey> {
     // Generate a new 256-bit key and persist
     const keyBytes = new Uint8Array(32);
     crypto.getRandomValues(keyBytes);
-    rawKey = btoa(String.fromCharCode(...keyBytes));
+    rawKey = bytesToBase64(keyBytes);
     localStorage.setItem(KEY_STORAGE_KEY, rawKey);
   }
 
@@ -109,8 +129,8 @@ export async function encryptData(plaintext: string): Promise<string> {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(plaintext);
     const cipherBuffer = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-    const ivB64 = btoa(String.fromCharCode(...iv));
-    const cipherB64 = btoa(String.fromCharCode(...new Uint8Array(cipherBuffer)));
+    const ivB64 = bytesToBase64(iv);
+    const cipherB64 = bytesToBase64(new Uint8Array(cipherBuffer));
     return `${ENC_PREFIX}${ivB64}:${cipherB64}`;
   } catch {
     // Fallback: return plain if crypto fails (e.g. insecure context)

@@ -16,7 +16,11 @@ import {
   FileArchive,
   FileCode,
   ExternalLink,
-  Eye
+  Eye,
+  Code,
+  Copy,
+  Check,
+  Info
 } from 'lucide-react';
 import { 
   base64ToBlobUrl, 
@@ -53,6 +57,34 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
   const blobUrlRef = useRef<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // HTML preview mode: 'preview' renders the page (sandboxed), 'code' shows
+  // the syntax-highlighted source. Only meaningful for .html attachments.
+  const [htmlViewMode, setHtmlViewMode] = useState<'preview' | 'code'>('preview');
+  const [codeCopied, setCodeCopied] = useState(false);
+  // Tooltip visibility for the HTML info icon
+  const [showHtmlInfo, setShowHtmlInfo] = useState(false);
+  const htmlInfoRef = useRef<HTMLDivElement>(null);
+
+  // Close the tooltip on outside click / focus loss / Escape
+  useEffect(() => {
+    if (!showHtmlInfo) return;
+    const handleOutside = (e: MouseEvent | FocusEvent) => {
+      if (htmlInfoRef.current && !htmlInfoRef.current.contains(e.target as Node)) {
+        setShowHtmlInfo(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowHtmlInfo(false);
+    };
+    document.addEventListener('mousedown', handleOutside, true);
+    document.addEventListener('focusin', handleOutside, true);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside, true);
+      document.removeEventListener('focusin', handleOutside, true);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [showHtmlInfo]);
 
   const currentAttachment = attachments[currentIndex];
 
@@ -277,7 +309,84 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
       );
     }
 
-    // Text preview
+    // HTML preview / code view. Two modes:
+    //  - preview: srcDoc with permissive sandbox (renders visually, scripts
+    //    inert — sandbox="" kills execution)
+    //  - code: read-only monospace view with line numbers + copy button
+    const filenameLc = currentAttachment?.filename.toLowerCase() ?? '';
+    const isHtmlAttachment =
+      contentType === 'text/html' || filenameLc.endsWith('.html') || filenameLc.endsWith('.htm');
+
+    if (isHtmlAttachment) {
+      // Decode base64 → raw HTML. Cheap enough to compute inline (KBs, not MBs);
+      // and not stored in state — setState during render would loop.
+      let htmlContent = '';
+      try {
+        const byteCharacters = atob(currentAttachment.content || '');
+        const byteNumbers = new Uint8Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        htmlContent = new TextDecoder('utf-8').decode(byteNumbers);
+      } catch (e) {
+        console.error('Failed to decode HTML attachment:', e);
+        htmlContent = '<p style="color:#9ca3af">(Could not decode HTML file)</p>';
+      }
+
+      if (htmlViewMode === 'code') {
+        // Render the HTML source with line numbers + monospace font
+        const lines = htmlContent.split('\n');
+        return (
+          <div className="w-full h-full overflow-auto bg-gray-900 text-gray-100 p-4 font-mono text-sm leading-6">
+            <div className="flex items-center justify-end mb-2 sticky top-0 bg-gray-900 py-1 border-b border-gray-800">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(htmlContent).then(() => {
+                    setCodeCopied(true);
+                    setTimeout(() => setCodeCopied(false), 1500);
+                  });
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-800 hover:bg-gray-700 text-xs font-medium transition-colors"
+                title="Copy HTML source"
+              >
+                {codeCopied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {codeCopied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <table className="w-full border-collapse">
+              <tbody>
+                {lines.map((line, idx) => (
+                  <tr key={idx} className="align-top">
+                    <td className="pr-4 text-right text-gray-500 select-none w-10 whitespace-nowrap">
+                      {idx + 1}
+                    </td>
+                    <td className="whitespace-pre-wrap break-all text-gray-100">{line || ' '}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+
+      // Preview mode: srcDoc with permissive CSP, sandbox="" (no scripts)
+      const permissiveCsp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval'; font-src * data:; connect-src *; media-src * data: blob:;">`;
+      const srcDoc = /<meta[^>]*http-equiv=["']?content-security-policy/i.test(htmlContent)
+        ? htmlContent
+        : permissiveCsp + htmlContent;
+
+      return (
+        <iframe
+          srcDoc={srcDoc}
+          sandbox=""
+          className="w-full h-full border-0 bg-white dark:bg-gray-900"
+          title={currentAttachment?.filename}
+        />
+      );
+    }
+
+    // Text preview (.txt and other text/* types) — these inherit outer CSP,
+    // but plain text files don't reference external resources, so it works.
     if (contentType.startsWith('text/')) {
       return (
         <iframe
@@ -338,14 +447,83 @@ const AttachmentViewer: React.FC<AttachmentViewerProps> = ({
                 {getFileIcon(currentAttachment?.contentType || '')}
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white truncate">
-                  {currentAttachment?.filename}
-                </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {formatFileSize(currentAttachment?.size || 0)} • {currentAttachment?.contentType}
-                </p>
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white truncate">
+                    {currentAttachment?.filename}
+                  </h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    {formatFileSize(currentAttachment?.size || 0)} • {currentAttachment?.contentType}
+                  </p>
+                </div>
+  
+                {/* HTML Preview/Code toggle — only shown for .html attachments */}
+                {currentAttachment &&
+                  (currentAttachment.contentType === 'text/html' ||
+                   currentAttachment.filename.toLowerCase().endsWith('.html') ||
+                   currentAttachment.filename.toLowerCase().endsWith('.htm')) && (
+                  <>
+                    <div className="flex items-center gap-0 rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => setHtmlViewMode('preview')}
+                        className={`p-2 transition-colors ${
+                          htmlViewMode === 'preview'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-transparent text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                        }`}
+                        title="Preview HTML"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHtmlViewMode('code')}
+                        className={`p-2 transition-colors ${
+                          htmlViewMode === 'code'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-transparent text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+                        }`}
+                        title="View source code"
+                      >
+                        <Code className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Info button + tooltip — explains what the HTML sandbox does */}
+                    <div
+                      ref={htmlInfoRef}
+                      className="relative shrink-0 ml-1"
+                      onMouseEnter={() => setShowHtmlInfo(true)}
+                      onMouseLeave={() => setShowHtmlInfo(false)}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setShowHtmlInfo(v => !v)}
+                        className="p-1.5 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                        title="About HTML preview"
+                        aria-label="About HTML preview"
+                        aria-expanded={showHtmlInfo}
+                      >
+                        <Info className="w-4 h-4" />
+                      </button>
+
+                      {showHtmlInfo && (
+                        <div
+                          role="tooltip"
+                          className="absolute left-1/2 -translate-x-1/2 mt-2 w-56 max-w-[80vw] rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-xs shadow-xl border border-gray-700 dark:border-gray-300 p-3 z-50 leading-relaxed"
+                        >
+                          <p className="font-semibold mb-1.5">Sandboxed HTML Preview</p>
+                          <ul className="space-y-1 text-gray-200 dark:text-gray-700">
+                            <li>• Scripts cannot run (sandboxed)</li>
+                            <li>• External images & styles load visually</li>
+                            <li>• No cookies or auth are shared</li>
+                            <li>• Switch to <Code className="inline w-3 h-3 align-middle mx-0.5" /> to view source</li>
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
             
             <div className="flex items-center space-x-2">
               {/* Navigation counter */}

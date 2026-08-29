@@ -318,7 +318,17 @@ class WebSocketService {
         [userIdNum]
       );
 
-      const currentVersion = result.rows[0]?.session_version ?? 0;
+      // SECURITY FIX (C3/L4): explicitly reject DELETED users. Previously
+      // `rows[0]?.session_version ?? 0` made a deleted user compare equal to
+      // a client whose sessionVersion happened to be 0, so flag updates could
+      // slip through for a non-existent account.
+      if (result.rows.length === 0) {
+        this.sendError(ws, 'User not found');
+        ws.close(1008, 'User not found');
+        return;
+      }
+
+      const currentVersion = result.rows[0].session_version ?? 0;
       if (currentVersion !== client.sessionVersion) {
         this.sendError(ws, 'Session revoked');
         ws.close(1008, 'Session revoked');

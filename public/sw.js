@@ -10,8 +10,6 @@
 
 const CACHE_NAME = 'mailvoyage-v1';
 const API_CACHE_NAME = 'mailvoyage-api-v1';
-const OFFLINE_QUEUE_KEY = 'mailvoyage-offline-queue';
-
 // Static assets to cache immediately on install
 const STATIC_ASSETS = [
   '/',
@@ -118,7 +116,7 @@ async function handleAPIRequest(request) {
     }
     
     return networkResponse;
-  } catch (error) {
+  } catch {
     console.log('[SW] Network failed, trying cache for:', url.pathname);
     
     // Try cache as fallback
@@ -171,7 +169,7 @@ async function handleStaticRequest(request) {
     }
     
     return networkResponse;
-  } catch (error) {
+  } catch {
     console.log('[SW] Failed to fetch:', request.url);
     
     // For navigation requests, return cached index.html
@@ -195,7 +193,7 @@ async function handleQueueableRequest(request) {
     // Try to send the request
     const response = await fetch(request.clone());
     return response;
-  } catch (error) {
+  } catch {
     console.log('[SW] Request failed, adding to offline queue:', request.url);
     
     // Add to offline queue

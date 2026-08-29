@@ -12,12 +12,31 @@ export interface SmtpAccount {
   port: number;
   username?: string;
   password: string;
-  security: 'SSL' | 'TLS' | 'STARTTLS' | 'PLAIN' | 'NONE';
+  // Note: legacy values 'TLS' (alias of STARTTLS) and 'PLAIN' are no longer
+  // produced or accepted; they are normalized in mapFromDb for existing rows.
+  security: 'SSL' | 'STARTTLS' | 'NONE';
   accountCode?: string;
   isActive?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
+
+/** Map legacy/incorrect stored security values onto supported ones. */
+const normalizeSecurity = (value: unknown): SmtpAccount['security'] => {
+  const v = typeof value === 'string' ? value.toUpperCase() : '';
+  switch (v) {
+    case 'SSL':
+      return 'SSL';
+    case 'NONE':
+    case 'PLAIN':
+      return 'NONE';
+    case 'STARTTLS':
+    case 'TLS': // legacy alias
+      return 'STARTTLS';
+    default:
+      return 'SSL';
+  }
+};
 
 const mapFromDb = (row: Record<string, unknown>): SmtpAccount => ({
   id: row.id as string,
@@ -27,7 +46,7 @@ const mapFromDb = (row: Record<string, unknown>): SmtpAccount => ({
   port: row.port as number,
   username: row.username as string,
   password: row.password as string,
-  security: row.security as SmtpAccount['security'],
+  security: normalizeSecurity(row.security),
   accountCode: row.account_code as string,
   isActive: row.is_active as boolean,
   createdAt: row.created_at as Date,
@@ -179,11 +198,12 @@ export const testSmtpAccount = async (id: string, userId: string): Promise<{ suc
     }
     const pass = passDec ?? acc.password;
 
+    const transportSecurity = normalizeSecurity(acc.security);
     const transporter = nodemailer.createTransport({
       host: acc.host,
       port: Number(acc.port),
-      secure: (acc.security || 'SSL') === 'SSL',
-      requireTLS: (acc.security || 'SSL') === 'STARTTLS' || (acc.security || 'SSL') === 'TLS',
+      secure: transportSecurity === 'SSL',
+      requireTLS: transportSecurity === 'STARTTLS',
       auth: { user: acc.username || acc.email, pass },
       connectionTimeout: 10000,
       greetingTimeout: 10000,

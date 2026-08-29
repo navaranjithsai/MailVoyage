@@ -37,8 +37,12 @@ export const sendMail = async (req: Request, res: Response, next: NextFunction) 
       logger.error('User not authenticated or missing user ID');
       return next(new AppError('User authentication failed', 401));
     }
-    
-    const userId = user.id;
+
+    // req.user.id is always a string; convert once at the boundary.
+    const userId = Number(user.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return next(new AppError('Invalid user id', 400, true));
+    }
     const mailData = req.body;
     
     logger.info(`Send mail request from user ${userId}`);

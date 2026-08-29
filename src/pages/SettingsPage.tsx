@@ -25,6 +25,7 @@ import { useEmail } from '@/contexts/EmailContext';
 import { toast } from '@/lib/toast';
 import { isMobileTabletWidth } from '@/lib/navigation';
 import { apiFetch } from '@/lib/apiFetch';
+import { AUTH_USER_UPDATED_EVENT } from '@/contexts/AuthContext';
 import * as validators from '@/lib/validators';
 import EmailSettings from './settings/EmailSettings';
 import TwoFactorSettings from './settings/TwoFactorSettings';
@@ -166,7 +167,8 @@ const SettingsPage: React.FC = () => {
       const response = await apiFetch('/api/users/profileUpdate', {
         method: 'PUT',
         body: JSON.stringify({
-          id: profile.id.toString(),
+          // No `id` in body — the server derives the target user from the
+          // auth token; sending an id would be rejected by strict validation.
           username: profile.username,
           email: profile.email,
         }),
@@ -179,6 +181,7 @@ const SettingsPage: React.FC = () => {
         email: response.user.email,
       };
       localStorage.setItem('authUser', JSON.stringify(updatedUserData));
+      window.dispatchEvent(new CustomEvent(AUTH_USER_UPDATED_EVENT, { detail: updatedUserData }));
       
       setIsUpdating(false);
       setUpdateSuccess(true);

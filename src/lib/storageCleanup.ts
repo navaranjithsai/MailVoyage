@@ -128,7 +128,8 @@ export const clearCookies = (): void => {
     for (let i = 0; i < cookies.length; i++) {
       const cookie = cookies[i];
       const eqPos = cookie.indexOf('=');
-      const name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+      // substr() is deprecated — slice(0, eqPos) is equivalent for eqPos >= 0.
+      const name = eqPos > -1 ? cookie.slice(0, eqPos).trim() : cookie.trim();
       
       // Clear cookie by setting expiry to past date
       document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
@@ -229,8 +230,11 @@ export const getStorageStats = async (): Promise<{
       .map(db => db.name)
       .filter((name): name is string => !!name && (name === CACHE_DB_NAME || name === DEXIE_DB_NAME));
   } catch {
-    // databases() not supported in all browsers
-    existingDatabases = ['unknown'];
+    // indexedDB.databases() is not supported in all browsers (Firefox,
+    // older Safari). Previously we returned ['unknown'] which was then
+    // compared against real DB names and never matched. Instead, fall back
+    // to assuming our known databases may exist.
+    existingDatabases = [CACHE_DB_NAME, DEXIE_DB_NAME].filter(name => !!name);
   }
   
   return {

@@ -63,10 +63,12 @@ export const resetPasswordSchema = z.object({
 
 // --- User Schemas ---
 export const updateUserSchema = z.object({
-  id: z.union([z.string(), z.number()]).transform(String), // Accept both string and number, convert to string
+  // SECURITY: The target user identity is derived server-side from the auth
+  // token (req.user.id). Do NOT accept an `id` in the body — allowing it
+  // would let any authenticated user target someone else's profile.
   username: z.string().min(3, 'Username must be at least 3 characters'),
   email: z.string().email('Invalid email address'),
-}).strict(); // Disallow extra fields
+}).strict(); // Disallow extra fields (including any `id`)
 
 export const changePasswordSchema = z
   .object({

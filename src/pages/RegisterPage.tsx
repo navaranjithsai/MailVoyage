@@ -26,7 +26,7 @@ const RegisterPage: React.FC = () => {
   const [passwordFocused, setPasswordFocused] = useState(false);
   const navigate = useNavigate();
 
-   
+
   const passwordValue = watch('password', '');
 
   const togglePasswordVisibility = () => setShowPassword((v) => !v);
@@ -83,7 +83,7 @@ const RegisterPage: React.FC = () => {
               <input
                 type="text"
                 id="username"
-                autoComplete="username"
+                autoComplete="username" placeholder="Enter your username"
                 {...register('username', usernameValidation)}
                 className={`pl-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.username ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
@@ -108,7 +108,7 @@ const RegisterPage: React.FC = () => {
               <input
                 type="email"
                 id="email"
-                autoComplete="email"
+                autoComplete="email" placeholder="Enter your email"
                 {...register('email', emailValidation)}
                 className={`pl-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}
@@ -132,7 +132,7 @@ const RegisterPage: React.FC = () => {
               <input
                 type={showPassword ? 'text' : 'password'}
                 id="password"
-                autoComplete="new-password"
+                autoComplete="new-password" placeholder="Enter your password"
                 {...register('password', passwordValidation)}
                 className={`pl-10 pr-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                   ${errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}

@@ -634,13 +634,12 @@ export async function syncMailsToCache(
 
     const savedMails: InboxMail[] = [];
 
-    // Determine if this is a POP3 account (POP3 has no flags; preserve local read/starred)
-    const isPop3 = mails.length > 0 && mails[0].mailbox === 'INBOX'
-      && mails[0]._pop3 === true;
-
     const flagOverrideWindow = `NOW() - INTERVAL '${FLAG_OVERRIDE_RETENTION_HOURS} hours'`;
 
     for (const mail of mails) {
+      // Determine POP3 PER MAIL (not from mails[0]) so a hypothetical mixed
+      // batch can't cause IMAP mails to lose server flag authority.
+      const isPop3 = mail._pop3 === true;
       // For IMAP: overwrite flags from server (they are authoritative).
       // For POP3: preserve locally-set is_read / is_starred (POP3 always sends false).
       const onConflictSet = isPop3
@@ -701,15 +700,20 @@ export async function syncMailsToCache(
       savedMails.push({ ...mail, id: result.rows[0].id });
     }
 
-    // Trim old mails: keep only the latest `cacheLimit` per account+mailbox
+    // Trim old mails: keep only the latest `cacheLimit` per account+mailbox.
+    // NOT EXISTS is safer than NOT IN here: NOT IN collapses to NULL/false if
+    // the subquery ever yields a NULL id (deleting nothing) and performs
+    // worse at scale. The CTE caps the kept set exactly.
     await client.query(
-      `DELETE FROM inbox_cache
-       WHERE user_id = $1 AND account_code = $2 AND id NOT IN (
+      `WITH keep AS (
          SELECT id FROM inbox_cache
          WHERE user_id = $1 AND account_code = $2
          ORDER BY date DESC
          LIMIT $3
-       )`,
+       )
+       DELETE FROM inbox_cache
+       WHERE user_id = $1 AND account_code = $2
+         AND NOT EXISTS (SELECT 1 FROM keep WHERE keep.id = inbox_cache.id)`,
       [userId, accountCode, cacheLimit]
     );
 
@@ -1235,19 +1239,21 @@ export async function searchMailsOnServer(
   });
   const fetchedMails: InboxMail[] = [];
 
+  // Build SINCE date ONCE at function scope so the returned dateRange exactly
+  // matches the search window actually used (avoids shadowing/recomputation).
+  let sinceDate: Date | undefined;
+  if (sinceMonths > 0) {
+    sinceDate = new Date();
+    sinceDate.setMonth(sinceDate.getMonth() - sinceMonths);
+    sinceDate.setHours(0, 0, 0, 0);
+  }
+
   try {
     await client.connect();
     logger.info(`[Search] Connected to ${creds.host} for account ${accountCode}`);
 
     const lock = await client.getMailboxLock(mailbox);
     try {
-      // Build SINCE date for the date-range filter
-      let sinceDate: Date | undefined;
-      if (sinceMonths > 0) {
-        sinceDate = new Date();
-        sinceDate.setMonth(sinceDate.getMonth() - sinceMonths);
-        sinceDate.setHours(0, 0, 0, 0);
-      }
 
       // IMAP SEARCH: search for the query across OR(FROM, TO, SUBJECT, TEXT).
       // ImapFlow's .search() accepts SearchObject with OR arrays.
@@ -1344,9 +1350,7 @@ export async function searchMailsOnServer(
     // Sort by date descending
     fetchedMails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    const sinceDate = sinceMonths > 0 ? new Date() : null;
-    if (sinceDate) sinceDate.setMonth(sinceDate.getMonth() - sinceMonths);
-
+    // Return the SAME date-window that the IMAP SEARCH actually used.
     return {
       mails: fetchedMails,
       searched: fetchedMails.length,
@@ -1456,6 +1460,27 @@ export async function getAccountList(userId: string): Promise<Array<{ accountCod
 // ============================================================================
 
 function mapRowToInboxMail(row: Record<string, unknown>): InboxMail {
+  const attachmentsRaw = row.attachments_metadata as
+    | InboxMail['attachmentsMetadata']
+    | string
+    | null
+    | undefined;
+  const labelsRaw = row.labels as string[] | string | null | undefined;
+
+  // attachments_metadata / labels can come back as arrays (jsonb) or JSON
+  // strings depending on the pg driver configuration — normalize both.
+  let attachmentsMetadata: InboxMail['attachmentsMetadata'] = null;
+  if (attachmentsRaw) {
+    attachmentsMetadata =
+      typeof attachmentsRaw === 'string'
+        ? (JSON.parse(attachmentsRaw) as InboxMail['attachmentsMetadata'])
+        : attachmentsRaw;
+  }
+  let labels: string[] | null = null;
+  if (labelsRaw) {
+    labels = typeof labelsRaw === 'string' ? (JSON.parse(labelsRaw) as string[]) : labelsRaw;
+  }
+
   return {
     id: row.id as string,
     uid: row.uid as number,
@@ -1471,10 +1496,14 @@ function mapRowToInboxMail(row: Record<string, unknown>): InboxMail {
     textBody: (row.text_body as string) || null,
     htmlBody: (row.html_body as string) || null,
     date: row.date ? new Date(row.date as string).toISOString() : new Date().toISOString(),
-    isRead: (row.is_read as boolean) || false,
-    isStarred: (row.is_starred as boolean) || false,
-    hasAttachments: (row.has_attachments as boolean) || false,
-    attachmentsMetadata: (row.attachments_metadata as InboxMail['attachmentsMetadata']) || null,
-    labels: (row.labels as string[]) || null,
+    // Explicit Boolean() coercion: the pg driver normally returns real
+    // booleans, but `as boolean || false` would silently pass through truthy
+    // non-booleans (e.g. 1) which violates the strict-boolean contract of
+    // InboxMail and breaks `isRead === true` checks downstream.
+    isRead: Boolean(row.is_read),
+    isStarred: Boolean(row.is_starred),
+    hasAttachments: Boolean(row.has_attachments),
+    attachmentsMetadata,
+    labels,
   };
 }

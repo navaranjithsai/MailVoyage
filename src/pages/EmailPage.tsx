@@ -32,12 +32,33 @@ interface EmailAttachment {
   content?: string;
 }
 
-const toAttachmentViewerData = (attachment: AttachmentWithContent | EmailAttachment): AttachmentData => ({
-  filename: 'filename' in attachment ? attachment.filename : attachment.name,
-  contentType: 'contentType' in attachment ? attachment.contentType : attachment.type,
-  size: typeof attachment.size === 'number' ? attachment.size : Number.parseFloat(attachment.size) || 0,
-  content: attachment.content,
-});
+const toAttachmentViewerData = (attachment: AttachmentWithContent | EmailAttachment): AttachmentData => {
+  // attachment.size is sometimes a formatted string like "1.5 MB" from
+  // EmailContext.inboxRecordToEmail. parseFloat would extract just "1.5"
+  // which the downstream formatter then displays as "1.5 Bytes". Prefer
+  // computing the real byte count from base64 content (or the raw size
+  // when it's already a number).
+  let sizeBytes: number;
+  if (typeof attachment.size === 'number' && Number.isFinite(attachment.size)) {
+    sizeBytes = attachment.size;
+  } else if (attachment.content) {
+    // base64 → bytes: strip any whitespace, account for padding
+    const cleaned = attachment.content.replace(/\s/g, '');
+    const padding = (cleaned.match(/=+$/)?.[0]?.length) ?? 0;
+    sizeBytes = Math.max(0, Math.floor((cleaned.length * 3) / 4) - padding);
+  } else {
+    // Last resort: parse the numeric prefix; better than showing
+    // "1.5 Bytes" for a "1.5 MB" input, but still wrong units.
+    sizeBytes = Number.parseFloat(String(attachment.size)) || 0;
+  }
+
+  return {
+    filename: 'filename' in attachment ? attachment.filename : attachment.name,
+    contentType: 'contentType' in attachment ? attachment.contentType : attachment.type,
+    size: sizeBytes,
+    content: attachment.content,
+  };
+};
 
 // Type for sent mail from API
 interface SentMailDetail {
@@ -1021,6 +1042,31 @@ const EmailPage: React.FC = () => {
           </div>
         </motion.div>
       </div>
+
+      {/* Attachment Viewer Modal - for regular attachments (inbox mail) */}
+      {selectedAttachment && showAttachmentViewer && (
+        <AttachmentViewer
+          attachments={[{
+            filename: selectedAttachment.filename,
+            contentType: selectedAttachment.contentType,
+            content: selectedAttachment.content || '',
+            size: selectedAttachment.size,
+          }]}
+          initialIndex={0}
+          isOpen={showAttachmentViewer}
+          onClose={handleCloseAttachmentViewer}
+        />
+      )}
+
+      {/* Attachment Viewer Modal - for inline images in HTML content (inbox mail) */}
+      {!selectedAttachment && inlineImages.length > 0 && showAttachmentViewer && (
+        <AttachmentViewer
+          attachments={inlineImages}
+          initialIndex={selectedImageIndex}
+          isOpen={showAttachmentViewer}
+          onClose={handleCloseAttachmentViewer}
+        />
+      )}
     </div>
   );
 };

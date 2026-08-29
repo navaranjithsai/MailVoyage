@@ -1,6 +1,6 @@
 {
   "name": "mailvoyage-api",
-  "version": "2026.7.1",
+  "version": "2026.8.1",
   "description": "Backend API for MailVoyage - Email client REST API with WebSocket support",
   "main": "dist/index.js",
   "type": "module",
@@ -54,6 +54,9 @@
     "winston": "^3.19.0",
     "ws": "^8.21.2",
     "zod": "^4.3.6"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

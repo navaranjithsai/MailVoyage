@@ -292,7 +292,7 @@ const LoginPage: React.FC = () => {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   id="password"
-                  autoComplete="current-password"
+                  autoComplete="current-password" placeholder="Enter your password"
                   {...register('password', { required: 'Password is required' })}
                   className={`pl-10 pr-10 mt-1 block w-full border h-11 rounded-md shadow-sm focus:ring focus:ring-blue-500 
                     ${errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'} dark:text-gray-300`}

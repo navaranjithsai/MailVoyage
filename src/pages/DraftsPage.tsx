@@ -23,6 +23,12 @@ import {
   type EmailDraft,
 } from '@/lib/db';
 import { toast } from '@/lib/toast';
+import DOMPurify from 'dompurify';
+
+// Sanitize draft HTML before rendering as a preview. Drafts are normally
+// authored by the user, but stored HTML could contain script tags (e.g. from
+// pasted source) — never trust it unsanitized via dangerouslySetInnerHTML.
+const sanitizeHtml = (html: string) => DOMPurify.sanitize(html);
 
 const DraftsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -532,7 +538,7 @@ const DraftsPage: React.FC = () => {
                   <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
                     <div
                       className="ck-content email-preview max-w-none text-gray-900 dark:text-gray-100"
-                      dangerouslySetInnerHTML={{ __html: previewDraft.htmlContent || '<p>(No content)</p>' }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(previewDraft.htmlContent || '<p>(No content)</p>') }}
                     />
                   </div>
                   {previewDraft.attachments && previewDraft.attachments.length > 0 && (

@@ -137,7 +137,8 @@ export function addToOfflineQueue(item: Omit<OfflineQueueItem, 'id' | 'timestamp
   
   const newItem: OfflineQueueItem = {
     ...item,
-    id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    // substr() is deprecated — use slice() here.
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
     timestamp: Date.now()
   };
   

@@ -20,49 +20,57 @@ export const getProfile = async (req: Request, res: Response, next: NextFunction
 // Update user profile
 export const updateProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { id, username, email } = req.body;
+    const { username, email } = req.body;
     const currentUser = req.user; // From auth middleware
     
     if (!currentUser) {
       return next(new AppError('Unauthorized', 401));
     }
-    
+
+    // SECURITY FIX (R1): Derive the target identity ONLY from the auth token.
+    // Previously the target `id` came from the request body and the guard
+    // `currentUser.email !== email && !currentUser.username` was a no-op for
+    // authenticated users — meaning any logged-in user could rewrite another
+    // user's profile by supplying their id. Ignore body `id` entirely.
+    const targetUserId = Number(currentUser.id);
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return next(new AppError('Invalid authenticated user id', 400, true));
+    }
+
     logger.info('Profile update requested', { 
-      requestedId: id, 
+      userId: targetUserId,
       currentUser: currentUser.email,
       newUsername: username,
       newEmail: email 
     });
 
-    // Verify the user is updating their own profile
-    if (currentUser.email !== email && !currentUser.username) {
-      logger.warn('User attempted to update different user profile', { 
-        currentUser: currentUser.email, 
-        requestedEmail: email 
-      });
-      return next(new AppError('Unauthorized: Cannot update another user\'s profile', 403));
-    }
-
     try {
-      await userService.updateUserProfile(parseInt(id), { username, email });
+      await userService.updateUserProfile(targetUserId, { username, email });
       
-      // Generate new access token with updated information
-      const newAccessToken = tokenService.generateAccessToken({ username, email });
+      // Replace the access token atomically with the profile response. Keep
+      // the current sessionVersion so existing authenticated channels remain
+      // valid, while including every claim required by authenticateToken.
+      const newAccessToken = tokenService.generateAccessToken({
+        userId: targetUserId,
+        username,
+        email,
+        sessionVersion: currentUser.sessionVersion,
+      });
       
       // Set the new token in httpOnly cookie
       res.cookie('authToken', newAccessToken, {
         httpOnly: true,
         secure: config.nodeEnv === 'production',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        sameSite: config.nodeEnv === 'production' ? 'none' : 'lax',
+        sameSite: 'strict',
         path: '/',
       });
 
-      logger.info('Profile updated successfully', { userId: id, username, email });
+      logger.info('Profile updated successfully', { userId: targetUserId, username, email });
       
       res.status(200).json({ 
         message: 'Profile updated successfully',
-        user: { id, username, email }
+        user: { id: String(targetUserId), username, email }
       });
     } catch (error: unknown) {
       logger.error('Error updating profile:', error);

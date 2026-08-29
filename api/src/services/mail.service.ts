@@ -183,6 +183,8 @@ export const createFolder = async (userId: number, folderName: string) => {
 
 interface SendMailPayload {
   accountCode: string;
+  /** Display name for the From header (optional; falls back to bare address) */
+  fromName?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -205,6 +207,17 @@ const normalizeHeaderValue = (value: string): string => {
     throw new AppError('Invalid header value', 400, true, { general: 'Header values cannot contain line breaks.' });
   }
   return trimmed;
+};
+
+/**
+ * Calculate the exact decoded byte size of a base64 string, accounting for
+ * '=' padding. Avoids the naive `length * 3 / 4` over-estimate.
+ */
+const base64ByteSize = (base64: string): number => {
+  let padding = 0;
+  if (base64.endsWith('==')) padding = 2;
+  else if (base64.endsWith('=')) padding = 1;
+  return Math.floor((base64.length * 3) / 4) - padding;
 };
 
 const normalizeAttachmentFilename = (filename: string): string => {
@@ -233,13 +246,21 @@ const normalizeBase64Attachment = (content: string): Buffer => {
 /**
  * Send email using user's email account credentials
  * Fetches account by accountCode from either email_accounts or smtp_accounts
+ *
+ * NOTE: userId is a number (users.id is an integer column). Controllers must
+ * convert `req.user.id` (string) once at the boundary — we never pass strings
+ * to database-facing services.
  */
-export const sendMailFromAccount = async (userId: string, payload: SendMailPayload): Promise<{ success: boolean; messageId?: string; threadId?: string; message: string }> => {
+export const sendMailFromAccount = async (userId: number, payload: SendMailPayload): Promise<{ success: boolean; messageId?: string; threadId?: string; message: string }> => {
   const client = await pool.connect();
-  
+
   try {
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new AppError('Invalid user id', 400, true);
+    }
+
     logger.info(`Attempting to send email for user ${userId} using account code ${payload.accountCode}`);
-    logger.debug(`Query parameters: userId="${userId}", accountCode="${payload.accountCode}"`);
+    logger.debug(`Query parameters: userId=${userId}, accountCode="${payload.accountCode}"`);
     
     // Step 1: Try to find the account in email_accounts first
     let accountResult = await client.query(
@@ -311,9 +332,12 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
     
     // Step 3: Create nodemailer transporter with account credentials
     logger.info(`Creating SMTP transporter: host=${smtpConfig.host}, port=${smtpConfig.port}, security=${smtpConfig.security}`);
-    
+
     const secure = smtpConfig.security === 'SSL';
-    const requireTLS = smtpConfig.security === 'TLS' || smtpConfig.security === 'STARTTLS';
+    // Only STARTTLS requires an explicit TLS upgrade on an initially-plaintext
+    // connection. 'SSL' uses implicit TLS (secure=true). 'NONE' stays plain.
+    // ('TLS' and 'PLAIN' were legacy aliases removed from the security union.)
+    const requireTLS = smtpConfig.security === 'STARTTLS';
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nodemailer transport options type not importable with NodeNext moduleResolution
     const transportConfig: Record<string, any> = {
@@ -382,14 +406,23 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
     }
     
     // Step 4: Prepare email options
+    // Build the From header properly: use the account address as the
+    // angle-addr and (if provided) the display name. We do NOT emit
+    // `addr <addr>` — that looks like a misconfigured sender to spam filters.
+    // nodemailer's object form RFC-encodes the display name for us.
+    const fromDisplay = typeof payload.fromName === 'string' ? payload.fromName.trim() : '';
+    const fromValue = fromDisplay
+      ? { name: fromDisplay, address: fromEmail }
+      : fromEmail;
+
     const mailOptions: {
-      from: string; to: string; subject: string; html: string; text?: string;
+      from: string | { name: string; address: string }; to: string; subject: string; html: string; text?: string;
       cc?: string; bcc?: string;
       attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
       disableFileAccess?: boolean;
       disableUrlAccess?: boolean;
     } = {
-      from: `${fromEmail} <${fromEmail}>`,
+      from: fromValue,
       to: payload.to.join(', '),
       subject: normalizeHeaderValue(payload.subject),
       html: payload.html,
@@ -464,9 +497,10 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
             filename: att.filename,
             content: att.content,
             contentType: att.contentType,
-            // Use provided size, or calculate from base64 content length
-            // base64 encodes 3 bytes into 4 characters, so decoded size ≈ base64Length * 3/4
-            size: att.size || Math.floor((att.content.length * 3) / 4),
+            // Use provided size, or calculate from base64 content length.
+            // base64 encodes 3 bytes into 4 chars; account for '=' padding
+            // so sizes like "QQ==" (1 byte) aren't overestimated to 3 bytes.
+            size: att.size || base64ByteSize(att.content),
           }))) : null,
           info.messageId,
           'sent',
@@ -476,7 +510,7 @@ export const sendMailFromAccount = async (userId: string, payload: SendMailPaylo
       logger.info(`Sent email saved to database with thread ID: ${threadId}`);
       
       // Signal the client that sent_mails table has been updated
-      signalNewSentMail(userId, new Date().toISOString());
+      signalNewSentMail(String(userId), new Date().toISOString());
     } catch (dbError: unknown) {
       // Log error but don't fail the operation - email was sent successfully
       logger.error('Failed to save sent email to database:', dbError);

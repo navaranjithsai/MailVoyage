@@ -16,7 +16,7 @@ import {
   ChevronDown,
   ExternalLink
 } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useLocation } from 'react-router';
 import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import { getSentMailsPaginated, deleteSentMails } from '@/lib/db';
@@ -43,6 +43,7 @@ interface SentMail {
 
 const SentPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { triggerSentSync, syncState } = useSync();
   const [sentMails, setSentMails] = useState<SentMail[]>([]);
   const [selectedMails, setSelectedMails] = useState<string[]>([]);
@@ -129,6 +130,28 @@ const SentPage: React.FC = () => {
       loadSentMails(currentPage);
     }
   }, [syncState.isSyncing, syncState.lastSync, currentPage, loadSentMails]);
+
+  // When arriving straight from Compose (navigate('/sent', { state:
+  // { justSent: true } })), the just-sent mail isn't in Dexie yet — the
+  // sent-mails delta sync hasn't run. Trigger a one-off sent sync so the
+  // new mail appears without the user having to click "Sync" manually.
+  // The `syncState.lastSync` effect above then reloads the list once the
+  // sync completes. We clear the history state afterwards so a page
+  // refresh or back-navigation doesn't re-trigger the sync.
+  useEffect(() => {
+    const state = location.state as { justSent?: boolean } | null;
+    if (state?.justSent) {
+      setIsRefreshing(true);
+      triggerSentSync()
+        .then(() => loadSentMails(currentPage))
+        .catch(err => console.error('Error syncing after send:', err))
+        .finally(() => setIsRefreshing(false));
+      // Clear the flag so it won't re-run on refresh/back navigation
+      navigate('.', { replace: true, state: {} });
+    }
+    // Only react to the initial arrival with justSent state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSelectMail = (mailId: string) => {
     setSelectedMails(prev => 
@@ -259,10 +282,26 @@ const SentPage: React.FC = () => {
   const getPreviewText = (mail: SentMail): string => {
     if (mail.textBody) return mail.textBody.substring(0, 150);
     if (mail.htmlBody) {
-      // Strip HTML tags for preview
-      const div = document.createElement('div');
-      div.innerHTML = mail.htmlBody;
-      return (div.textContent || div.innerText || '').trim().substring(0, 150);
+      // Strip HTML tags for preview.
+      // SECURITY: do NOT use div.innerHTML = mail.htmlBody here — the parser
+      // eagerly fetches external <img>/<link>/<source> resources even on a
+      // detached element, leaking user IP and acting as a tracking pixel
+      // every render. Pre-strip resource tags, then parse via DOMParser
+      // (parse alone does not fetch subresources).
+      const noResources = mail.htmlBody
+        .replace(/<img\b[^>]*>/gi, '')
+        .replace(/<image\b[^>]*>/gi, '')
+        .replace(/<link\b[^>]*>/gi, '')
+        .replace(/<source\b[^>]*>/gi, '')
+        .replace(/<video\b[^>]*>[\s\S]*?<\/video>/gi, '')
+        .replace(/<audio\b[^>]*>[\s\S]*?<\/audio>/gi, '')
+        .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
+        .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, '')
+        .replace(/<embed\b[^>]*>/gi, '')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+      const doc = new DOMParser().parseFromString(noResources, 'text/html');
+      return (doc.body?.textContent || '').trim().substring(0, 150);
     }
     return '(No content)';
   };

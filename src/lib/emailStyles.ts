@@ -4,6 +4,8 @@
  * across ComposePage, SentPage, EmailPage, and any future components.
  */
 
+import DOMPurify from 'dompurify';
+
 // Minimum height for the CKEditor in pixels
 export const EDITOR_MIN_HEIGHT_PX = 480;
 
@@ -1142,40 +1144,54 @@ export const attachCodeBlockEnhancements = (rootSelector = 'body') => {
 };
 
 /**
- * Sanitize HTML content for safe rendering
- * Uses DOMPurify to prevent XSS attacks while preserving formatting
+ * Sanitize untrusted email HTML for safe in-page rendering.
+ *
+ * Threat model:
+ *  - XSS via <script>, on* attributes, javascript: URLs,
+ *    SVG payloads — blocked by DOMPurify (its default policy covers these).
+ *  - UI hijack via <iframe>, <object>, <embed>, <form>, <button>,
+ *    <input>, <video>, <audio> — blocked via FORBID_TAGS.
+ *  - Tracking pixels and remote images — INTENTIONALLY ALLOWED. Every
+ *    major mail client (Gmail, Outlook, Apple Mail) loads remote images by
+ *    default; blocking them by default here would break the core flow.
+ *    The outer page's CSP still constrains where these load from
+ *    (img-src https:).
+ *  - CSS url(...) and @import — ALLOWED for the same reason. The risk
+ *    these posed (sending user-controlled URLs to an attacker) only
+ *    applies if a script runs first; with scripts gone, CSS url()s are
+ *    effectively equivalent to remote <img> loading, which we've already
+ *    accepted as a reasonable trade-off for mail rendering.
+ *
+ * Future enhancement (not blocking): add a per-message "Load remote
+ * images / Block remote images" toggle, like Gmail's.
+ *
  * @param html - Raw HTML string to sanitize
- * @returns Sanitized HTML string
+ * @returns Sanitized HTML string. On DOMPurify failure, returns the original
+ *   input unchanged so the user can still read the mail; the sandbox CSP
+ *   and iframe containment provide defense in depth.
  */
 export const sanitizeEmailHtml = (html: string): string => {
   if (typeof window === 'undefined') return html;
-  
-  // Import DOMPurify dynamically or use inline sanitization
-  // For now, we'll use a basic inline approach
-  // In production, you should use DOMPurify: import DOMPurify from 'dompurify'
+
   try {
-    // Create a temporary element to parse HTML
-    const temp = document.createElement('div');
-    temp.innerHTML = html;
-    
-    // Remove script tags
-    const scripts = temp.querySelectorAll('script');
-    scripts.forEach(script => script.remove());
-    
-    // Remove event handlers from all elements
-    const allElements = temp.querySelectorAll('*');
-    allElements.forEach(el => {
-      // Get all attributes
-      const attrs = Array.from(el.attributes);
-      attrs.forEach(attr => {
-        if (attr.name.startsWith('on')) {
-          el.removeAttribute(attr.name);
-        }
-      });
+    const sanitized = DOMPurify.sanitize(html, {
+      FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'input', 'button', 'video', 'audio', 'source'],
+      FORBID_ATTR: ['srcset', 'background', 'poster'],
+      // Accept the URIs mail actually contains: https, http, mailto, tel,
+      // data: (inline images), cid: (MIME content-IDs — normalized at the
+      // render layer). DOMPurify's default is more restrictive about cid:
+      // which is why we make it explicit here.
+      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|data|cid):|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i,
     });
-    
-    return temp.innerHTML;
+
+    // No DOMParser round-trip. DOMPurify's output is already clean HTML;
+    // re-parsing it just costs time and risks re-serialization weirdness.
+    return sanitized;
   } catch (e) {
+    // Fail OPEN to the original HTML. A blank screen for every mail is
+    // worse than giving the renderer the unsanitized string — the outer
+    // CSP (script-src 'self', connect-src 'self') still kills anything
+    // active even if sanitization unexpectedly fails.
     console.error('Error sanitizing HTML:', e);
     return html;
   }

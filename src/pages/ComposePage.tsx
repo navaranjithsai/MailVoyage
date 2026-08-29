@@ -32,6 +32,8 @@ import {
   Heading, Mention,
   WordCount
 } from 'ckeditor5';
+// Self-hosted emoji database (CSP-safe; avoids the default cdn.ckeditor.com fetch)
+import emojiDefinitionsUrl from '@/assets/emoji-en.json?url';
 
 interface Attachment {
   id: string;
@@ -427,6 +429,10 @@ const ComposePage: React.FC = () => {
         contentToolbar: ['tableColumn', 'tableRow', 'mergeTableCells', 'tableProperties', 'tableCellProperties']
       },
       mention: { feeds: [] },
+      emoji: {
+        // CKEditor does `new URL(definitionsUrl)` without a base, so it needs an absolute URL.
+        definitionsUrl: new URL(emojiDefinitionsUrl, window.location.origin).href
+      },
       wordCount: {
         onUpdate: (stats: { characters: number }) => !cancelled && setCharCount(stats.characters)
       }
@@ -481,6 +487,26 @@ const ComposePage: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- CKEditor instance created once on mount; content is set via ref
   }, []);
+
+  // Convert HTML to a decent plain-text alternative for the email text part.
+  // Regex stripping alone leaves <script>/<style> inner text, ignores block
+  // boundaries, and doesn't decode entities — producing garbled plain text.
+  const htmlToPlainText = (html: string): string => {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // Drop non-content nodes entirely
+    doc.querySelectorAll('script, style, noscript, template').forEach((el) => el.remove());
+
+    const blockSelector = 'p, div, br, li, tr, h1, h2, h3, h4, h5, h6, blockquote, pre, figcaption, td, th';
+    doc.querySelectorAll(blockSelector).forEach((el) => {
+      el.appendChild(doc.createTextNode('\n'));
+    });
+
+    // textContent decodes HTML entities for us
+    return (doc.body?.textContent ?? '')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+  };
 
   // Use DOMPurify in the browser to sanitize preview/sent HTML.
   const sanitizeForEmail = (html: string) =>
@@ -538,7 +564,7 @@ const ComposePage: React.FC = () => {
         bcc: bccArray.length > 0 ? bccArray : undefined,
         subject: subject,
         html: safeHtml,
-        text: content.replace(/<[^>]*>/g, ''), // Strip HTML for plain text version
+        text: htmlToPlainText(content), // Proper plain-text version of the HTML body
         attachments: attachments.length > 0 ? attachments.map(att => ({
           filename: att.name,
           content: att.content, // Base64 encoded content
@@ -575,9 +601,11 @@ const ComposePage: React.FC = () => {
       setAttachments([]); 
       setCharCount(0);
       
-      // Navigate to sent folder
+      // Navigate to sent folder. Pass `justSent` so SentPage triggers a
+      // sent-mails delta sync on arrival — otherwise the newly-sent mail
+      // isn't in Dexie yet and the list appears stale until a manual Sync.
       setTimeout(() => {
-        navigate('/sent');
+        navigate('/sent', { state: { justSent: true } });
       }, 1500);
       
     } catch (error: unknown) {
@@ -611,7 +639,7 @@ const ComposePage: React.FC = () => {
         bcc,
         subject,
         htmlContent: content,
-        textContent: content.replace(/<[^>]*>/g, ''), // Strip HTML
+        textContent: htmlToPlainText(content), // Proper plain-text version
         attachments: draftAttachments,
         charCount,
       };
@@ -657,7 +685,11 @@ const ComposePage: React.FC = () => {
           });
           
           newAttachments.push({
-            id: Math.random().toString(36).substr(2, 9),
+            // substr() is deprecated — use slice(). Prefer crypto.randomUUID()
+            // when available for a robust unique id.
+            id: typeof crypto !== 'undefined' && 'randomUUID' in crypto
+              ? crypto.randomUUID()
+              : Math.random().toString(36).slice(2, 11),
             name: file.name,
             size: file.size,
             sizeFormatted: formatFileSize(file.size),
