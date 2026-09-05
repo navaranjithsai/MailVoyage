@@ -1,10 +1,16 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import pkg from './package.json' with { type: 'json' };
+const appVersion = pkg.version;
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // Bake the app version into the bundle for the optional update checker.
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   server: {
     open: false,
     proxy: {

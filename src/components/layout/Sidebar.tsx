@@ -14,6 +14,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useEmail } from '@/contexts/EmailContext';
+import { useUpdateCheck } from '@/lib/useUpdateCheck';
 import { 
   getNavigationItems, 
   themeOptions, 
@@ -131,6 +132,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
   const { logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const { unreadCount, showUnreadBadge } = useEmail();
+  const { updateAvailable } = useUpdateCheck();
   
   const sidebarItems: SidebarItem[] = getNavigationItems(unreadCount);
 
@@ -171,13 +173,15 @@ const SidebarComponent: React.FC<SidebarProps> = ({
     }
   };
 
+  // When collapsed, a click cycles themes; when expanded the caller supplies
+  // the explicit target theme. Never call setTheme twice in one handler.
   const handleThemeChange = (newTheme: 'system' | 'light' | 'dark') => {
-    setTheme(newTheme);
     if (isCollapsed) {
-      // If collapsed, cycle through themes on click
       const currentIndex = themeOptions.findIndex(opt => opt.id === theme);
       const nextIndex = (currentIndex + 1) % themeOptions.length;
       setTheme(themeOptions[nextIndex].id as 'system' | 'light' | 'dark');
+    } else {
+      setTheme(newTheme);
     }
   };
 
@@ -362,6 +366,10 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                     {/* Red dot for unread emails - only for inbox and if notifications are enabled */}
                     {item.id === 'inbox' && item.badge && showUnreadBadge && (
                       <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-gray-800"></div>
+                    )}
+                    {/* Blue dot when a newer app version is available and not dismissed */}
+                    {item.id === 'dashboard' && updateAvailable && (
+                      <div className="absolute top-0 right-0 w-2 h-2 bg-blue-500 rounded-full border border-white dark:border-gray-800"></div>
                     )}
                   </div>
                   

@@ -34,6 +34,10 @@ import { getLastAutoSyncAt, isAutoSyncInFlight, setAutoSyncInFlight, setLastAuto
 import { getStorageBreakdown, getSentMailsCount } from '@/lib/db';
 import { SectionErrorBoundary } from '@/components/ErrorBoundary';
 import { OfflineIndicator } from '@/components/OfflineQueueManager';
+import UpdateNotice from '@/components/common/UpdateNotice';
+import DesktopNotificationBanner from '@/components/common/DesktopNotificationBanner';
+import { useUpdateCheck } from '@/lib/useUpdateCheck';
+import { checkForUpdatesNow } from '@/lib/versionCheck';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/hooks/usePullToRefresh';
 // Service worker utilities available via lib/serviceWorker.ts
 
@@ -202,6 +206,22 @@ const DashboardPage: React.FC = () => {
   const { emails, unreadCount, refreshEmails } = useEmail();
   const { syncState, isRealTimeActive, triggerSync, refreshConnection } = useSync();
   const navigate = useNavigate();
+  const updateCheck = useUpdateCheck();
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  const handleDevCheckUpdates = useCallback(async () => {
+    setCheckingUpdate(true);
+    const result = await checkForUpdatesNow();
+    setCheckingUpdate(false);
+    if (result.error) {
+      toast.error(result.error);
+    } else if (result.hasNewer) {
+      toast.success(`Update available: ${result.latestTag}`);
+      await updateCheck.refresh();
+    } else {
+      toast.success(`Up to date (v${result.currentVersion})`);
+    }
+  }, [updateCheck]);
   
   const [emailStats, setEmailStats] = useState<EmailStats>({
     unread: unreadCount,
@@ -762,13 +782,24 @@ const DashboardPage: React.FC = () => {
           pullProgress={pullProgress}
         />
 
-        <motion.main 
+        <motion.main
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5 }}
           className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
           style={{ transform: `translateY(${pullDistance}px)` }}
         >
+          {/* Optional update notice — only when a newer release exists and
+              the user hasn't dismissed it */}
+          {updateCheck.updateAvailable && updateCheck.latestTag && (
+            <UpdateNotice
+              latestTag={updateCheck.latestTag}
+              currentVersion={updateCheck.currentVersion}
+              onDismiss={updateCheck.dismiss}
+            />
+          )}
+          {/* Prompt for desktop-notification permission when not granted yet */}
+          <DesktopNotificationBanner />
         {/* Quick Actions */}
         <section className="mb-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1184,6 +1215,15 @@ const DashboardPage: React.FC = () => {
                   className="border-yellow-300 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300"
                 >
                   Hard Reload Page
+                </Button>
+                <Button
+                  onClick={handleDevCheckUpdates}
+                  variant="outline"
+                  size="small"
+                  disabled={checkingUpdate}
+                  className="border-yellow-300 dark:border-yellow-600 text-yellow-700 dark:text-yellow-300"
+                >
+                  {checkingUpdate ? 'Checking…' : 'Check for Updates'}
                 </Button>
               </div>
               <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">

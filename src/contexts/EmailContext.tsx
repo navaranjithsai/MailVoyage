@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { toast } from '@/lib/toast';
+import { getEmailNotificationsEnabled, sendDesktopMailNotification } from '@/lib/notificationSettings';
 import { AuthContext } from './AuthContext';
 import {
   getAllInboxMails,
@@ -404,10 +405,13 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const newEmail: Email = { ...emailData, id: Date.now().toString(), timestamp: new Date() };
     setEmails(prev => [newEmail, ...prev]);
     if (!newEmail.isRead) setUnreadCount(prev => prev + 1);
-    toast.info(`New email from ${newEmail.sender}: ${newEmail.subject}`, {
-      position: 'top-right',
-      autoClose: 5000,
-    });
+    if (getEmailNotificationsEnabled()) {
+      toast.info(`New email from ${newEmail.sender}: ${newEmail.subject}`, {
+        position: 'top-right',
+        autoClose: 5000,
+      });
+    }
+    sendDesktopMailNotification({ subject: newEmail.subject, count: 1 });
   }, []);
 
   const refreshEmails = useCallback(async () => {

@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useEmail } from '@/contexts/EmailContext'; 
+import { useEmail } from '@/contexts/EmailContext';
+import { useUpdateCheck } from '@/lib/useUpdateCheck';
 import { getNavigationItems, tooltipVariants } from '@/lib/navigation';
 import logoSvg from '@/assets/logo.svg';
 
@@ -47,6 +48,7 @@ const Flowbar: React.FC<FlowbarProps> = ({
   const { logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const { unreadCount, showUnreadBadge } = useEmail();
+  const { updateAvailable } = useUpdateCheck();
   
   const flowbarItems: FlowbarItem[] = getNavigationItems(unreadCount);
 
@@ -265,18 +267,27 @@ const Flowbar: React.FC<FlowbarProps> = ({
                         
                         <Icon className="w-5 h-5 relative z-10" />
                         
-                        {/* Badge */}
-                        {item.badge && item.badge > 0 && showUnreadBadge && (
+                        {/* Unread-count red dot — only for inbox, gated on the setting */}
+                        {item.id === 'inbox' && item.badge && item.badge > 0 && showUnreadBadge && (
                           <motion.div
                             className="absolute top-1 right-1 bg-red-500 rounded-full w-2.5 h-2.5 border border-white dark:border-gray-800"
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
-                            transition={{ 
+                            transition={{
                               type: 'spring' as const,
                               stiffness: 400,
                               damping: 25,
                               delay: 0.2,
                             }}
+                          />
+                        )}
+                        {/* Update-available blue dot on dashboard (matches the sidebar) */}
+                        {item.id === 'dashboard' && updateAvailable && (
+                          <motion.div
+                            className="absolute top-1 right-1 bg-blue-500 rounded-full w-2.5 h-2.5 border border-white dark:border-gray-800"
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ type: 'spring' as const, stiffness: 400, damping: 25, delay: 0.2 }}
                           />
                         )}
                       </Link>

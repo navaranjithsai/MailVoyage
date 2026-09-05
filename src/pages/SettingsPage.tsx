@@ -21,7 +21,6 @@ import Button from '@/components/ui/Button';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import LoadingSpinner from '@/components/common/LoadingSpinner';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useEmail } from '@/contexts/EmailContext';
 import { toast } from '@/lib/toast';
 import { isMobileTabletWidth } from '@/lib/navigation';
 import { apiFetch } from '@/lib/apiFetch';
@@ -29,6 +28,8 @@ import { AUTH_USER_UPDATED_EVENT } from '@/contexts/AuthContext';
 import * as validators from '@/lib/validators';
 import EmailSettings from './settings/EmailSettings';
 import TwoFactorSettings from './settings/TwoFactorSettings';
+import PrivacySettings from './settings/PrivacySettings';
+import NotificationSettings from './settings/NotificationSettings';
 
 interface SettingsSection {
   id: string;
@@ -47,7 +48,6 @@ const SettingsPage: React.FC = () => {
   const [updateSuccess, setUpdateSuccess] = useState(false);
   const [profileErrors, setProfileErrors] = useState<{username?: string; email?: string}>({});
   const { theme, setTheme } = useTheme();
-  const { showUnreadBadge, setShowUnreadBadge } = useEmail();
   
   const handleSectionClick = (id: string) => {
     if (expandedSection === id) {
@@ -202,14 +202,6 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  const [notifications, setNotifications] = useState({
-    emailNotifications: true,
-    desktopNotifications: false,
-    soundEnabled: true,
-    marketingEmails: false,
-    showUnreadBadge: showUnreadBadge,
-  });
-
   const [security, setSecurity] = useState({
     currentPassword: '',
     newPassword: '',
@@ -312,11 +304,8 @@ const SettingsPage: React.FC = () => {
   ];
 
   const handleSave = () => {
-    // Update the email context state
-    setShowUnreadBadge(notifications.showUnreadBadge);
-    setHasUnsavedChanges(false);
-    
-    // This would normally send settings to the server API as well
+    // The only setting the footer Save button still manages is the unread
+    // badge in Data Management; notification preferences now save themselves.
     toast.success('Settings saved successfully!');
   };
 
@@ -429,37 +418,7 @@ const SettingsPage: React.FC = () => {
       </motion.div>
     ),
     notifications: (
-      <motion.div variants={sectionVariants} initial="initial" animate="animate" className="space-y-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Notification Preferences</h2>
-        
-        <div className="space-y-4">
-          {Object.entries(notifications).map(([key, value]) => (
-            <div key={key} className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-gray-900 dark:text-white">
-                  {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {key === 'emailNotifications' && 'Receive email notifications for new messages'}
-                  {key === 'desktopNotifications' && 'Show desktop notifications'}
-                  {key === 'soundEnabled' && 'Play sound for notifications'}
-                  {key === 'marketingEmails' && 'Receive marketing and promotional emails'}
-                  {key === 'showUnreadBadge' && 'Show red dot for unread messages'}
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={value}
-                  onChange={(e) => { setNotifications({...notifications, [key]: e.target.checked}); setHasUnsavedChanges(true); }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-              </label>
-            </div>
-          ))}
-        </div>
-      </motion.div>
+      <NotificationSettings />
     ),
     security: (
       <motion.div variants={sectionVariants} initial="initial" animate="animate" className="space-y-6">
@@ -688,6 +647,9 @@ const SettingsPage: React.FC = () => {
     email: (
       <EmailSettings isMobile={isMobile} />
     ),
+    privacy: (
+      <PrivacySettings />
+    ),
     default: (
       <motion.div variants={sectionVariants} initial="initial" animate="animate" className="space-y-6">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -729,7 +691,7 @@ const SettingsPage: React.FC = () => {
                   >
                     {sectionMap[section.id] || sectionMap.default}
                     {/* Footer button: only for non-profile, non-appearance, non-email sections */}
-                    {section.id !== 'profile' && section.id !== 'appearance' && section.id !== 'email' && section.id !== 'security' && (
+                    {section.id !== 'profile' && section.id !== 'appearance' && section.id !== 'email' && section.id !== 'security' && section.id !== 'notifications' && section.id !== 'privacy' && (
                       <div className="mt-4 text-right">
                         <Button
                           onClick={() => handleSave()}
@@ -849,7 +811,7 @@ const SettingsPage: React.FC = () => {
             {sectionMap[activeSection] || sectionMap.default}
 
             {/* Save Button */}
-            {activeSection !== 'profile' && activeSection !== 'appearance' && activeSection !== 'email' && activeSection !== 'security' && (
+            {activeSection !== 'profile' && activeSection !== 'appearance' && activeSection !== 'email' && activeSection !== 'security' && activeSection !== 'notifications' && activeSection !== 'privacy' && (
               <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
                 <Button onClick={handleSave} className="flex items-center space-x-2">
                   <Save className="w-4 h-4" />

@@ -78,6 +78,13 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
   
+  // Never intercept the version-check request — always go to the network so a
+  // newly published release is never hidden behind a cached response.
+  if (url.hostname === 'api.github.com') {
+    event.respondWith(fetch(request));
+    return;
+  }
+  
   // Skip non-GET requests for caching (but handle offline queue)
   if (request.method !== 'GET') {
     // Check if this is a queueable API request

@@ -406,6 +406,9 @@ const ComposePage: React.FC = () => {
         shouldNotGroupWhenFull: true
       },
       placeholder: 'Write your email…',
+      ui: {
+        viewportOffset: { top: 12, right: 12, bottom: 12, left: 12 }
+      },
       link: {
         addTargetToExternalLinks: true,
         defaultProtocol: 'https://'
@@ -998,12 +1001,14 @@ const ComposePage: React.FC = () => {
               />
             </div>
 
-            {/* Editor (replaces custom toolbar + textarea) */}
-            <div className="border border-gray-300 dark:border-gray-600 rounded-lg">
-              <div className="min-h-120 p-2 dark:bg-gray-700 dark:text-white">
-                {/* CKEditor attaches to this div. We hide it in preview mode. */}
-                <div ref={editorHostRef} className={isPreview ? 'hidden' : ''} />
-              </div>
+            {/* Editor (replaces custom toolbar + textarea).
+                The shell owns the single rounded border; the toolbar and the
+                internally-scrolling editable are styled to match its corners
+                (see getEmailEditorStyles). No inner padding so the toolbar
+                sits flush with the border. */}
+            <div className="compose-editor-shell border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
+              {/* CKEditor attaches to this div. We hide it in preview mode. */}
+              <div ref={editorHostRef} className={isPreview ? 'hidden' : ''} />
             </div>
 
             {/* Attachments */}

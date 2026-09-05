@@ -763,9 +763,77 @@ export const generateContentStyles = (selector: string, includeDarkMode = true):
  */
 export const getEmailEditorStyles = (): string => {
   return `
-    /* CKEditor minimum height */
-    .ck-editor__editable[role="textbox"] {
-      min-height: ${EDITOR_MIN_HEIGHT_PX}px;
+    /* Keep the compose picker inside the viewport on narrow and short screens. */
+    .compose-editor-shell .ck.ck-dropdown__panel {
+      max-width: min(360px, calc(100vw - 24px));
+      max-height: min(420px, calc(100dvh - 96px));
+      overflow: hidden;
+    }
+
+    .compose-editor-shell .ck.ck-emoji-picker {
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    .compose-editor-shell .ck.ck-emoji-picker .ck-emoji-picker__grid {
+      max-height: min(280px, calc(100dvh - 220px));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    @media (max-width: 640px) {
+      .compose-editor-shell .ck.ck-dropdown__panel {
+        max-width: calc(100vw - 24px);
+        max-height: min(360px, calc(100dvh - 72px));
+      }
+
+      .compose-editor-shell .ck.ck-emoji-picker .ck-emoji-picker__grid {
+        max-height: min(230px, calc(100dvh - 190px));
+      }
+    }
+
+    /* --- Compose editor layout & toolbar behavior --------------------
+       The editor is mounted inside the app's scrolling <main>. CKEditor's
+       default StickyPanel detaches the toolbar and re-positions it with
+       inline position:fixed while scrolling; inside a custom scroll
+       container that math is wrong, so the toolbar floats over the body and
+       you see the editable peeking behind it — the reported glitch.
+
+       Fix: disable the StickyPanel entirely (static content + hidden
+       placeholder). The toolbar then stays in normal flow as a sibling
+       ABOVE the editable, and the EDITABLE itself scrolls internally with a
+       responsive, capped height. Because the toolbar is structurally
+       separate from the scrolling region, it can never overlap the text. */
+    .compose-editor-shell .ck.ck-sticky-panel__content {
+      position: static !important;
+      width: auto !important;
+    }
+    .compose-editor-shell .ck.ck-sticky-panel__content_sticky {
+      position: static !important;
+    }
+    .compose-editor-shell .ck.ck-sticky-panel__placeholder {
+      display: none !important;
+    }
+    .compose-editor-shell .ck-editor__editable[role="textbox"] {
+      min-height: 320px;
+      max-height: clamp(320px, calc(100dvh - 300px), ${EDITOR_MIN_HEIGHT_PX}px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    /* The shell (.compose-editor-shell) provides the single rounded border.
+       Strip the editor's own frame so there's no double outline, and match
+       the toolbar/editable corners to the shell's rounded-lg (0.5rem). */
+    .compose-editor-shell .ck.ck-editor__main > .ck-editor__editable {
+      border: none !important;
+      box-shadow: none !important;
+      border-radius: 0 0 0.5rem 0.5rem;
+    }
+    .compose-editor-shell .ck.ck-toolbar {
+      border-left: none !important;
+      border-right: none !important;
+      border-top: none !important;
+      border-radius: 0.5rem 0.5rem 0 0;
     }
     
     /* CKEditor Content Styles */

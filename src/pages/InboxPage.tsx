@@ -38,6 +38,7 @@ import {
 import { useEmail } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
 import { toast } from '@/lib/toast';
+import { getEmailNotificationsEnabled, sendDesktopMailNotification } from '@/lib/notificationSettings';
 import { isMobileTabletWidth } from '@/lib/navigation';
 import { getStoredUserId } from '@/lib/authSession';
 
@@ -376,11 +377,14 @@ const InboxPage: React.FC = () => {
       const detail = (e as CustomEvent).detail;
       console.info('[InboxPage] New mail notification:', detail);
 
-      // Always show a toast notification so the user knows new mail arrived,
-      // even if they're currently viewing a different account.
-      toast.info(detail?.count === 1
-        ? `New email${detail?.subject ? `: ${detail.subject}` : ''}${detail?.accountCode ? ` (${detail.accountCode})` : ''}`
-        : `${detail?.count || ''} new emails${detail?.accountCode ? ` (${detail.accountCode})` : ''}`);
+      // Gate on the user's email-notifications preference (Settings →
+      // Notifications). Desktop notifications are governed separately.
+      if (getEmailNotificationsEnabled()) {
+        toast.info(detail?.count === 1
+          ? `New email${detail?.subject ? `: ${detail.subject}` : ''}${detail?.accountCode ? ` (${detail.accountCode})` : ''}`
+          : `${detail?.count || ''} new emails${detail?.accountCode ? ` (${detail.accountCode})` : ''}`);
+      }
+      sendDesktopMailNotification(detail);
 
       // Auto-refresh the visible list only if the event matches the
       // selected account — avoids a jarring list reload while the user is
