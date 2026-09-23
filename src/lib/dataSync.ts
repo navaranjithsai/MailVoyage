@@ -6,6 +6,9 @@
  */
 
 import { apiFetch } from './apiFetch';
+import { buildCachedInboxEndpoint } from './inboxEndpoints';
+import { getStoredInboxCacheLimit, storeInboxCacheLimit, INBOX_CACHE_LIMIT_DEFAULT } from './inboxCacheConfig';
+export { buildCachedInboxEndpoint };
 import { 
   getDraftsCount as getDraftCountFromDb,
   clearSentMails,
@@ -315,9 +318,7 @@ export async function fetchInboxMails(
     // Step 2: For each account, get cached mails from server DB (fast, no IMAP)
     for (const acc of accounts) {
       try {
-        const res = await apiFetch(
-          `/api/inbox/cached?accountCode=${encodeURIComponent(acc.accountCode)}`
-        );
+        const res = await apiFetch(buildCachedInboxEndpoint(acc.accountCode));
         const resObj = res as Record<string, unknown>;
         const dataObj = resObj?.data as Record<string, unknown> | undefined;
         const mails = ((dataObj?.mails || resObj?.mails || []) as ApiInboxMail[]);
@@ -374,8 +375,8 @@ export async function fetchInboxMails(
       await upsertInboxMails(records);
       console.log(`✅ Saved ${records.length} cached inbox mails to Dexie.`);
 
-      // Enforce local cache limit per account
-      const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
+      // Enforce local cache limit per account (the user's own preference)
+      const cacheLimit = getStoredInboxCacheLimit();
       const uniqueAccounts = [...new Set(records.map(r => r.accountId))];
       for (const accId of uniqueAccounts) {
         await trimInboxToLimit(accId, cacheLimit);
@@ -449,10 +450,10 @@ export async function fetchInboxSettings(): Promise<FetchResult<SettingsResult>>
     const res = await apiFetch('/api/inbox/settings');
     const resObj = res as Record<string, unknown>;
     const dataObj = resObj?.data as Record<string, unknown> | undefined;
-    const limit = (dataObj?.inboxCacheLimit ?? resObj?.inboxCacheLimit ?? 15) as number;
-    localStorage.setItem('inbox_cache_limit', String(limit));
-    console.log('✅ Inbox settings fetched: cacheLimit =', limit);
-    return { success: true, data: { inboxCacheLimit: limit } };
+    const limit = (dataObj?.inboxCacheLimit ?? resObj?.inboxCacheLimit ?? INBOX_CACHE_LIMIT_DEFAULT) as number;
+    const safe = storeInboxCacheLimit(limit);
+    console.log('✅ Inbox settings fetched: cacheLimit =', safe);
+    return { success: true, data: { inboxCacheLimit: safe } };
   } catch (error: unknown) {
     console.error('❌ Failed to fetch inbox settings:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch inbox settings' };

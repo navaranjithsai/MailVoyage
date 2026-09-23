@@ -1,22 +1,16 @@
 import { ImapFlow, ImapFlowOptions } from 'imapflow';
 import { simpleParser, AddressObject } from 'mailparser';
-import crypto from 'crypto';
 import Pop3Command from 'node-pop3';
 import pool from '../db/index.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
 import { tryDecrypt } from '../utils/crypto.js';
-
-/**
- * Convert a stable POP3 message fingerprint into a positive integer UID.
- * We hash the raw message so the cache can upsert across reloads even when
- * POP3 message numbers shift after deletions.
- */
-function pop3FingerprintToNumericUid(fingerprint: string): number {
-  const hash = crypto.createHash('md5').update(fingerprint).digest();
-  // Use first 4 bytes as unsigned 32-bit int (always positive)
-  return hash.readUInt32BE(0);
-}
+import {
+  INBOX_CACHE_LIMIT_SETTING_KEY,
+  INBOX_CACHE_LIMIT_DEFAULT,
+  clampInboxCacheLimit,
+} from '../utils/inboxCacheConfig.js';
+import { pop3FingerprintToNumericUid, parsePop3StatCount } from './pop3-utils.js';
 
 // ============================================================================
 // Per-account sync mutex — prevents concurrent POP3/IMAP connections to the
@@ -90,6 +84,7 @@ export interface InboxMail {
     filename: string;
     contentType: string;
     size: number;
+    contentId?: string;
     content?: string;
   }> | null;
   labels: string[] | null;
@@ -233,6 +228,7 @@ export async function fetchMailsFromServer(
     mailbox?: string;
     limit?: number;
     sinceUid?: number;     // Fetch mails with UID > sinceUid (for incremental sync)
+    beforeUid?: number;    // Fetch mails with UID < beforeUid (for "load older" paging)
     page?: number;         // For server-side pagination of older mails
   } = {}
 ): Promise<FetchFromServerResult> {
@@ -240,6 +236,7 @@ export async function fetchMailsFromServer(
     mailbox = 'INBOX',
     limit = 15,
     sinceUid,
+    beforeUid,
     page = 1,
   } = options;
 
@@ -259,7 +256,7 @@ export async function fetchMailsFromServer(
   }
 
   // Default: IMAP
-  return fetchMailsViaImap(creds, accountCode, { mailbox, limit, sinceUid, page });
+  return fetchMailsViaImap(creds, accountCode, { mailbox, limit, sinceUid, beforeUid, page });
 }
 
 // ============================================================================
@@ -302,14 +299,7 @@ async function fetchMailsViaPop3(
     logger.info(`[POP3] Connected to ${creds.host} for account ${accountCode}`);
 
     const [statInfo] = await pop3.command('STAT');
-    const statLine = String(statInfo).trim();
-    // STAT returns "OK <count> <size>" or just "<count> <size>"
-    const statParts = statLine.split(/\s+/);
-    // Find the first numeric token (the message count)
-    const totalMessages = parseInt(
-      statParts.find(p => /^\d+$/.test(p)) || statParts[1] || '0',
-      10
-    );
+    const totalMessages = parsePop3StatCount(statInfo);
     logger.info(`[POP3] Server has ${totalMessages} messages`);
 
     if (totalMessages === 0) {
@@ -343,6 +333,7 @@ async function fetchMailsViaPop3(
             filename: att.filename || 'attachment',
             contentType: att.contentType || 'application/octet-stream',
             size: att.size || 0,
+            contentId: att.cid || undefined,
             content: att.content ? Buffer.from(att.content).toString('base64') : undefined,
           })) || [];
 
@@ -426,10 +417,12 @@ async function fetchMailsViaImap(
     mailbox: string;
     limit: number;
     sinceUid?: number;
+    beforeUid?: number;
     page: number;
   }
 ): Promise<FetchFromServerResult> {
   const { mailbox, limit, page } = options;
+  const beforeUid = options.beforeUid;
   let sinceUid = options.sinceUid;
   const secure = creds.security === 'SSL';
 
@@ -487,28 +480,48 @@ async function fetchMailsViaImap(
         ? mb.uidNext - 1
         : totalMessages;
 
-      // Detect stale UID tracking: if the stored sinceUid is HIGHER than the
-      // actual highest UID on the server, the mailbox was likely rebuilt
-      // (UIDVALIDITY changed) or the tracking got corrupted. In that case we
-      // must NOT skip the sync — we fall through to a full paginated fetch
-      // so the cache is repopulated and the tracking is corrected.
-      if (sinceUid && sinceUid > highestKnownUid) {
+      // Detect stale UID tracking: if the stored sinceUid is higher than the
+      // server's highest UID, the mailbox was rebuilt or tracking corrupted,
+      // so we fall through to a full paginated fetch to repair it. This guard
+      // only applies to polling; older pulls (beforeUid) skip it.
+      if (!beforeUid && sinceUid && sinceUid > highestKnownUid) {
         logger.warn(
           `[IMAP] Stale UID tracking for ${accountCode}/${mailbox}: sinceUid=${sinceUid} > highestUid=${highestKnownUid}. ` +
           `Falling back to full sync to repair tracking.`
         );
         // Force a full fetch by ignoring the stale sinceUid
         sinceUid = undefined;
-      } else if (sinceUid && sinceUid >= highestKnownUid) {
+      } else if (!beforeUid && sinceUid && sinceUid >= highestKnownUid) {
         logger.info(`[IMAP] No new messages for ${accountCode}/${mailbox} (sinceUid=${sinceUid}, highestUid=${highestKnownUid})`);
         return { mails: [], totalOnServer: totalMessages, fetched: 0 };
       }
 
       // Determine range to fetch
       let range: string;
-      if (sinceUid && sinceUid > 0) {
+      let rangeIsUid = false; // Track whether range contains UIDs vs sequence numbers
+      if (beforeUid && beforeUid > 0) {
+        // "Fetch older" pull: return the `limit` messages just below
+        // `beforeUid`. A UID search is stable across expunges (unlike
+        // sequence numbers), so search first, then fetch the newest
+        // `limit` UIDs below the cursor.
+        const hits = await client.search({ uid: `1:${beforeUid - 1}` }, { uid: true }) as number[] | false;
+        if (Array.isArray(hits) && hits.length > 0) {
+          // Trailing `limit` items are the newest messages below the cursor.
+          hits.sort((a, b) => a - b);
+          const selected = hits.slice(-limit);
+          if (selected.length === 0) {
+            return { mails: [], totalOnServer: totalMessages, fetched: 0 };
+          }
+          range = `${selected[0]}:${selected[selected.length - 1]}`;
+          rangeIsUid = true; // search returned UIDs, not sequence numbers
+        } else {
+          logger.info(`[IMAP] No messages older than UID ${beforeUid} in ${mailbox}`);
+          return { mails: [], totalOnServer: totalMessages, fetched: 0 };
+        }
+      } else if (sinceUid && sinceUid > 0) {
         // Incremental sync: fetch all UIDs greater than sinceUid
         range = `${sinceUid + 1}:*`;
+        rangeIsUid = true; // sinceUid is a UID, not a sequence number
       } else {
         // Full paginated fetch: latest mails first
         // IMAP sequence numbers are 1-based, newest = highest
@@ -517,15 +530,17 @@ async function fetchMailsViaImap(
         range = `${startSeq}:${endSeq}`;
       }
 
-      logger.info(`[IMAP] Fetching range ${range} (limit ${limit})`);
+      logger.info(`[IMAP] Fetching range ${range} (uid=${rangeIsUid}, limit ${limit})`);
 
-      // Fetch messages with envelope + source for full parsing
+      // Fetch messages with envelope + source for full parsing.
+      // `{ uid: rangeIsUid }` tells imapflow whether the range holds UIDs
+      // or sequence numbers; the default would fetch the wrong messages.
       for await (const msg of client.fetch(range, {
         envelope: true,
         source: true,
         flags: true,
         uid: true,
-      })) {
+      }, { uid: rangeIsUid })) {
         try {
           if (!msg.source || msg.source.length === 0) {
             logger.warn(`[IMAP] Message UID ${msg.uid} has no source data, skipping`);
@@ -543,6 +558,7 @@ async function fetchMailsViaImap(
             filename: att.filename || 'attachment',
             contentType: att.contentType || 'application/octet-stream',
             size: att.size || 0,
+            contentId: att.cid || undefined,
             content: att.content ? Buffer.from(att.content).toString('base64') : undefined,
           })) || [];
 
@@ -619,12 +635,17 @@ async function fetchMailsViaImap(
 /**
  * Upsert fetched mails into the inbox_cache table.
  * Only keeps the latest N mails per account (configurable via user settings).
+ *
+ * SECURITY / DESIGN INVARIANT: "load older" pulls must NEVER call this.
+ * Older mails (below the cached window) are client-only — they live in the
+ * browser's Dexie (IndexedDB) and must not be persisted server-side, so the
+ * server cache stays bounded to the per-user limit.
  */
 export async function syncMailsToCache(
   userId: string,
   accountCode: string,
   mails: InboxMail[],
-  cacheLimit: number = 15
+  cacheLimit: number = INBOX_CACHE_LIMIT_DEFAULT
 ): Promise<InboxMail[]> {
   if (mails.length === 0) return [];
 
@@ -700,10 +721,9 @@ export async function syncMailsToCache(
       savedMails.push({ ...mail, id: result.rows[0].id });
     }
 
-    // Trim old mails: keep only the latest `cacheLimit` per account+mailbox.
-    // NOT EXISTS is safer than NOT IN here: NOT IN collapses to NULL/false if
-    // the subquery ever yields a NULL id (deleting nothing) and performs
-    // worse at scale. The CTE caps the kept set exactly.
+    // Keep only the latest `cacheLimit` mails per account. Always enforced —
+    // this is the single storage-optimization authority. NOT EXISTS avoids
+    // the NULL-collapse pitfall of NOT IN.
     await client.query(
       `WITH keep AS (
          SELECT id FROM inbox_cache
@@ -718,7 +738,7 @@ export async function syncMailsToCache(
     );
 
     await client.query('COMMIT');
-    logger.info(`[InboxService] Synced ${savedMails.length} mails to cache, limit=${cacheLimit}`);
+    logger.info(`[InboxService] Synced ${savedMails.length} mails to cache, limit=${cacheLimit}, trimmed=true`);
 
     return savedMails;
   } catch (error) {
@@ -1092,6 +1112,11 @@ export async function updateSyncTracking(
 /**
  * Get cached inbox mails from the server database.
  * Used when user logs in to quickly show recent mails before full sync.
+ *
+ * SCALABILITY: the result is bounded by the user's own cache-limit
+ * setting (per account when accountCode is given; a capped multiple of it
+ * for the all-accounts variant). Unbounded reads made login payloads grow
+ * linearly with account count × cache size, hurting under many users.
  */
 export async function getCachedMails(
   userId: string,
@@ -1100,20 +1125,25 @@ export async function getCachedMails(
 ): Promise<InboxMail[]> {
   const client = await pool.connect();
   try {
+    const perAccountLimit = await getUserInboxCacheLimit(userId);
+    const limit = accountCode ? perAccountLimit : perAccountLimit * 5;
+
     let query: string;
     let params: unknown[];
 
     if (accountCode) {
       query = `SELECT * FROM inbox_cache
                WHERE user_id = $1 AND account_code = $2 AND mailbox = $3
-               ORDER BY date DESC`;
-      params = [userId, accountCode, mailbox];
+               ORDER BY date DESC
+               LIMIT $4`;
+      params = [userId, accountCode, mailbox, limit];
     } else {
-      // Get mails from all accounts
+      // Get mails from all accounts (bounded total)
       query = `SELECT * FROM inbox_cache
                WHERE user_id = $1 AND mailbox = $2
-               ORDER BY date DESC`;
-      params = [userId, mailbox];
+               ORDER BY date DESC
+               LIMIT $3`;
+      params = [userId, mailbox, limit];
     }
 
     const result = await client.query(query, params);
@@ -1155,6 +1185,21 @@ export async function setUserSetting(userId: string, key: string, value: string)
   }
 }
 
+/**
+ * Read the per-user inbox cache limit from user_settings, sanitized into the
+ * valid range. Single server-side accessor — callers must never hardcode a
+ * limit number.
+ */
+export async function getUserInboxCacheLimit(userId: string): Promise<number> {
+  const raw = await getUserSetting(
+    userId,
+    INBOX_CACHE_LIMIT_SETTING_KEY,
+    String(INBOX_CACHE_LIMIT_DEFAULT)
+  );
+  const parsed = parseInt(raw, 10);
+  return clampInboxCacheLimit(Number.isFinite(parsed) ? parsed : NaN);
+}
+
 export async function getAllUserSettings(userId: string): Promise<Record<string, string>> {
   const client = await pool.connect();
   try {
@@ -1167,6 +1212,80 @@ export async function getAllUserSettings(userId: string): Promise<Record<string,
       settings[row.setting_key] = row.setting_value;
     }
     return settings;
+  } finally {
+    client.release();
+  }
+}
+
+// ============================================================================
+// DB: Enforce cache limit across ALL of a user's accounts (per-account window)
+// ============================================================================
+
+/**
+ * Storage optimization: keep only the latest `cacheLimit` mails per account
+ * for the given user (all accounts), evicting the oldest beyond the limit.
+ * Called when the user lowers their inbox cache limit in Settings → Data
+ * Management so the server cache immediately shrinks to the new bound.
+ * Returns the number of rows evicted.
+ */
+export async function enforceCacheLimit(
+  userId: string,
+  cacheLimit: number
+): Promise<number> {
+  const safeLimit = clampInboxCacheLimit(cacheLimit);
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `WITH ranked AS (
+         SELECT id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY account_code
+                  ORDER BY date DESC
+                ) AS rn
+         FROM inbox_cache
+         WHERE user_id = $1
+       )
+       DELETE FROM inbox_cache
+       WHERE id IN (SELECT id FROM ranked WHERE rn > $2)
+       RETURNING id`,
+      [userId, safeLimit]
+    );
+    const evicted = result.rowCount ?? 0;
+    if (evicted > 0) {
+      logger.info(`[InboxService] Cache limit ${safeLimit} enforced for user ${userId}: evicted ${evicted} older mail(s)`);
+    }
+    return evicted;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Count how many cached mails would be evicted if the limit were lowered to
+ * `newLimit` (for the Settings confirm dialog: "N mails will be removed").
+ */
+export async function countEvictableForLimit(
+  userId: string,
+  newLimit: number
+): Promise<number> {
+  const safeLimit = clampInboxCacheLimit(newLimit);
+  const client = await pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT COUNT(*)::int AS evictable
+       FROM (
+         SELECT id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY account_code
+                  ORDER BY date DESC
+                ) AS rn
+         FROM inbox_cache
+         WHERE user_id = $1
+       ) ranked
+       WHERE rn > $2`,
+      [userId, safeLimit]
+    );
+    return result.rows[0]?.evictable ?? 0;
   } finally {
     client.release();
   }
@@ -1310,6 +1429,7 @@ export async function searchMailsOnServer(
             filename: att.filename || 'attachment',
             contentType: att.contentType || 'application/octet-stream',
             size: att.size || 0,
+            contentId: att.cid || undefined,
             content: att.content ? Buffer.from(att.content).toString('base64') : undefined,
           })) || [];
 
@@ -1381,6 +1501,12 @@ export async function searchMailsOnServer(
 
 /**
  * Full inbox sync: fetch from IMAP server, save to cache, return mails.
+ *
+ * "Load older" requests (`beforeUid` for IMAP, or `page` > 1 without a
+ * `sinceUid`/`beforeUid` for POP3) are TRANSIT-ONLY: the fetched mails are
+ * returned straight to the client for Dexie-only storage and are NEVER
+ * written to the server inbox_cache. Only the newest N mails per account
+ * (the per-user cache limit) live on the server.
  */
 export async function syncInbox(
   userId: string,
@@ -1389,21 +1515,31 @@ export async function syncInbox(
     mailbox?: string;
     limit?: number;
     sinceUid?: number;
+    beforeUid?: number;
     page?: number;
     cacheLimit?: number;
   } = {}
 ): Promise<FetchFromServerResult & { cached: number }> {
   const mailbox = options.mailbox || 'INBOX';
-  const cacheLimit = options.cacheLimit || parseInt(
-    await getUserSetting(userId, 'inbox_cache_limit', '15'), 10
-  );
+  const cacheLimit = options.cacheLimit
+    ? clampInboxCacheLimit(options.cacheLimit)
+    : await getUserInboxCacheLimit(userId);
 
-  // If the client didn't send sinceUid, use the server-side tracked value
+  const beforeUid = options.beforeUid;
+
+  // If the client didn't send sinceUid, use the server-side tracked value —
+  // except when the caller is explicitly asking for older mail (beforeUid),
+  // in which case the incremental marker would short-circuit the fetch.
   let sinceUid = options.sinceUid;
   if (sinceUid === undefined || sinceUid === null) {
-    sinceUid = await getLastSyncedUid(userId, accountCode, mailbox);
-    if (sinceUid > 0) {
-      logger.info(`[InboxService] Using server-side sinceUid=${sinceUid} for ${accountCode}/${mailbox}`);
+    if (beforeUid && beforeUid > 0) {
+      // Clear it so the incremental path is skipped below.
+      sinceUid = 0;
+    } else {
+      sinceUid = await getLastSyncedUid(userId, accountCode, mailbox);
+      if (sinceUid > 0) {
+        logger.info(`[InboxService] Using server-side sinceUid=${sinceUid} for ${accountCode}/${mailbox}`);
+      }
     }
   }
 
@@ -1414,21 +1550,49 @@ export async function syncInbox(
       mailbox,
       limit: options.limit,
       sinceUid: sinceUid > 0 ? sinceUid : undefined,
+      beforeUid: beforeUid && beforeUid > 0 ? beforeUid : undefined,
       page: options.page,
     });
 
-    // Save to server-side cache
-    const saved = await syncMailsToCache(userId, accountCode, result.mails, cacheLimit);
+    // Older-pull detection: IMAP sends beforeUid; POP3 pages by message
+    // number (page > 1 without beforeUid/sinceUid means "older batch").
+    const isPop3OlderPull =
+      !(beforeUid && beforeUid > 0) &&
+      typeof options.page === 'number' &&
+      options.page > 1;
+    const isOlderPull = !!(beforeUid && beforeUid > 0) || isPop3OlderPull;
 
-    // Persist the highest UID we just synced.
-    // When stale tracking was detected in fetchMailsViaImap, it falls back
-    // to a full fetch (no sinceUid), which returns the latest mails with
-    // their real UIDs — so this update corrects the stale tracking.
-    if (result.mails.length > 0) {
+    // Skip on older pulls so an old UID can't regress the high-water mark.
+    if (!isOlderPull && result.mails.length > 0) {
       const highestUid = Math.max(...result.mails.map(m => m.uid));
       await updateSyncTracking(userId, accountCode, mailbox, highestUid, result.totalOnServer);
       logger.info(`[InboxService] Updated sync tracking: ${accountCode}/${mailbox} lastUid=${highestUid}`);
     }
+
+    // Older pulls are transit-only: return the mails for client-side Dexie
+    // storage WITHOUT persisting them to the server cache, keeping the
+    // server cache bounded to the per-user limit.
+    if (isOlderPull) {
+      logger.info(
+        `[InboxService] Older pull for ${accountCode}/${mailbox}: ${result.mails.length} mails returned ` +
+        `client-only (not persisted to inbox_cache)`
+      );
+      return {
+        ...result,
+        // No DB insert happened, so the fetcher left `id: ''`. Give each
+        // mail a stable synthetic id — the client needs a unique primary
+        // key for Dexie, and an empty string would collide across records.
+        mails: result.mails.map(m => ({
+          ...m,
+          id: m.id || `local:${accountCode}:${m.uid}`,
+        })),
+        cached: 0,
+      };
+    }
+
+    // Regular / incremental sync: persist to server cache + enforce the
+    // user's cache limit (storage optimization — oldest beyond N evicted).
+    const saved = await syncMailsToCache(userId, accountCode, result.mails, cacheLimit);
 
     return {
       ...result,
@@ -1437,6 +1601,88 @@ export async function syncInbox(
     };
   });
 }
+
+/**
+ * Check for new mail without downloading message bodies, via IMAP STATUS
+ * (UIDNEXT / MESSAGES) or POP3 STAT. Lets the client skip a full syncInbox
+ * call when nothing changed.
+ */
+export async function checkMailboxStatus(
+  userId: string,
+  accountCode: string,
+  mailbox: string = 'INBOX',
+): Promise<{ highestUid: number; totalOnServer: number; protocol: 'IMAP' | 'POP3' }> {
+  const creds = await getImapCredentials(userId, accountCode);
+  const protocol = ((creds.incomingType || 'IMAP').toUpperCase().trim()) as 'IMAP' | 'POP3';
+
+  if (protocol === 'POP3') {
+    // POP3 has no UIDs, so highestUid mirrors the message count; the client
+    // compares it against its cached count.
+    const useTls = creds.security === 'SSL' || creds.security === 'STARTTLS';
+    const pop3 = new Pop3Command({
+      user: creds.username,
+      password: creds.password,
+      host: creds.host,
+      port: creds.port,
+      tls: useTls,
+      tlsOptions: {
+        rejectUnauthorized: process.env.NODE_ENV === 'production',
+        minVersion: 'TLSv1.2',
+      },
+      timeout: 15000,
+    });
+    try {
+      await pop3.connect();
+      const [statInfo] = await pop3.command('STAT');
+      const total = parsePop3StatCount(statInfo);
+      return { highestUid: total, totalOnServer: total, protocol: 'POP3' };
+    } finally {
+      try { await pop3.QUIT(); } catch { /* best-effort */ }
+    }
+  }
+
+  // IMAP — use STATUS so we don't have to acquire a mailbox lock. STATUS is
+  // *much* cheaper than SELECT+FETCH because it doesn't trigger any flag
+  // recalculation on the server.
+  const secure = creds.security === 'SSL';
+  const imapConfig: ImapFlowOptions = {
+    host: creds.host,
+    port: creds.port,
+    secure,
+    auth: {
+      user: creds.username,
+      pass: creds.password,
+    },
+    logger: false,
+    tls: {
+      rejectUnauthorized: process.env.NODE_ENV === 'production',
+      minVersion: 'TLSv1.2',
+    },
+  };
+  if (creds.security === 'STARTTLS') {
+    imapConfig.secure = false;
+    (imapConfig as unknown as Record<string, unknown>).starttls = { required: true };
+  }
+  const client = new ImapFlow(imapConfig);
+  client.on('error', (err: Error) => {
+    logger.warn(`[IMAP] status-check socket error for ${accountCode}: ${err.message}`);
+  });
+
+  try {
+    await client.connect();
+    const status = await client.status(mailbox, { uidNext: true, messages: true });
+    const uidNext = typeof status.uidNext === 'number' ? status.uidNext : 0;
+    const messages = typeof status.messages === 'number' ? status.messages : 0;
+    return {
+      highestUid: uidNext > 0 ? uidNext - 1 : messages,
+      totalOnServer: messages,
+      protocol: 'IMAP',
+    };
+  } finally {
+    try { await client.logout(); } catch { /* best-effort */ }
+  }
+}
+
 
 /**
  * Get the primary account code for a user (or the first active account).

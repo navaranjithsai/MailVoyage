@@ -6,8 +6,7 @@ import { logger } from '../utils/logger.js';
 /**
  * Extract the authenticated user's numeric id at the controller boundary.
  * `req.user.id` is always a string (set by auth middleware via `.toString()`),
- * so the legacy `typeof ... === 'string' ? parseInt(...) : ...` guard had a
- * dead else-branch. Centralize conversion + validation here once.
+ * so a single conversion + validation point covers all callers.
  */
 const requireNumericUserId = (req: Request): number => {
   const raw = req.user?.id;

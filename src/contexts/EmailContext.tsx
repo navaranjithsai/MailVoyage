@@ -161,6 +161,7 @@ export function inboxRecordToEmail(record: InboxMailRecord): Email {
       name: a.filename,
       size: formatSize(a.size),
       type: a.contentType,
+      contentId: a.contentId,
         content: a.content,
     })),
     isImportant: record.isStarred,
@@ -195,7 +196,7 @@ export const EmailProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Never touch Dexie if not authenticated
     if (!isAuthenticated) return;
     try {
-      // One-time cleanup: remove numeric-keyed duplicates from a previous bug
+      // Data cleanup: remove numeric-keyed duplicate records (see db.ts)
       await cleanupNumericKeyedMails();
       const records = await getAllInboxMails();
 

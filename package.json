@@ -1,7 +1,7 @@
 {
   "name": "mailvoyage",
   "description": "MailVoyage - A modern email client with offline-first architecture",
-  "version": "2026.8.2",
+  "version": "2026.9.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,6 +21,8 @@
     "lint:api": "eslint api",
     "lint:web": "eslint . --ignore-pattern \"api/**\"",
     "typecheck": "tsc --noEmit",
+    "typecheck:api": "npm --prefix api run typecheck",
+    "typecheck:all": "npm run typecheck && npm run typecheck:api",
     "test": "npm run test:unit && npm run test:api",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
@@ -28,13 +30,16 @@
     "test:api": "npm --prefix api run test",
     "test:phase1": "vitest run --config vitest.config.ts tests/phase1 --passWithNoTests",
     "test:phase2": "vitest run --config vitest.config.ts tests/phase2 --passWithNoTests",
-    "test:phase3": "npm --prefix api run test:phase3",
+    "test:phase3:web": "vitest run --config vitest.config.ts tests/phase3 --passWithNoTests",
+    "test:phase3:api": "npm --prefix api run test:phase3",
+    "test:phase3": "npm run test:phase3:web && npm run test:phase3:api",
     "test:phase4": "npm --prefix api run test:phase4",
     "test:phase5:web": "vitest run --config vitest.config.ts tests/phase5 --passWithNoTests",
     "test:phase5:api": "npm --prefix api run test:phase5",
     "test:phase5": "npm run test:phase5:web && npm run test:phase5:api",
-    "test:phase6": "npm --prefix api run test:phase6",
-    "test:all:phases": "npm run test:phase1 && npm run test:phase2 && npm run test:phase3 && npm run test:phase4 && npm run test:phase5 && npm run test:phase6",
+    "test:phase6": "vitest run --config vitest.config.ts tests/phase6 --passWithNoTests && npm --prefix api run test:phase6",
+    "test:phase7": "npm --prefix api run test:phase7",
+    "test:all:phases": "npm run test:phase1 && npm run test:phase2 && npm run test:phase3 && npm run test:phase4 && npm run test:phase5 && npm run test:phase6 && npm run test:phase7",
     "test:coverage:all": "npm run test:coverage && npm --prefix api run test:coverage",
     "test:clean": "rimraf coverage .vitest api/coverage api/.vitest",
     "test:ui": "node scripts/test-runner-ui.mjs",
@@ -72,7 +77,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^3.2.7",
     "autoprefixer": "^10.5.0",
     "concurrently": "^10.0.1",
     "esbuild": "^0.28.1",
@@ -86,6 +91,6 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.0",
     "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vitest": "^3.2.7"
   }
 }

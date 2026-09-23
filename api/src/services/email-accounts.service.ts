@@ -587,7 +587,7 @@ export const testEmailAccountConnection = async (accountId: string, userId: stri
     const outgoingPassRaw = acc.outgoing_password ?? null;
     const outgoingPassDec = outgoingPassRaw != null ? tryDecrypt(outgoingPassRaw) : null;
     if (incomingPassDec === null && isEncrypted(acc.password)) {
-      // We had an encrypted value that failed to decrypt; likely wrong PWD_SECRET
+      // An encrypted value that fails to decrypt indicates a PWD_SECRET mismatch
       return { success: false, message: 'Password decryption failed. Check server PWD_SECRET and restart.' };
     }
     if (outgoingPassRaw != null && outgoingPassDec === null && isEncrypted(outgoingPassRaw)) {

@@ -97,9 +97,12 @@ Mail Server (Gmail, Outlook, etc.)
 |---|---|
 | **All operations are local-only** | Delete, archive, star, read/unread, and label changes only affect the local copy in IndexedDB and/or the server-side `inbox_cache`. They **never** modify or send commands back to the mail server. This protects the user's actual mailbox. |
 | **IMAP + POP3 support** | Both protocols are supported for fetching. IMAP provides richer metadata (read/unread flags, UIDs, multiple mailboxes). POP3 is supported as a fallback for providers that don't offer IMAP. |
-| **Cache limit rotation** | Both server-side (`inbox_cache` table) and client-side (IndexedDB) enforce a configurable cache limit (default 15). When new mails are synced, older mails beyond the limit are automatically pruned. |
+| **Per-user cache limit contract** | Each user sets their own cache limit (5–100, default 15) in Settings → Data Management. The server-side `inbox_cache` keeps only the latest N mails per account and evicts anything older — enforced on every sync and immediately when the limit is lowered. |
+| **"Load older" mails are client-only** | When a user digs into history beyond the cached window, those older mails are fetched **transit-only**: stored in the browser's IndexedDB (Dexie) but **never** persisted to the server cache. This keeps the cache limit meaningful and prevents dug-up history from reappearing on other devices. |
 | **Client-side encryption** | Sensitive mail fields (from, subject, body) are encrypted with AES-256-GCM before storing in IndexedDB. The encryption key is derived per-session. |
 | **Minimal API calls** | Settings are cached in `localStorage` to avoid repeated API requests. The dashboard refreshes from local Dexie on focus/visibility change rather than hitting the API. |
+| **Fair poller scheduling** | The background mail poller rotates through ALL connected users across cycles (env-tunable `POLL_MAX_USERS_PER_CYCLE`), with bounded parallel mail-server connections and per-account locks — no user is starved at any scale. |
+| **Failsafe-first boot** | Transient DB errors never kill the server; the WebSocket server, poller, and every sync layer have independent catch/cooldown paths. Serverless runtimes are auto-detected (Vercel, Netlify, AWS Lambda, GCP, Azure) and degrade to manual sync with explicit boot logs. |
 
 ---
 
@@ -164,18 +167,33 @@ The following operations only affect the local copy of emails. They **do not** s
 
 ### Cache Limit
 
-The inbox cache limit controls how many emails are kept per email account:
+The inbox cache limit is a **per-user preference** controlling how many emails are kept per email account:
 
 - **Default**: 15 emails per account
-- **Configurable**: 5–100 via Settings → Data Management
+- **Configurable**: 5–100 via Settings → Data Management (slider)
 - **Applies to both**: Server-side PostgreSQL cache and client-side IndexedDB
 - **Rotation**: When new mails are synced, the oldest mails beyond the limit are automatically deleted
+- **Decreasing the limit**: Requires an explicit confirmation dialog — the app predicts exactly how many cached mails will be removed and the confirm action is styled as a destructive (red) action. The server cache is trimmed immediately on save.
 
 ### How it works
 
-1. **Sync from server**: IMAP/POP3 fetch → save to `inbox_cache` table → trim to limit
-2. **Save to client**: API response → encrypt → save to IndexedDB → trim to limit
-3. **Settings cached**: The cache limit is stored in `localStorage` (`inbox_cache_limit`) to avoid repeated API calls
+1. **Sync from server**: IMAP/POP3 fetch → save to `inbox_cache` table → trim to the user's limit
+2. **Save to client**: API response → encrypt → save to IndexedDB
+3. **Settings cached**: The cache limit is stored in `localStorage` (`inbox_cache_limit`) to avoid repeated API calls; every sync path reads the user's own value — no hardcoded numbers
+4. **Load older mail**: Fetching history beyond the cached window returns mails **client-only** (Dexie), never persisting them to the server cache — the limit stays meaningful and other devices never see the dug-up history
+
+### Scalability & degradation tunables
+
+All optional with safe defaults — see [`api/.env.example`](api/.env.example) and [`DEPLOYMENT.md`](DEPLOYMENT.md):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DB_POOL_MAX` | 20 | PostgreSQL pool ceiling |
+| `POLL_INTERVAL_SEC` | 120 | Background poller cadence |
+| `POLL_MAX_USERS_PER_CYCLE` | 25 | Users checked per poll cycle (fair rotation) |
+| `ENABLE_WEBSOCKET` | true | Disable on hosts without socket upgrades |
+| `ENABLE_MAIL_POLLER` | true | Disable on CPU-limited free tiers |
+| `ALLOWED_HOSTS` | — | Extra hostnames the API may serve (cloud deploys) |
 
 ---
 
@@ -305,9 +323,11 @@ Build number auto-increments per month from existing git tags.
 
 - Quick local check: `npm run test`
 - Interactive selector (phase menu): `npm run test:ui`
-- Phase runs: `npm run test:phase1` through `npm run test:phase5`
+- Phase runs: `npm run test:phase1` through `npm run test:phase7`
 - Combined phase run: `npm run test:all:phases`
 - Coverage run (frontend + API): `npm run test:coverage:all`
+
+> Phase 6 covers frontend cache-config and older-mail ID-resolution logic; Phase 7 covers deployment/scalability logic (cache-limit clamping, serverless detection, poller round-robin, older-pull detection, entrypoint guards).
 
 Manual CI test runs support `test_profile` values:
 
@@ -342,10 +362,24 @@ For the full non-invasive testing model and command matrix, see:
 
 MailVoyage also supports serverless deployment on Vercel:
 1. Link the repository to your Vercel account.
-2. Configure environment variables in the Vercel dashboard.
-3. Deploy the frontend and backend as separate projects or as a monorepo.
+2. Configure environment variables in the Vercel dashboard (including `ALLOWED_HOSTS` set to your deployment domain).
+3. Deploy the frontend and backend as separate projects or as a monorepo — the repo ships a `vercel.json` rewrite so the frontend can proxy `/api` to a separately-hosted API via the `API_BASE_URL` env var.
 
 Note: WebSocket-based real-time sync is not available on Vercel serverless runtime. The app automatically falls back to manual refresh/sync behavior.
+
+### Other platforms
+
+The API auto-detects its runtime and adapts — no code changes needed per platform:
+
+| Platform | Mode | Notes |
+|---|---|---|
+| Docker / docker-compose | Full | Migrations run at container startup; healthchecks included |
+| VPS / own server / local | Full | `npm run start:api` runs migrations then serves |
+| Render / Railway / Fly (web service) | Full | Set `ALLOWED_HOSTS` to your platform domain (Render's is auto-detected) |
+| Vercel / Netlify / AWS Lambda / GCP / Azure | Serverless | API only; WS + poller skipped by design; clients use manual sync |
+| Free tiers (CPU-limited) | Reduced | Set `ENABLE_MAIL_POLLER=false` / `ENABLE_WEBSOCKET=false` to fit budgets |
+
+For the complete build → pull → run → update lifecycle (including rollback notes and the tunables table), see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
@@ -394,13 +428,17 @@ If 2FA is enabled, `POST /api/auth/login` returns a challenge payload instead of
 ### Inbox (IMAP & POP3)
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET`  | `/api/inbox/cached` | Get cached mails from server DB (fast) |
+| `GET`  | `/api/inbox/cached` | Get cached mails from server DB (fast, bounded by user's cache limit) |
 | `GET`  | `/api/inbox/fetch` | Fetch mails directly from mail server |
-| `POST` | `/api/inbox/sync` | Fetch from IMAP/POP3 + update server cache |
+| `POST` | `/api/inbox/sync` | Fetch from IMAP/POP3 + update server cache (older-mail pulls are returned client-only) |
+| `GET`  | `/api/inbox/status` | Lightweight new-mail check (no message download) |
 | `POST` | `/api/inbox/search` | Search mailbox on server (IMAP search) |
+| `POST` | `/api/inbox/flag-updates` | Apply batched read/star updates (idempotent) |
+| `GET`  | `/api/inbox/batch-status/:batchId` | Check if a flag batch was already applied |
 | `GET`  | `/api/inbox/accounts` | List email accounts for dropdown |
 | `GET`  | `/api/inbox/settings` | Get inbox settings (cache limit) |
-| `PUT`  | `/api/inbox/settings` | Update inbox settings |
+| `PUT`  | `/api/inbox/settings` | Update inbox settings (lowering the limit evicts older cached mails) |
+| `GET`  | `/api/inbox/settings/preview-eviction` | Predict how many mails a lower limit would remove |
 
 ### Sending
 | Method | Endpoint | Description |

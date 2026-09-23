@@ -27,11 +27,8 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
       return next(new AppError('Unauthorized', 401));
     }
 
-    // SECURITY FIX (R1): Derive the target identity ONLY from the auth token.
-    // Previously the target `id` came from the request body and the guard
-    // `currentUser.email !== email && !currentUser.username` was a no-op for
-    // authenticated users — meaning any logged-in user could rewrite another
-    // user's profile by supplying their id. Ignore body `id` entirely.
+    // Target identity comes from the auth token only; body-supplied `id`
+    // must never influence which profile is updated (privilege escalation).
     const targetUserId = Number(currentUser.id);
     if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
       return next(new AppError('Invalid authenticated user id', 400, true));

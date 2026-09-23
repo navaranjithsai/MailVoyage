@@ -18,6 +18,9 @@ router.get('/fetch', inboxController.fetchMails);
 // Sync: fetch from IMAP + update server cache
 router.post('/sync', inboxController.syncInbox);
 
+// Lightweight mailbox status check (no message download)
+router.get('/status', inboxController.getMailboxStatus);
+
 // Apply read/star flag updates (batched)
 router.post('/flag-updates', validateRequest({ body: inboxFlagUpdatesSchema }), inboxController.applyFlagUpdates);
 
@@ -33,5 +36,8 @@ router.get('/accounts', inboxController.getInboxAccounts);
 // User inbox settings
 router.get('/settings', inboxController.getSettings);
 router.put('/settings', inboxController.updateSettings);
+
+// Predictive eviction count for the cache-limit decrease confirm dialog
+router.get('/settings/preview-eviction', inboxController.previewEviction);
 
 export default router;

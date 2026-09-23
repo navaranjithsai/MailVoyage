@@ -27,6 +27,7 @@ import {
 } from './db';
 import { wsClient, type SyncSignal, type ConnectionStatus } from './websocket';
 import { getStoredUserId } from './authSession';
+import { getStoredInboxCacheLimit } from './inboxCacheConfig';
 
 // ============================================================================
 // Types
@@ -490,12 +491,8 @@ class DeltaSyncManager {
 
     if (signal.type === 'inbox_sync_complete') {
       console.info(`[DeltaSync] Inbox sync complete: ${signal.message}`);
-      // Use the CACHE-based sync (not live IMAP) to refresh local Dexie.
-      // The server-side cache was just updated by the sync, so reading from
-      // cache is fast and reflects the latest state.
-      // IMPORTANT: Do NOT use debouncedSyncLive() here — that would call
-      // /api/inbox/sync again, which would send another inbox_sync_complete
-      // signal, creating an infinite feedback loop.
+      // Read the refreshed server cache. A live sync here would emit the same
+      // signal again and create a feedback loop.
       debouncedSync(['inbox_mails']);
       window.dispatchEvent(new CustomEvent('inbox:sync-complete', { detail: signal.data }));
     }
@@ -527,12 +524,10 @@ class DeltaSyncManager {
       }
     }
     
-    // Reconnect WebSocket if we have a token
-    // WebSocket will signal if there are updates to sync
+    // Reconnect the WebSocket if we have a token; it signals updates itself,
+    // so don't trigger a sync on every network change.
     if (this.isInitialized && this.currentToken) {
       wsClient.reconnect();
-      // Don't auto-sync - wait for WebSocket to signal updates
-      // This prevents unnecessary API calls on every network change
     }
   };
 
@@ -866,8 +861,8 @@ async function syncInboxMails(_since?: string): Promise<{ updated: number; delet
           await upsertInboxMails(mails);
           totalUpdated += mails.length;
 
-          // Enforce local cache limit
-          const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
+          // Enforce local cache limit (the user's own preference)
+          const cacheLimit = getStoredInboxCacheLimit();
           await trimInboxToLimit(acc.accountCode, cacheLimit);
         }
       } catch (err) {

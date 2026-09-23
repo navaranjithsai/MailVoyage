@@ -68,10 +68,8 @@ const AppRouter: React.FC = () => {
   const { syncState } = useSync();
   const { isServerDown } = useServerStatus();
 
-  // Optional: Prevent route rendering until auth check is complete
-  // This avoids potential flashes of content or incorrect redirects
   if (isLoading) {
-      return <LoadingSpinner message="Initializing Application..." />; // Or a global spinner
+      return <LoadingSpinner message="Initializing Application..." />;
   }
 
   const statusOverride = !syncState.isOnline

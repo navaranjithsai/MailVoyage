@@ -1,0 +1,21 @@
+
+# MailVoyage — Netlify deployment config (frontend).
+# The API must be deployed separately (Render/Railway/Fly/VPS/serverless).
+# Set API_BASE_URL in Netlify env to your deployed API origin so the
+# /api proxy below forwards browser requests with cookies intact.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/api/*"
+  to = "${API_BASE_URL}/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback for client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -6,7 +6,7 @@ import Button from '@/components/ui/Button';
 import { useEmail, Email, inboxRecordToEmail } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
 import { getSentMailByThreadId, getInboxMailById, getInboxMailByMessageId } from '@/lib/db';
-import { injectEmailStyles, sanitizeEmailHtml, formatFileSize } from '@/lib/emailStyles';
+import { injectEmailStyles, sanitizeEmailHtml, resolveInlineImages, formatFileSize } from '@/lib/emailStyles';
 import { toast } from '@/lib/toast';
 import AttachmentViewer, { AttachmentData } from '@/components/common/AttachmentViewer';
 
@@ -21,6 +21,7 @@ interface AttachmentWithContent {
   filename: string;
   contentType: string;
   size: number;
+  contentId?: string;
   content?: string;
 }
 
@@ -29,6 +30,7 @@ interface EmailAttachment {
   name: string;
   size: string;
   type: string;
+  contentId?: string;
   content?: string;
 }
 
@@ -245,6 +247,7 @@ const EmailPage: React.FC = () => {
                 filename: a.filename,
                 contentType: a.contentType,
                 size: a.size,
+                contentId: a.contentId,
                 content: a.content
               })) || null,
               messageId: cachedMail.messageId || null,
@@ -349,8 +352,6 @@ const EmailPage: React.FC = () => {
     return () => {
       abortControllerRef.current?.abort();
     };
-    // Note: Only depend on id, emailType, currentLoadId - NOT on emails or markAsRead
-    // emails array reference changes frequently, and markAsRead is stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, emailType, currentLoadId]);
 
@@ -736,7 +737,7 @@ const EmailPage: React.FC = () => {
                   ref={emailContentRef}
                   className="ck-content email-content max-w-none prose dark:prose-invert prose-sm sm:prose-base"
                   onClick={handleInlineImageClick}
-                  dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(sentMail.htmlBody) }}
+                  dangerouslySetInnerHTML={{ __html: resolveInlineImages(sanitizeEmailHtml(sentMail.htmlBody), sentMail.attachmentsMetadata) }}
                 />
               ) : sentMail.textBody ? (
                 <div className="ck-content email-content max-w-none">
@@ -1000,7 +1001,7 @@ const EmailPage: React.FC = () => {
                 ref={emailContentRef}
                 className="ck-content email-content max-w-none prose dark:prose-invert prose-sm sm:prose-base"
                 onClick={handleInlineImageClick}
-                dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(email.content) }}
+                dangerouslySetInnerHTML={{ __html: resolveInlineImages(sanitizeEmailHtml(email.content), email.attachments) }}
               />
             ) : email.content ? (
               <div className="ck-content email-content max-w-none">

@@ -28,10 +28,12 @@ import {
   deleteInboxMails,
   getFlagOverrideMap,
   upsertInboxMails,
-  trimInboxToLimit,
-  clearAccountInbox,
   getHighestUid,
+  countInboxMails,
+  getLowestUid,
   getExistingMailIds,
+  getCacheValue,
+  setCacheValue,
   type InboxMailRecord,
   type FlagUpdateRecord,
 } from '@/lib/db';
@@ -41,6 +43,7 @@ import { toast } from '@/lib/toast';
 import { getEmailNotificationsEnabled, sendDesktopMailNotification } from '@/lib/notificationSettings';
 import { isMobileTabletWidth } from '@/lib/navigation';
 import { getStoredUserId } from '@/lib/authSession';
+import { getStoredInboxCacheLimit, clampInboxCacheLimit } from '@/lib/inboxCacheConfig';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -97,6 +100,105 @@ const parseCacheId = (value: unknown): number | null => {
   return parsed;
 };
 
+/**
+ * Older-mail pulls come from the mail server WITHOUT a server-cache DB id
+ * (they are transit-only, stored in Dexie but never cached server-side).
+ * The backend assigns a synthetic `local:` id; treat any missing/empty id
+ * as "not server-cached" so the record gets a stable `${accountCode}:${uid}`
+ * primary key in Dexie instead of colliding on an empty string.
+ */
+const resolveMailId = (rawId: unknown, accountCode: string, uid: number): string => {
+  const id = typeof rawId === 'string' && rawId.trim().length > 0 ? rawId : null;
+  return id ?? `${accountCode}:${uid}`;
+};
+
+// ── Shimmer placeholder ─────────────────────────────────────────────────
+
+/** Skeleton rows matching the inbox list item layout, shown while loading. */
+const InboxRowShimmer: React.FC<{ count?: number }> = ({ count = 3 }) => (
+  <div className="w-full divide-y divide-gray-200 dark:divide-gray-700">
+    {Array.from({ length: count }).map((_, i) => (
+      <div key={i} className="px-4 py-3 animate-pulse">
+        <div className="flex items-start gap-3">
+          <div className="w-4 h-4 mt-1 rounded bg-gray-200 dark:bg-gray-700" />
+          <div className="w-4 h-4 mt-1 rounded bg-gray-200 dark:bg-gray-700" />
+          <div className="flex-1 min-w-0">
+            {/* Desktop mirror */}
+            <div className="hidden sm:grid sm:grid-cols-12 sm:gap-4 sm:items-baseline">
+              <div className="col-span-3">
+                <div className="h-4 w-3/4 rounded bg-gray-200 dark:bg-gray-700" />
+              </div>
+              <div className="col-span-7 flex items-center gap-2">
+                <div className="h-4 w-1/2 rounded bg-gray-200 dark:bg-gray-700" />
+                <div className="h-3 w-16 rounded bg-gray-100 dark:bg-gray-800 hidden lg:block" />
+              </div>
+              <div className="col-span-2 flex justify-end">
+                <div className="h-3 w-12 rounded bg-gray-200 dark:bg-gray-700" />
+              </div>
+            </div>
+            {/* Mobile mirror */}
+            <div className="sm:hidden">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="h-4 w-32 rounded bg-gray-200 dark:bg-gray-700" />
+                <div className="h-3 w-10 rounded bg-gray-200 dark:bg-gray-700" />
+              </div>
+              <div className="h-4 w-4/5 rounded bg-gray-200 dark:bg-gray-700 mb-1" />
+              <div className="h-3 w-2/3 rounded bg-gray-100 dark:bg-gray-800" />
+            </div>
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+// ── Pure helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Convert server response mails to InboxMailRecord.
+ * Accepts both camelCase and snake_case keys.
+ */
+function mapServerMailToRecord(
+  m: ServerMailData,
+  accountCode: string,
+  overrideMap?: Map<number, FlagUpdateRecord>
+): InboxMailRecord {
+  const cacheId = parseCacheId(m.id);
+  const override = cacheId && overrideMap ? overrideMap.get(cacheId) : undefined;
+  const baseIsRead = m.is_read ?? m.isRead ?? false;
+  const baseIsStarred = m.is_starred ?? m.isStarred ?? false;
+
+  return {
+    id: resolveMailId(m.id, accountCode, m.uid),
+    uid: m.uid,
+    accountId: accountCode,
+    mailbox: m.mailbox || 'INBOX',
+    messageId: m.message_id || m.messageId || undefined,
+    fromAddress: m.from_address || m.fromAddress || '',
+    fromName: m.from_name || m.fromName || '',
+    toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
+      ? (m.to_addresses || m.toAddresses) as string[]
+      : [m.to_addresses?.[0] || m.toAddresses?.[0] || ''],
+    ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
+      ? (m.cc_addresses || m.ccAddresses) as string[]
+      : [],
+    bccAddresses: Array.isArray(m.bcc_addresses || m.bccAddresses)
+      ? (m.bcc_addresses || m.bccAddresses) as string[]
+      : [],
+    subject: m.subject || '(No Subject)',
+    htmlBody: m.html_body || m.htmlBody || null,
+    textBody: m.text_body || m.textBody || null,
+    date: m.date || new Date().toISOString(),
+    isRead: override?.isRead ?? baseIsRead,
+    isStarred: override?.isStarred ?? baseIsStarred,
+    hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
+    attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
+    labels: m.labels || [],
+    updatedAt: new Date().toISOString(),
+    createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
+  };
+}
+
 // ── Component ────────────────────────────────────────────────────────────
 
 const InboxPage: React.FC = () => {
@@ -109,10 +211,10 @@ const InboxPage: React.FC = () => {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [cacheLimitRaw, setCacheLimitRaw] = useState(
-    () => parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10)
-  );
-  const limit = useMemo(() => Math.max(5, cacheLimitRaw), [cacheLimitRaw]);
+  // The user's own cache-limit preference (Settings → Data Management) —
+  // never a hardcoded number.
+  const [cacheLimitRaw, setCacheLimitRaw] = useState(getStoredInboxCacheLimit);
+  const limit = useMemo(() => clampInboxCacheLimit(cacheLimitRaw), [cacheLimitRaw]);
 
   // Accounts
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
@@ -253,6 +355,112 @@ const InboxPage: React.FC = () => {
 
   // ── Load mails from Dexie ────────────────────────────────────────────
 
+  // True while fetching older-than-cached mail from the server.
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  // True when the server told us there are no older mails left.
+  const [hasReachedServerEnd, setHasReachedServerEnd] = useState(false);
+
+  /** Dexie key for persisting "reached end of history" per account+mailbox.
+   *  Without persistence, navigating away and back reset the flag, making
+   *  the end-of-mails label disappear and re-triggering older-fetch pings
+   *  against a server we already know has nothing older. */
+  const serverEndKey = (acctCode: string) => `inbox_reached_server_end:${acctCode}:INBOX`;
+  // True once the per-account end flag has been (re)loaded from Dexie —
+  // the auto-fetch-older effect waits for this to avoid a redundant ping.
+  const [serverEndInit, setServerEndInit] = useState(false);
+
+  // Monotonic page cursor for POP3 "load older" pulls. POP3 has no UIDs, so
+  // deriving the page from the local count breaks when a batch partially
+  // overlaps what we already have. Only moves forward; reset on account switch.
+  const pop3OlderPageRef = useRef(1);
+  useEffect(() => {
+    pop3OlderPageRef.current = 1;
+  }, [selectedAccount?.accountCode]);
+
+  /**
+   * Fetch the next batch of older mails from the server, seeding the request
+   * with the lowest UID currently in Dexie. Returns the number of mails
+   * added to the local cache.
+   */
+  const fetchOlderFromServer = useCallback(async (acctCode: string): Promise<number> => {
+    const isPop3 = selectedAccount?.incomingType === 'POP3';
+    let requestBody: Record<string, unknown>;
+
+    if (isPop3) {
+      // POP3 pages by message number; the cursor only advances and
+      // upserts dedupe any overlap.
+      if (pop3OlderPageRef.current <= 1) {
+        const cachedCount = await countInboxMails(acctCode);
+        pop3OlderPageRef.current = Math.floor(cachedCount / limit) + 1;
+      }
+      requestBody = { accountCode: acctCode, page: pop3OlderPageRef.current, limit };
+    } else {
+      // IMAP: cursor by the lowest UID we have and ask for what's below it.
+      const lowestUid = await getLowestUid(acctCode);
+      if (lowestUid <= 0) return 0;
+      requestBody = { accountCode: acctCode, beforeUid: lowestUid, limit };
+    }
+
+    /** Mark this account's history as fully fetched and persist it, so
+     *  remounts don't re-query the server for older mail that doesn't exist. */
+    const markServerEnd = () => {
+      setHasReachedServerEnd(true);
+      void setCacheValue(serverEndKey(acctCode), true);
+    };
+
+    try {
+      const response = await apiFetch('/api/inbox/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+      const fetchedMails: ServerMailData[] = response?.data?.mails || response?.mails || [];
+      const totalOnServer: number = response?.data?.total ?? response?.total ?? 0;
+
+      if (fetchedMails.length === 0) {
+        // Server has nothing older than our lowest UID.
+        markServerEnd();
+        return 0;
+      }
+
+      // Map to Dexie records honoring local flag overrides
+      const userId = getStoredUserId();
+      const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
+      const records = fetchedMails.map(m => mapServerMailToRecord(m, acctCode, overrideMap));
+
+      // Count genuinely new mails for the cursor and the return value.
+      const existingIds = await getExistingMailIds(
+        acctCode,
+        records.map(r => r.uid)
+      );
+      const newRecords = records.filter(r => !existingIds.has(r.uid));
+
+      await upsertInboxMails(records);
+
+      // Advance the POP3 page cursor regardless of overlap so the next
+      // pull moves to truly older messages.
+      if (isPop3) {
+        pop3OlderPageRef.current += 1;
+      }
+
+      // If we got fewer than we asked for, this batch reached the oldest
+      // message on the server — we're done.
+      if (fetchedMails.length < limit) {
+        markServerEnd();
+      } else if (!isPop3) {
+        const newLowest = Math.min(...records.map(r => r.uid));
+        if (newLowest <= 1) markServerEnd();
+      }
+      void totalOnServer;
+      // Return the new count, not the batch size, so an all-duplicate
+      // batch doesn't retrigger the auto-fetch effect.
+      return newRecords.length;
+    } catch (err) {
+      console.error('[InboxPage] fetchOlderFromServer failed:', err);
+      throw err;
+    }
+  }, [limit, selectedAccount]);
+
   const loadMails = useCallback(async (page: number = 1) => {
     if (!selectedAccount) {
       setMails([]);
@@ -318,6 +526,69 @@ const InboxPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- currentPage and loadMobileMails intentionally excluded to avoid re-triggering on page navigation
   }, [selectedAccount, isMobile, loadMails]);
 
+  // Restore per-account "reached the end" tracking from Dexie when the
+  // account changes. Different mailboxes have different histories; if we
+  // already dug to the bottom of this one, keep the flag so the end-of-mails
+  // label stays visible and we don't re-ping the server needlessly.
+  useEffect(() => {
+    const acctCode = selectedAccount?.accountCode;
+    if (!acctCode) {
+      setHasReachedServerEnd(false);
+      setServerEndInit(true);
+      return;
+    }
+    setServerEndInit(false);
+    let cancelled = false;
+    void getCacheValue<boolean>(serverEndKey(acctCode)).then(reached => {
+      if (!cancelled) {
+        setHasReachedServerEnd(reached === true);
+        setServerEndInit(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [selectedAccount?.accountCode]);
+
+  // Request older mail once the local cache is exhausted. Guarded so only
+  // one fetch runs at a time. `serverEndInit` gates the very first run per
+  // account until the persisted end-flag is restored from Dexie — otherwise
+  // every remount fired a redundant server ping before Dexie answered.
+  useEffect(() => {
+    if (!selectedAccount) return;
+    if (isLoading) return;
+    if (hasReachedServerEnd) return;
+    if (!serverEndInit) return;
+    const localTotal = total;
+    const localPages = Math.max(1, Math.ceil(localTotal / limit));
+    const wantsPastEnd = currentPage > localPages;
+    // Also prefetch when sitting on the last local page.
+    const isLastLocalPage = currentPage === localPages && localTotal > 0 && localTotal >= limit;
+    if (!wantsPastEnd && !isLastLocalPage) return;
+    if (isLoadingOlder) return;
+
+    let cancelled = false;
+    setIsLoadingOlder(true);
+    fetchOlderFromServer(selectedAccount.accountCode)
+      .then(added => {
+        if (cancelled) return;
+        if (added > 0) {
+          // New mails landed in Dexie — reload the current page so the
+          // user sees them. Using `loadMails` (not the mobile loader)
+          // keeps behavior consistent across screen sizes.
+          loadMails(currentPage);
+        }
+      })
+      .catch(err => {
+        console.error('[InboxPage] fetchOlderFromServer error:', err);
+        toast.error(err instanceof Error ? err.message : 'Could not fetch older mail');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingOlder(false);
+      });
+    return () => { cancelled = true; };
+    // Intentionally uses latest values; the guard flags prevent loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAccount, currentPage, total, isLoading, hasReachedServerEnd, serverEndInit]);
+
   // ── Mobile infinite scroll ───────────────────────────────────────────
 
   const loadMobileMails = useCallback(async (reset: boolean = false) => {
@@ -340,14 +611,37 @@ const InboxPage: React.FC = () => {
       }
       setTotal(result.total);
       mobilePageRef.current = page;
-      setMobileHasMore(page < result.totalPages);
+
+      const localHasMore = page < result.totalPages;
+      setMobileHasMore(localHasMore);
+
+      // If Dexie is exhausted but we haven't yet hit the server-side end
+      // of history, kick off a background fetch for the *next* batch of
+      // older mails using the lowest-UID cursor. The observer fires again
+      // when this finishes because `isLoadingOlder` toggles. `serverEndInit`
+      // avoids pinging the server before the persisted end-flag loads.
+      if (!localHasMore && !hasReachedServerEnd && !isLoadingOlder && serverEndInit) {
+        setIsLoadingOlder(true);
+        fetchOlderFromServer(selectedAccount.accountCode)
+          .then(added => {
+            if (added > 0) {
+              // New mails now exist in Dexie — re-enable the sentinel so the
+              // next intersection triggers another page load from local data.
+              setMobileHasMore(true);
+            }
+          })
+          .catch(err => {
+            console.warn('[InboxPage] mobile fetchOlder error:', err);
+          })
+          .finally(() => setIsLoadingOlder(false));
+      }
     } catch (err) {
       console.error('[InboxPage] Error loading mobile mails:', err);
     } finally {
       setMobileLoadingMore(false);
       setIsLoading(false);
     }
-  }, [selectedAccount, limit]);
+  }, [selectedAccount, limit, hasReachedServerEnd, isLoadingOlder, serverEndInit, fetchOlderFromServer]);
 
   // Intersection observer for mobile scroll-to-load
   useEffect(() => {
@@ -367,7 +661,24 @@ const InboxPage: React.FC = () => {
   // ── WebSocket inbox events ───────────────────────────────────────────
 
   useEffect(() => {
-    const handleSyncComplete = () => {
+    const handleSyncComplete = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { fetchedCount?: number; accountCode?: string }
+        | undefined;
+
+      // Skip no-op refreshes: the poller broadcasts sync-complete even when
+      // zero new mails were fetched. Reloading on every such ping caused
+      // the "page contents always loading" disturbance and wasted resources.
+      if (detail && typeof detail.fetchedCount === 'number' && detail.fetchedCount === 0) {
+        console.info('[InboxPage] sync-complete with 0 fetched mails — skipping refresh');
+        return;
+      }
+
+      // Only refresh when the event matches the selected account.
+      if (detail?.accountCode && detail.accountCode !== selectedAccount?.accountCode) {
+        return;
+      }
+
       console.info('[InboxPage] Received inbox:sync-complete event, refreshing…');
       if (isMobile) loadMobileMails(true);
       else loadMails(currentPage);
@@ -396,8 +707,7 @@ const InboxPage: React.FC = () => {
     };
 
     const handleSettingsUpdated = () => {
-      const newLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
-      setCacheLimitRaw(newLimit);
+      setCacheLimitRaw(getStoredInboxCacheLimit());
     };
 
     window.addEventListener('inbox:sync-complete', handleSyncComplete);
@@ -411,17 +721,11 @@ const InboxPage: React.FC = () => {
   }, [isMobile, currentPage, selectedAccount, loadMails, loadMobileMails]);
 
   // ── Refresh on tab visibility ────────────────────────────────────────
-
-  useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && selectedAccount) {
-        if (isMobile) loadMobileMails(true);
-        else loadMails(currentPage);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [selectedAccount, isMobile, currentPage, loadMails, loadMobileMails]);
+  // Intentionally NOT implemented: new mail arrives via the WebSocket
+  // poller (inbox:new-mail → live sync → inbox:sync-complete), which
+  // refreshes the list only when there is actual new data. Re-reading
+  // Dexie on every tab focus would only consume resources and reset
+  // scroll position.
 
   // ── Keyboard shortcut: Ctrl+K or / to open search ────────────────────
 
@@ -447,59 +751,45 @@ const InboxPage: React.FC = () => {
 
   // ── Sync from IMAP server ────────────────────────────────────────────
 
-  /**
-   * Convert server response mails (camelCase from mapRowToInboxMail) to InboxMailRecord.
-   * Handles both camelCase and snake_case for robustness.
-   */
-  const mapServerMailToRecord = useCallback((
-    m: ServerMailData,
-    accountCode: string,
-    overrideMap?: Map<number, FlagUpdateRecord>
-  ): InboxMailRecord => {
-    const cacheId = parseCacheId(m.id);
-    const override = cacheId && overrideMap ? overrideMap.get(cacheId) : undefined;
-    const baseIsRead = m.is_read ?? m.isRead ?? false;
-    const baseIsStarred = m.is_starred ?? m.isStarred ?? false;
-
-    return {
-      id: String(m.id ?? `${accountCode}:${m.uid}`),
-      uid: m.uid,
-      accountId: accountCode,
-      mailbox: m.mailbox || 'INBOX',
-      messageId: m.message_id || m.messageId || undefined,
-      fromAddress: m.from_address || m.fromAddress || '',
-      fromName: m.from_name || m.fromName || '',
-      toAddresses: Array.isArray(m.to_addresses || m.toAddresses)
-        ? (m.to_addresses || m.toAddresses) as string[]
-        : [m.to_addresses?.[0] || m.toAddresses?.[0] || ''],
-      ccAddresses: Array.isArray(m.cc_addresses || m.ccAddresses)
-        ? (m.cc_addresses || m.ccAddresses) as string[]
-        : [],
-      bccAddresses: Array.isArray(m.bcc_addresses || m.bccAddresses)
-        ? (m.bcc_addresses || m.bccAddresses) as string[]
-        : [],
-      subject: m.subject || '(No Subject)',
-      htmlBody: m.html_body || m.htmlBody || null,
-      textBody: m.text_body || m.textBody || null,
-      date: m.date || new Date().toISOString(),
-      isRead: override?.isRead ?? baseIsRead,
-      isStarred: override?.isStarred ?? baseIsStarred,
-      hasAttachments: m.has_attachments ?? m.hasAttachments ?? false,
-      attachmentsMetadata: (m.attachments_metadata || m.attachmentsMetadata || null) as InboxMailRecord['attachmentsMetadata'],
-      labels: m.labels || [],
-      updatedAt: new Date().toISOString(),
-      createdAt: m.created_at || m.createdAt || m.date || new Date().toISOString(),
-    };
-  }, []);
-
   const handleSync = useCallback(async () => {
     if (!selectedAccount || isSyncing) return;
     try {
       setIsSyncing(true);
       setError(null);
 
-      // Use sinceUid for incremental sync — only fetch new mails
-      const highestUid = await getHighestUid(selectedAccount.accountCode);
+      // sinceUid only applies to IMAP; POP3 UIDs are content fingerprints.
+      const isPop3 = selectedAccount.incomingType === 'POP3';
+      const highestUid = isPop3 ? 0 : await getHighestUid(selectedAccount.accountCode);
+
+      // Probe the status endpoint first to skip a heavy /sync when nothing
+      // is new: IMAP compares highest UID, POP3 compares message count.
+      try {
+        const statusRes = await apiFetch(
+          `/api/inbox/status?accountCode=${encodeURIComponent(selectedAccount.accountCode)}`
+        );
+        const data = statusRes?.data ?? statusRes;
+        const protocol = (data?.protocol as string | undefined) || selectedAccount.incomingType || 'IMAP';
+        if (protocol === 'POP3') {
+          const serverTotal = data?.totalOnServer as number | undefined;
+          const localCount = typeof serverTotal === 'number'
+            ? await countInboxMails(selectedAccount.accountCode)
+            : -1;
+          if (typeof serverTotal === 'number' && localCount >= serverTotal) {
+            toast.info('Inbox is already up to date');
+            return;
+          }
+        } else {
+          const serverHighest = data?.highestUid as number | undefined;
+          if (typeof serverHighest === 'number' && highestUid > 0 && serverHighest <= highestUid) {
+            toast.info('Inbox is already up to date');
+            return;
+          }
+        }
+      } catch (statusErr) {
+        // If the status probe fails (offline, 5xx, etc) just fall through
+        // to the regular sync path — it's the resilient thing to do.
+        console.warn('[InboxPage] status check failed, falling back to full sync', statusErr);
+      }
 
       const response = await apiFetch('/api/inbox/sync', {
         method: 'POST',
@@ -519,14 +809,8 @@ const InboxPage: React.FC = () => {
           mapServerMailToRecord(m, selectedAccount.accountCode, overrideMap)
         );
 
+        // Not trimmed locally; the server cache enforces its own limit.
         await upsertInboxMails(records);
-
-        // Enforce local cache limit — keep only latest N mails per account
-        const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
-        const trimmed = await trimInboxToLimit(selectedAccount.accountCode, cacheLimit);
-        if (trimmed > 0) {
-          console.log(`[InboxPage] Trimmed ${trimmed} old mails from local cache`);
-        }
 
         toast.success(`Synced ${records.length} email${records.length !== 1 ? 's' : ''}`);
       } else {
@@ -548,7 +832,7 @@ const InboxPage: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
-  }, [selectedAccount, isSyncing, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails, mapServerMailToRecord]);
+  }, [selectedAccount, isSyncing, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails]);
 
   // ── Refresh from Mail Server (full re-fetch, replaces all emails) ────
 
@@ -577,9 +861,8 @@ const InboxPage: React.FC = () => {
 
       const fetchedMails = response?.data?.mails || response?.mails || [];
 
-      // Clear local Dexie data for this account, then insert fresh data
-      await clearAccountInbox(selectedAccount.accountCode);
-
+      // Upsert rather than clear-and-insert so locally cached older mail
+      // outside this batch survives the refresh.
       if (fetchedMails.length > 0) {
         const userId = getStoredUserId();
         const overrideMap = userId ? await getFlagOverrideMap(userId) : new Map<number, FlagUpdateRecord>();
@@ -587,9 +870,6 @@ const InboxPage: React.FC = () => {
           mapServerMailToRecord(m, selectedAccount.accountCode, overrideMap)
         );
         await upsertInboxMails(records);
-
-        const cacheLimit = parseInt(localStorage.getItem('inbox_cache_limit') || '15', 10);
-        await trimInboxToLimit(selectedAccount.accountCode, cacheLimit);
 
         toast.success(`Refreshed ${records.length} email${records.length !== 1 ? 's' : ''} from server`);
       } else {
@@ -611,7 +891,7 @@ const InboxPage: React.FC = () => {
     } finally {
       setIsRefreshingFromServer(false);
     }
-  }, [selectedAccount, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails, mapServerMailToRecord]);
+  }, [selectedAccount, currentPage, isMobile, loadMails, loadMobileMails, refreshEmails]);
 
   // ── Search ───────────────────────────────────────────────────────────
 
@@ -996,10 +1276,6 @@ const InboxPage: React.FC = () => {
                           onClick={() => {
                             setSelectedAccount(acc);
                             setShowAccountDropdown(false);
-                            // Persist the newly selected account so it
-                            // restores on next visit / page navigation.
-                            // Without this, sessionStorage still holds the
-                            // old account and the dropdown would switch back.
                             if (acc) {
                               sessionStorage.setItem(INBOX_STATE_KEY, JSON.stringify({
                                 accountCode: acc.accountCode,
@@ -1353,11 +1629,20 @@ const InboxPage: React.FC = () => {
           </div>
         )}
 
-        {/* ── Mobile scroll sentinel ──────────────────────────────── */}
-        {isMobile && mobileHasMore && !isLoading && displayMails.length > 0 && (
-          <div ref={scrollSentinelRef} className="p-4 flex justify-center">
-            {mobileLoadingMore && <Loader2 className="w-5 h-5 animate-spin text-blue-500" />}
-          </div>
+        {/* ── Mobile scroll sentinel / older-mail shimmer ─────────── */}
+        {isMobile && !isLoading && displayMails.length > 0 && (
+          <>
+            {(mobileHasMore || isLoadingOlder) && (
+              <div ref={scrollSentinelRef} className="p-4 flex flex-col items-center gap-2">
+                {(mobileLoadingMore || isLoadingOlder) && <InboxRowShimmer count={3} />}
+              </div>
+            )}
+            {!mobileHasMore && !isLoadingOlder && hasReachedServerEnd && (
+              <p className="p-4 text-center text-xs text-gray-400 dark:text-gray-500 italic">
+                You've reached the oldest mail on the server
+              </p>
+            )}
+          </>
         )}
 
         {/* ── Desktop Pagination ──────────────────────────────────── */}
@@ -1408,6 +1693,44 @@ const InboxPage: React.FC = () => {
                 >
                   <ChevronRight className="w-4 h-4" />
                 </Button>
+                {/* Manual "load older" control for the last cached page. */}
+                {!hasReachedServerEnd && currentPage >= totalPages && (
+                  <Button
+                    variant="outline"
+                    size="small"
+                    disabled={isLoadingOlder}
+                    onClick={() => {
+                      if (!selectedAccount) return;
+                      setIsLoadingOlder(true);
+                      fetchOlderFromServer(selectedAccount.accountCode)
+                        .then(added => {
+                          if (added > 0) {
+                            // Reload to pick up the newly-cached older mails
+                            loadMails(currentPage);
+                          }
+                        })
+                        .catch(err => {
+                          console.error('[InboxPage] Manual fetchOlder failed:', err);
+                          toast.error(err instanceof Error ? err.message : 'Could not load older mail');
+                        })
+                        .finally(() => setIsLoadingOlder(false));
+                    }}
+                    className="ml-2"
+                    title="Fetch older emails from the mail server"
+                  >
+                    {isLoadingOlder
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <Download className="w-4 h-4" />}
+                    <span className="ml-1.5 text-xs">
+                      {isLoadingOlder ? 'Loading older…' : 'Load older mail'}
+                    </span>
+                  </Button>
+                )}
+                {hasReachedServerEnd && currentPage >= totalPages && (
+                  <span className="ml-2 text-xs text-gray-400 dark:text-gray-500 italic self-center">
+                    End of mails on server
+                  </span>
+                )}
               </div>
             </div>
           </div>

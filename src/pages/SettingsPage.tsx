@@ -30,6 +30,14 @@ import EmailSettings from './settings/EmailSettings';
 import TwoFactorSettings from './settings/TwoFactorSettings';
 import PrivacySettings from './settings/PrivacySettings';
 import NotificationSettings from './settings/NotificationSettings';
+import {
+  INBOX_CACHE_LIMIT_KEY,
+  INBOX_CACHE_LIMIT_DEFAULT,
+  INBOX_CACHE_LIMIT_MIN,
+  INBOX_CACHE_LIMIT_MAX,
+  getStoredInboxCacheLimit,
+  storeInboxCacheLimit,
+} from '@/lib/inboxCacheConfig';
 
 interface SettingsSection {
   id: string;
@@ -79,9 +87,17 @@ const SettingsPage: React.FC = () => {
     email: '',
   });
 
-  // Inbox cache limit setting
-  const [inboxCacheLimit, setInboxCacheLimit] = useState(15);
+  // Inbox cache limit setting — the user's own preference, seeded from the
+  // stored value (falls back to the app default only when unset).
+  const [inboxCacheLimit, setInboxCacheLimit] = useState(getStoredInboxCacheLimit);
   const [isSavingCacheLimit, setIsSavingCacheLimit] = useState(false);
+  // The last SAVED limit (server-acknowledged). State (not a ref) because
+  // the confirm dialog renders it — refs must never be read during render.
+  // Used to detect decreases, which require a destructive confirm.
+  const [savedCacheLimit, setSavedCacheLimit] = useState(getStoredInboxCacheLimit);
+  const [showCacheLimitConfirm, setShowCacheLimitConfirm] = useState(false);
+  const [cacheLimitRemovalCount, setCacheLimitRemovalCount] = useState<number | null>(null);
+  const [isPreviewingRemoval, setIsPreviewingRemoval] = useState(false);
 
   // Load user data from localStorage on component mount
   useEffect(() => {
@@ -104,26 +120,30 @@ const SettingsPage: React.FC = () => {
 
     loadUserData();
 
-    // Load inbox cache limit from API (only once on mount)
-    const cachedLimit = localStorage.getItem('inbox_cache_limit');
-    if (cachedLimit) {
-      setInboxCacheLimit(parseInt(cachedLimit, 10) || 15);
+    // Load inbox cache limit from API (only once on mount) — the value is
+    // per-user, read via the shared config helper (never a magic number).
+    if (localStorage.getItem(INBOX_CACHE_LIMIT_KEY)) {
+      const stored = getStoredInboxCacheLimit();
+      setInboxCacheLimit(stored);
+      setSavedCacheLimit(stored);
     } else {
       apiFetch('/api/inbox/settings')
         .then((response: unknown) => {
           const res = response as { data?: { inboxCacheLimit?: number }; inboxCacheLimit?: number };
           // Controller returns { success: true, data: { inboxCacheLimit: number } }
-          const limit = res?.data?.inboxCacheLimit || res?.inboxCacheLimit || 15;
-          setInboxCacheLimit(limit);
-          localStorage.setItem('inbox_cache_limit', String(limit));
+          const limit = res?.data?.inboxCacheLimit || res?.inboxCacheLimit || INBOX_CACHE_LIMIT_DEFAULT;
+          const safe = storeInboxCacheLimit(limit);
+          setInboxCacheLimit(safe);
+          setSavedCacheLimit(safe);
         })
         .catch(() => { /* silent — use default */ });
     }
 
     // Listen for WebSocket settings:updated events (e.g. from another tab)
     const handleSettingsUpdated = () => {
-      const updated = localStorage.getItem('inbox_cache_limit');
-      if (updated) setInboxCacheLimit(parseInt(updated, 10) || 15);
+      const stored = getStoredInboxCacheLimit();
+      setInboxCacheLimit(stored);
+      setSavedCacheLimit(stored);
     };
     window.addEventListener('settings:updated', handleSettingsUpdated);
     return () => window.removeEventListener('settings:updated', handleSettingsUpdated);
@@ -313,7 +333,7 @@ const SettingsPage: React.FC = () => {
     toast.success('Data export started. You will receive an email when ready.');
   };
 
-  const handleSaveCacheLimit = async () => {
+  const performSaveCacheLimit = async () => {
     try {
       setIsSavingCacheLimit(true);
       await apiFetch('/api/inbox/settings', {
@@ -321,14 +341,57 @@ const SettingsPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inboxCacheLimit }),
       });
-      // Cache locally to avoid re-fetching on next visit
-      localStorage.setItem('inbox_cache_limit', String(inboxCacheLimit));
+      // Cache locally (shared helper) and remember it as the saved value
+      setSavedCacheLimit(storeInboxCacheLimit(inboxCacheLimit));
       toast.success('Inbox cache limit updated');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to save setting');
     } finally {
       setIsSavingCacheLimit(false);
     }
+  };
+
+  /**
+   * Save the cache limit. Increasing (or keeping) the limit saves directly;
+   * DECREASING it first shows a destructive confirm dialog: the server will
+   * evict the oldest cached mails beyond the new limit, and the user must
+   * explicitly acknowledge how many mails will be removed.
+   */
+  const handleSaveCacheLimit = async () => {
+    if (inboxCacheLimit < savedCacheLimit) {
+      // Predictive count for the confirm message ("N mails will be removed").
+      setIsPreviewingRemoval(true);
+      try {
+        const res = await apiFetch(
+          `/api/inbox/settings/preview-eviction?limit=${encodeURIComponent(inboxCacheLimit)}`
+        );
+        const data = (res as { data?: { mailsToBeRemoved?: number } })?.data;
+        setCacheLimitRemovalCount(
+          typeof data?.mailsToBeRemoved === 'number' ? data.mailsToBeRemoved : null
+        );
+      } catch {
+        // Offline / server error — still show the dialog, just without a count.
+        setCacheLimitRemovalCount(null);
+      } finally {
+        setIsPreviewingRemoval(false);
+      }
+      setShowCacheLimitConfirm(true);
+      return;
+    }
+    await performSaveCacheLimit();
+  };
+
+  const confirmDecreaseCacheLimit = async () => {
+    setShowCacheLimitConfirm(false);
+    await performSaveCacheLimit();
+  };
+
+  const cancelDecreaseCacheLimit = () => {
+    // Revert the slider to the last saved value — don't leave the lowered
+    // value sitting in the UI as if it were applied.
+    setInboxCacheLimit(savedCacheLimit);
+    setShowCacheLimitConfirm(false);
+    setCacheLimitRemovalCount(null);
   };
 
   const handleDeleteAccount = () => {
@@ -576,8 +639,8 @@ const SettingsPage: React.FC = () => {
               <div className="flex items-center gap-4">
                 <input
                   type="range"
-                  min={5}
-                  max={100}
+                  min={INBOX_CACHE_LIMIT_MIN}
+                  max={INBOX_CACHE_LIMIT_MAX}
                   step={5}
                   value={inboxCacheLimit}
                   onChange={e => setInboxCacheLimit(Number(e.target.value))}
@@ -717,6 +780,27 @@ const SettingsPage: React.FC = () => {
           onCancel={cancelDiscard}
         />
         
+        {/* Cache limit decrease confirmation — destructive action */}
+        <ConfirmDialog
+          isOpen={showCacheLimitConfirm}
+          title="Decrease Mail Cache Limit?"
+          message={
+            `You are decreasing the mail cache limit from ${savedCacheLimit} to ${inboxCacheLimit}. ` +
+            `Any cached mails above the new limit will be permanently removed from the application server.` +
+            (cacheLimitRemovalCount !== null && cacheLimitRemovalCount > 0
+              ? ` Approximately ${cacheLimitRemovalCount} mail${cacheLimitRemovalCount !== 1 ? 's' : ''} will be removed.`
+              : '') +
+            (isPreviewingRemoval ? ' (Counting affected mails…)' : '') +
+            `\n\nMails are never deleted from your mail server — only from the MailVoyage cache. ` +
+            `Do you want to proceed?`
+          }
+          confirmLabel="Remove Older Mails"
+          cancelLabel="Cancel"
+          variant="danger"
+          onConfirm={confirmDecreaseCacheLimit}
+          onCancel={cancelDecreaseCacheLimit}
+        />
+
         {/* Profile update confirmation dialog */}
         {confirmDialogOpen && !pendingSection && (
           <>
@@ -822,6 +906,27 @@ const SettingsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Cache limit decrease confirmation — destructive action (desktop) */}
+      <ConfirmDialog
+        isOpen={showCacheLimitConfirm}
+        title="Decrease Mail Cache Limit?"
+        message={
+          `You are decreasing the mail cache limit from ${savedCacheLimit} to ${inboxCacheLimit}. ` +
+          `Any cached mails above the new limit will be permanently removed from the application server.` +
+          (cacheLimitRemovalCount !== null && cacheLimitRemovalCount > 0
+            ? ` Approximately ${cacheLimitRemovalCount} mail${cacheLimitRemovalCount !== 1 ? 's' : ''} will be removed.`
+            : '') +
+          (isPreviewingRemoval ? ' (Counting affected mails…)' : '') +
+          `\n\nMails are never deleted from your mail server — only from the MailVoyage cache. ` +
+          `Do you want to proceed?`
+        }
+        confirmLabel="Remove Older Mails"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDecreaseCacheLimit}
+        onCancel={cancelDecreaseCacheLimit}
+      />
 
       {/* Desktop Profile Update Dialogs */}
       {confirmDialogOpen && !pendingSection && (

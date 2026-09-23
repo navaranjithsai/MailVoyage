@@ -3,6 +3,11 @@ import * as inboxService from '../services/inbox.service.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../utils/errors.js';
 import { signalInboxSyncComplete, signalSettingsUpdated, signalInboxUpdate } from '../utils/signaling.js';
+import {
+  INBOX_CACHE_LIMIT_SETTING_KEY,
+  INBOX_CACHE_LIMIT_DEFAULT,
+  clampInboxCacheLimit,
+} from '../utils/inboxCacheConfig.js';
 
 // Helper to get authenticated user
 const getUser = (req: Request) => {
@@ -82,34 +87,49 @@ export const fetchMails = async (req: Request, res: Response, next: NextFunction
 
 /**
  * POST /api/inbox/sync
- * Fetch from IMAP server AND update server-side cache.
- * Body: { accountCode, mailbox?, limit?, sinceUid?, page? }
+ * Fetch from mail server AND update server-side cache.
+ * Body: { accountCode, mailbox?, limit?, sinceUid?, beforeUid?, page? }
+ *
+ * Older-mail pulls (beforeUid / page > 1) are transit-only: the server does
+ * NOT cache them and does NOT broadcast sync-complete (the client stores
+ * them in Dexie directly — broadcasting would cause every connected client
+ * to pointlessly reload their inbox view).
  */
 export const syncInbox = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const user = getUser(req);
-    const { accountCode, mailbox, limit, sinceUid, page } = req.body;
+    const { accountCode, mailbox, limit, sinceUid, beforeUid, page } = req.body;
 
     if (!accountCode) {
       return next(new AppError('accountCode is required', 400, true));
     }
 
-    // Get user's cache limit setting
-    const cacheLimitStr = await inboxService.getUserSetting(user.id, 'inbox_cache_limit', '15');
-    const cacheLimit = parseInt(cacheLimitStr, 10);
+    // Get the user's own cache limit setting (never a hardcoded number)
+    const cacheLimit = await inboxService.getUserInboxCacheLimit(user.id);
 
-    logger.info(`[Inbox] Syncing inbox for user ${user.id}, account ${accountCode}, cacheLimit=${cacheLimit}`);
+    // Older-pull detection must mirror inboxService.syncInbox exactly.
+    const isOlderPull =
+      (typeof beforeUid === 'number' && beforeUid > 0) ||
+      (typeof page === 'number' && page > 1);
+
+    logger.info(`[Inbox] Syncing inbox for user ${user.id}, account ${accountCode}, cacheLimit=${cacheLimit}${beforeUid ? `, beforeUid=${beforeUid}` : ''}${isOlderPull ? ' (older pull, transit-only)' : ''}`);
 
     const result = await inboxService.syncInbox(user.id, accountCode, {
       mailbox,
       limit,
       sinceUid,
+      beforeUid,
       page,
       cacheLimit,
     });
 
-    // Signal connected clients that inbox sync finished
-    signalInboxSyncComplete(user.id, accountCode, result.fetched);
+    // Signal connected clients only for regular syncs (new/refreshed mail
+    // landed in the server cache). Older pulls are client-only — nothing
+    // changes cache-side, so broadcasting a sync-complete would only
+    // trigger needless inbox reloads on every connected tab.
+    if (!isOlderPull) {
+      signalInboxSyncComplete(user.id, accountCode, result.fetched);
+    }
 
     res.json({
       success: true,
@@ -121,6 +141,31 @@ export const syncInbox = async (req: Request, res: Response, next: NextFunction)
         source: 'server',
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/inbox/status
+ * Lightweight "is there new mail?" check that doesn't download any message
+ * bodies. The client uses this before deciding whether to trigger a full
+ * sync — it returns the server's highest UID and total message count.
+ *
+ *   ?accountCode=XXX&mailbox=INBOX
+ */
+export const getMailboxStatus = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = getUser(req);
+    const accountCode = req.query.accountCode as string;
+    const mailbox = (req.query.mailbox as string) || 'INBOX';
+
+    if (!accountCode) {
+      return next(new AppError('accountCode is required', 400, true));
+    }
+
+    const status = await inboxService.checkMailboxStatus(user.id, accountCode, mailbox);
+    res.json({ success: true, data: status });
   } catch (error) {
     next(error);
   }
@@ -191,12 +236,35 @@ export const getInboxAccounts = async (req: Request, res: Response, next: NextFu
 export const getSettings = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const user = getUser(req);
-    const settings = await inboxService.getAllUserSettings(user.id);
+    const inboxCacheLimit = await inboxService.getUserInboxCacheLimit(user.id);
+
+    res.json({
+      success: true,
+      data: { inboxCacheLimit },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/inbox/settings/preview-eviction?limit=N
+ * Predictive count used by the Settings confirm dialog: how many server-side
+ * cached mails would be removed if the user lowered the cache limit to N.
+ * Query: ?limit=N
+ */
+export const previewEviction = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = getUser(req);
+    const raw = parseInt(req.query.limit as string, 10);
+    const newLimit = clampInboxCacheLimit(Number.isFinite(raw) ? raw : INBOX_CACHE_LIMIT_DEFAULT);
+    const evictable = await inboxService.countEvictableForLimit(user.id, newLimit);
 
     res.json({
       success: true,
       data: {
-        inboxCacheLimit: parseInt(settings.inbox_cache_limit || '15', 10),
+        newLimit,
+        mailsToBeRemoved: evictable,
       },
     });
   } catch (error) {
@@ -208,6 +276,10 @@ export const getSettings = async (req: Request, res: Response, next: NextFunctio
  * PUT /api/inbox/settings
  * Update user inbox settings.
  * Body: { inboxCacheLimit: number }
+ *
+ * When the limit is DECREASED, the server cache is trimmed immediately:
+ * the oldest mails beyond the new limit are evicted per account, keeping
+ * the storage bound meaningful (user1=30, user2=50, user3=10 etc.).
  */
 export const updateSettings = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -215,11 +287,23 @@ export const updateSettings = async (req: Request, res: Response, next: NextFunc
     const { inboxCacheLimit } = req.body;
 
     if (inboxCacheLimit !== undefined) {
-      const limit = Math.max(5, Math.min(100, parseInt(inboxCacheLimit, 10) || 15));
-      await inboxService.setUserSetting(user.id, 'inbox_cache_limit', String(limit));
+      const raw = parseInt(inboxCacheLimit, 10);
+      const limit = clampInboxCacheLimit(Number.isFinite(raw) ? raw : INBOX_CACHE_LIMIT_DEFAULT);
+
+      // Get the user's PREVIOUS limit so we know if this is a decrease.
+      const prevLimit = await inboxService.getUserInboxCacheLimit(user.id);
+
+      await inboxService.setUserSetting(user.id, INBOX_CACHE_LIMIT_SETTING_KEY, String(limit));
+
+      // Storage optimization: lowering the limit evicts the oldest cached
+      // mails beyond the new bound right away.
+      if (limit < prevLimit) {
+        const evicted = await inboxService.enforceCacheLimit(user.id, limit);
+        logger.info(`[Inbox] Cache limit decreased ${prevLimit} → ${limit} for user ${user.id}: evicted ${evicted} mail(s)`);
+      }
 
       // Signal connected clients that settings changed
-      signalSettingsUpdated(user.id, ['inbox_cache_limit']);
+      signalSettingsUpdated(user.id, [INBOX_CACHE_LIMIT_SETTING_KEY]);
     }
 
     res.json({

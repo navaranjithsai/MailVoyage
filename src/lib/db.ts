@@ -25,6 +25,7 @@ export interface SentMailRecord {
     filename: string;
     contentType: string;
     size: number;
+    contentId?: string;
     content?: string;
   }> | null;
   messageId?: string | null;
@@ -56,6 +57,7 @@ export interface InboxMailRecord {
     filename: string;
     contentType: string;
     size: number;
+    contentId?: string;
     content?: string;
   }> | null;
   labels?: string[];
@@ -335,10 +337,10 @@ const ENCRYPTED_MAIL_FIELDS: (keyof InboxMailRecord)[] = [
 ];
 
 /**
- * One-time migration: remove inbox mail records that were stored with numeric
- * primary keys (from a previous deltaSync bug).  String-keyed records are the
- * canonical ones; numeric-keyed records are duplicates that cause React
- * duplicate-key warnings.
+ * Data cleanup: remove inbox mail records stored with numeric primary keys.
+ * String-keyed records are the canonical ones; numeric-keyed records are
+ * duplicates (IndexedDB treats numeric 21 and string "21" as distinct
+ * keys) that cause React duplicate-key warnings.
  */
 export async function cleanupNumericKeyedMails(): Promise<number> {
   await ensureOpen();
@@ -352,14 +354,37 @@ export async function cleanupNumericKeyedMails(): Promise<number> {
 }
 
 /**
- * Bulk upsert inbox mails (encrypts sensitive fields before storing)
+ * Bulk upsert inbox mails (encrypts sensitive fields before storing).
+ * Records with an existing (accountId, mailbox, uid) keep their original
+ * primary key so re-syncs update instead of duplicating.
  */
 export async function upsertInboxMails(mails: InboxMailRecord[]): Promise<void> {
   if (mails.length === 0) return;
   await ensureOpen();
+
+  // Map (accountId, mailbox, uid) -> existing id so bulkPut overwrites
+  // instead of duplicating rows.
+  const accountIds = [...new Set(mails.map(m => m.accountId))];
+  const existingByKey = new Map<string, string>();
+  await Promise.all(
+    accountIds.map(async (accountId) => {
+      if (!accountId) return;
+      const rows = await db.inboxMails.where('accountId').equals(accountId).toArray();
+      for (const row of rows) {
+        existingByKey.set(`${row.accountId}::${row.mailbox}::${row.uid}`, row.id);
+      }
+    })
+  );
+
   const { encryptMailRecord } = await import('./crypto');
   const encrypted = await Promise.all(
-    mails.map(m => encryptMailRecord(m, ENCRYPTED_MAIL_FIELDS))
+    mails.map(m => {
+      const existingId = existingByKey.get(`${m.accountId}::${m.mailbox}::${m.uid}`);
+      const resolved: InboxMailRecord = existingId
+        ? { ...m, id: existingId }
+        : m;
+      return encryptMailRecord(resolved, ENCRYPTED_MAIL_FIELDS);
+    })
   );
   await db.inboxMails.bulkPut(encrypted);
 }
@@ -596,6 +621,30 @@ export async function getHighestUid(accountId: string, mailbox: string = 'INBOX'
 }
 
 /**
+ * Get the lowest UID stored for an account+mailbox. Used as the `beforeUid`
+ * cursor when fetching older mail. Returns 0 when the mailbox is empty.
+ */
+export async function getLowestUid(accountId: string, mailbox: string = 'INBOX'): Promise<number> {
+  const mails = await db.inboxMails
+    .where('[accountId+mailbox]')
+    .equals([accountId, mailbox])
+    .toArray();
+  if (mails.length === 0) return 0;
+  return Math.min(...mails.map(m => m.uid));
+}
+
+/**
+ * Count all locally cached inbox mails for an account. POP3 has no UIDs,
+ * so load-older pagination is derived from the message count.
+ */
+export async function countInboxMails(accountId: string): Promise<number> {
+  return db.inboxMails
+    .where('accountId')
+    .equals(accountId)
+    .count();
+}
+
+/**
  * Clear inbox mails for a specific account
  */
 export async function clearAccountInbox(accountId: string): Promise<void> {
@@ -624,25 +673,11 @@ export async function archiveInboxMail(id: string): Promise<void> {
 }
 
 /**
- * Trim inbox mails to keep only the latest N per account (for cache limit enforcement).
+ * Deprecated no-op. Locally cached mail is never trimmed anymore — the
+ * server-side cache still enforces its own limit (see syncMailsToCache).
  */
-export async function trimInboxToLimit(accountId: string, limit: number): Promise<number> {
-  // Guard: Dexie .equals() requires a valid key (string/number/Date/Array)
-  if (!accountId || typeof accountId !== 'string') {
-    console.warn('[DB] trimInboxToLimit called with invalid accountId:', accountId);
-    return 0;
-  }
-  const mails = await db.inboxMails
-    .where('accountId')
-    .equals(accountId)
-    .reverse()
-    .sortBy('date');
-
-  if (mails.length <= limit) return 0;
-
-  const toDelete = mails.slice(limit).map(m => m.id);
-  await db.inboxMails.bulkDelete(toDelete);
-  return toDelete.length;
+export async function trimInboxToLimit(_accountId: string, _limit: number): Promise<number> {
+  return 0;
 }
 
 // ============================================================================

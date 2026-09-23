@@ -11,15 +11,16 @@
       - connect-src 'self' ws: wss: + dicebear     → only our API + WS + avatar fetches
       - object-src 'none', frame-src 'self' blob:  → no plugins, no cross-origin frames
       - base-uri 'self', form-action 'self'        → no form hijack
-      - img-src 'self' data: blob: https:          → mail remote images render.
-        This is the only relaxed directive; needed for normal mail rendering.
-        Privacy: remote images leak read-state to the sender (standard for
-        email clients — they all allow it, with one user-toggle for blocking).
-        Future enhancement: per-message "Block remote images" toggle.
-      - style-src 'self' 'unsafe-inline' https:    → inline styles (ckeditor +
-        mail HTML) + external stylesheets linked from mail.
+      - img-src 'self' data: blob: http: https:    → mail remote images render, including
+        senders still serving plain HTTP. Mail HTML is rendered in-page, so the app
+        CSP must cover the URIs mail actually contains. Privacy: remote images leak
+        read-state to the sender (standard for email clients).
+      - style-src/font-src ... http: https:        → same reason: some mail templates
+        link stylesheets and fonts over plain HTTP.
+      - media-src 'self' data: blob: http: https:  → mail HTML occasionally embeds
+        audio/video posters/backgrounds; falls back to default-src otherwise.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' ws: wss: https://api.dicebear.com https://api.github.com; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-src 'self' blob:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' http: https:; img-src 'self' data: blob: http: https:; font-src 'self' data: http: https:; media-src 'self' data: blob: http: https:; connect-src 'self' ws: wss: https://api.dicebear.com https://api.github.com; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-src 'self' blob:">
 
     <!-- SEO Meta Tags -->
     <title>MailVoyage - Modern & Secure Email Client</title>

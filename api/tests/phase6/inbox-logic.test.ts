@@ -8,19 +8,13 @@
  */
 
 import { describe, expect, it, beforeEach } from 'vitest';
-import crypto from 'crypto';
+import { pop3FingerprintToNumericUid, parsePop3StatCount } from '../../src/services/pop3-utils';
 
 // ============================================================================
 // 1. POP3 fingerprint hash — must be stable across reloads
 // ============================================================================
 
 describe('POP3 fingerprint hashing', () => {
-  // Replicate the exact production logic from inbox.service.ts
-  const pop3FingerprintToNumericUid = (fingerprint: string): number => {
-    const hash = crypto.createHash('md5').update(fingerprint).digest();
-    return hash.readUInt32BE(0);
-  };
-
   it('returns a positive 32-bit integer', () => {
     const uid = pop3FingerprintToNumericUid('test-message-id@example.com');
     expect(uid).toBeGreaterThan(0);
@@ -57,39 +51,28 @@ describe('POP3 fingerprint hashing', () => {
 // ============================================================================
 
 describe('POP3 STAT response parsing', () => {
-  // Replicate the exact parse logic from the production fetchMailsViaPop3 function
-  const parseStatCount = (statInfo: unknown): number => {
-    const statLine = String(statInfo).trim();
-    const statParts = statLine.split(/\s+/);
-    return parseInt(
-      statParts.find(p => /^\d+$/.test(p)) || statParts[1] || '0',
-      10
-    );
-  };
-
   it('parses "OK 61 102400" format (some servers include status)', () => {
-    expect(parseStatCount('OK 61 102400')).toBe(61);
+    expect(parsePop3StatCount('OK 61 102400')).toBe(61);
   });
 
   it('parses "61 102400" format (bare count + size)', () => {
-    expect(parseStatCount('61 102400')).toBe(61);
+    expect(parsePop3StatCount('61 102400')).toBe(61);
   });
 
   it('parses "+OK 0 0" (empty mailbox)', () => {
-    expect(parseStatCount('+OK 0 0')).toBe(0);
+    expect(parsePop3StatCount('+OK 0 0')).toBe(0);
   });
 
   it('parses "+OK 100 50000"', () => {
-    expect(parseStatCount('+OK 100 50000')).toBe(100);
+    expect(parsePop3StatCount('+OK 100 50000')).toBe(100);
   });
 
   it('returns 0 for non-numeric garbage', () => {
-    expect(parseStatCount('ERROR')).toBe(0);
+    expect(parsePop3StatCount('ERROR')).toBe(0);
   });
 
-  it('handles non-string input (array element)', () => {
-    // node-pop3 returns [response, stream], so statInfo may be a buffer
-    expect(parseStatCount(Buffer.from('OK 5 2048'))).toBe(5);
+  it('handles non-string input (buffer from node-pop3)', () => {
+    expect(parsePop3StatCount(Buffer.from('OK 5 2048'))).toBe(5);
   });
 });
 

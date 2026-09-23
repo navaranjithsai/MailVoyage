@@ -1265,6 +1265,33 @@ export const sanitizeEmailHtml = (html: string): string => {
   }
 };
 
+/**
+ * Replace `cid:` references in mail HTML with the matching inline attachment's
+ * data URL. Attachments without a contentId are ignored. Accepts both the
+ * API shape (contentType) and the UI shape (type). Returns the input
+ * unchanged when there is nothing to resolve.
+ */
+export const resolveInlineImages = (
+  html: string,
+  attachments?: Array<{ contentId?: string; contentType?: string; type?: string; content?: string }> | null,
+): string => {
+  if (!html || !attachments || attachments.length === 0) return html;
+
+  const cidMap = new Map<string, string>();
+  for (const att of attachments) {
+    const mime = att.contentType || att.type;
+    if (att.contentId && att.content && mime) {
+      cidMap.set(att.contentId.replace(/[<>]/g, ''), `data:${mime};base64,${att.content}`);
+    }
+  }
+  if (cidMap.size === 0) return html;
+
+  return html.replace(/cid:([^"'\s)>]+)/gi, (match, cid: string) => {
+    const dataUrl = cidMap.get(cid.replace(/[<>]/g, ''));
+    return dataUrl ?? match;
+  });
+};
+
 export default {
   EDITOR_MIN_HEIGHT_PX,
   generateContentStyles,
@@ -1279,5 +1306,6 @@ export default {
   getFileIconType,
   canPreviewFile,
   sanitizeEmailHtml,
+  resolveInlineImages,
   attachCodeBlockEnhancements,
 };

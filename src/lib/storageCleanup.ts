@@ -231,9 +231,7 @@ export const getStorageStats = async (): Promise<{
       .filter((name): name is string => !!name && (name === CACHE_DB_NAME || name === DEXIE_DB_NAME));
   } catch {
     // indexedDB.databases() is not supported in all browsers (Firefox,
-    // older Safari). Previously we returned ['unknown'] which was then
-    // compared against real DB names and never matched. Instead, fall back
-    // to assuming our known databases may exist.
+    // older Safari). Fall back to assuming our known databases may exist.
     existingDatabases = [CACHE_DB_NAME, DEXIE_DB_NAME].filter(name => !!name);
   }
   

@@ -17,8 +17,7 @@ export const sha256 = async (message: string): Promise<string> => {
       return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     }
     
-    // Fallback for environments without Web Crypto API
-    // This is a simple hash function - in production, you might want to use a more robust library
+    // Fallback hash for environments without Web Crypto API
     let hash = 0;
     if (message.length === 0) return hash.toString(16);
     

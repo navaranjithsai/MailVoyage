@@ -56,6 +56,12 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Chainguard nginx runs as non-root by default
 
+# App version stamp (defaults to 'latest' for local builds; CI passes the
+# release tag). Visible via `docker inspect`/`docker images`.
+ARG APP_VERSION=latest
+ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.version="${APP_VERSION}"
+
 EXPOSE 8080
 
 # Health check — matches the /health location in nginx.conf

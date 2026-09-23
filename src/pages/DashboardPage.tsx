@@ -393,10 +393,7 @@ const DashboardPage: React.FC = () => {
     // No need to duplicate listeners here
   }, [unreadCount, emails.length]); // Re-run when email data changes
 
-  // Refresh emails from Dexie when the page gains focus (live update)
-  // NOTE: No mount-time refresh here — the auto-sync effect (handleRefresh)
-  // already calls refreshEmails() after fetchAll completes, so calling it here
-  // too creates a race where two loadEmails() run concurrently.
+  // Refresh the local inbox when the page regains focus.
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {

@@ -3,15 +3,22 @@ import { config } from '../utils/config.js'; // Use centralized config
 import { logger } from '../utils/logger.js'; // Use logger
 import { AppError } from '../utils/errors.js'; // Added AppError import
 
-// Initialize PostgreSQL pool using the validated DATABASE_URL from config
+// Initialize PostgreSQL pool using the validated DATABASE_URL from config.
+// The pool ceiling is env-tunable (DB_POOL_MAX) so deployments with many
+// concurrent users can size it to their workload; the pg library default
+// of 10 starves the poller workers + API requests under load.
 const pool = new Pool({
   connectionString: config.databaseUrl,
+  max: config.dbPool.max,
+  idleTimeoutMillis: config.dbPool.idleTimeoutMs,
   // Add other pool options if needed, e.g., ssl: { rejectUnauthorized: false } for some cloud providers
 });
 
+// FAILSAFE: a transient error on one idle client (network blip, Postgres
+// restart, serverless cold-start race) must NOT kill the whole server.
+// The pool replaces broken clients automatically; we log loudly instead.
 pool.on('error', (err, _client) => {
-  logger.error('Unexpected error on idle PostgreSQL client', { error: err });
-  process.exit(-1); // Exit if the pool encounters a critical error
+  logger.error('Unexpected error on idle PostgreSQL client (server will stay up):', err);
 });
 
 /**

@@ -46,7 +46,15 @@ services:
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - HOST_ADDRESS=${HOST_ADDRESS:-localhost}
+      # Extra host allowlist for reverse-proxied / custom-domain deployments
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - PWD_SECRET=${PWD_SECRET}
+      # ── Scalability / degradation tunables (see api/.env.example) ──
+      - DB_POOL_MAX=${DB_POOL_MAX:-20}
+      - POLL_INTERVAL_SEC=${POLL_INTERVAL_SEC:-120}
+      - POLL_MAX_USERS_PER_CYCLE=${POLL_MAX_USERS_PER_CYCLE:-25}
+      - ENABLE_WEBSOCKET=${ENABLE_WEBSOCKET:-true}
+      - ENABLE_MAIL_POLLER=${ENABLE_MAIL_POLLER:-true}
     ports:
       - "${API_PORT:-3001}:3001"
     networks:

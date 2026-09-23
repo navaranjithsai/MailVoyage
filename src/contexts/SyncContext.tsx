@@ -88,12 +88,10 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     return null;
   }, []);
 
-  // Always subscribe to deltaSyncManager state changes when authenticated
-  // This is separate from initialization to handle React StrictMode and navigation
+  // Subscribe to sync state whenever authenticated (handles StrictMode + nav)
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    // Subscribe to state changes - always do this, even if already initialized
     const unsubscribe = deltaSyncManager.subscribe((state) => {
       setSyncState(state);
     });

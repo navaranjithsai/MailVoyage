@@ -11,22 +11,21 @@
  * and the routing decisions.
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
+
+// Import the pure URL builder directly to avoid pulling in Dexie.
+import { buildCachedInboxEndpoint } from '../../src/lib/inboxEndpoints';
 
 // ============================================================================
-// Mock localStorage for tests
+// Shared in-memory storage used by the login-marker and other tests
 // ============================================================================
 
 const mockStorage: Record<string, string> = {};
 
-const mockLocalStorage = {
-  getItem: vi.fn((key: string) => mockStorage[key] ?? null),
-  setItem: vi.fn((key: string, value: string) => { mockStorage[key] = value; }),
-  removeItem: vi.fn((key: string) => { delete mockStorage[key]; }),
-  clear: vi.fn(() => { Object.keys(mockStorage).forEach(k => delete mockStorage[k]); }),
-};
-
-vi.stubGlobal('localStorage', mockLocalStorage);
+// Helper to reset between tests
+function clearMockStorage() {
+  Object.keys(mockStorage).forEach(k => delete mockStorage[k]);
+}
 
 // ============================================================================
 // Tests
@@ -34,9 +33,7 @@ vi.stubGlobal('localStorage', mockLocalStorage);
 
 describe('inbox fetch endpoint routing', () => {
   beforeEach(() => {
-    mockLocalStorage.clear();
-    mockLocalStorage.getItem.mockClear();
-    mockLocalStorage.setItem.mockClear();
+    clearMockStorage();
   });
 
   /**
@@ -46,26 +43,14 @@ describe('inbox fetch endpoint routing', () => {
    * (which returns all cached mails from the server DB).
    */
   it('fetchInboxMails uses GET /api/inbox/cached (not POST /api/inbox/sync)', () => {
-    // Simulate the routing decision in fetchInboxMails
-    const buildEndpoint = (accountCode: string): { method: string; url: string } => {
-      return {
-        method: 'GET',
-        url: `/api/inbox/cached?accountCode=${encodeURIComponent(accountCode)}`,
-      };
-    };
-
-    const result = buildEndpoint('5VL');
-    expect(result.method).toBe('GET');
-    expect(result.url).toBe('/api/inbox/cached?accountCode=5VL');
-    expect(result.url).not.toContain('/api/inbox/sync');
+    const endpoint = buildCachedInboxEndpoint('5VL');
+    expect(endpoint).toBe('/api/inbox/cached?accountCode=5VL');
+    expect(endpoint).not.toContain('/api/inbox/sync');
   });
 
   it('handles special characters in accountCode via encodeURIComponent', () => {
-    const buildEndpoint = (accountCode: string): string =>
-      `/api/inbox/cached?accountCode=${encodeURIComponent(accountCode)}`;
-
-    expect(buildEndpoint('A&B')).toBe('/api/inbox/cached?accountCode=A%26B');
-    expect(buildEndpoint('test+code')).toBe('/api/inbox/cached?accountCode=test%2Bcode');
+    expect(buildCachedInboxEndpoint('A&B')).toBe('/api/inbox/cached?accountCode=A%26B');
+    expect(buildCachedInboxEndpoint('test+code')).toBe('/api/inbox/cached?accountCode=test%2Bcode');
   });
 });
 
