@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, Send, Eye, Download } from 'lucide-react';
+import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, Send, Eye, Download, ShieldAlert } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useEmail, Email, inboxRecordToEmail } from '@/contexts/EmailContext';
 import { apiFetch } from '@/lib/apiFetch';
 import { getSentMailByThreadId, getInboxMailById, getInboxMailByMessageId } from '@/lib/db';
 import { injectEmailStyles, sanitizeEmailHtml, resolveInlineImages, formatFileSize } from '@/lib/emailStyles';
 import { toast } from '@/lib/toast';
+import {
+  BLOCK_TRACKERS_EVENT,
+  countTrackersInHtml,
+  readBlockTrackers,
+} from '@/lib/trackerBlocker';
 import AttachmentViewer, { AttachmentData } from '@/components/common/AttachmentViewer';
 
 // Global map to track in-progress fetches - prevents duplicate API calls across mounts
@@ -100,7 +105,24 @@ const EmailPage: React.FC = () => {
   
   // Email content container ref for adding click handlers to images
   const emailContentRef = useRef<HTMLDivElement>(null);
-  
+
+  // Tracker-blocking state. The boolean mirrors localStorage; the count is
+  // recomputed whenever the rendered HTML changes. The subscription to the
+  // event fired by the settings toggle lets the banner appear/disappear and
+  // the body re-render without a page reload.
+  const [blockTrackers, setBlockTrackers] = useState<boolean>(() => readBlockTrackers());
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<boolean>;
+      if (typeof custom.detail === 'boolean') {
+        setBlockTrackers(custom.detail);
+      }
+    };
+    window.addEventListener(BLOCK_TRACKERS_EVENT, handler);
+    return () => window.removeEventListener(BLOCK_TRACKERS_EVENT, handler);
+  }, []);
+
   // Abort controller for cleanup
   const abortControllerRef = useRef<AbortController | null>(null);
   
@@ -730,6 +752,25 @@ const EmailPage: React.FC = () => {
               )}
             </div>
 
+            {/* Tracker-blocked banner — appears above the body when the
+                blocker is active and stripped at least one pixel. */}
+            {blockTrackers && sentMail.htmlBody && countTrackersInHtml(sentMail.htmlBody) > 0 && (
+              <div className="mx-6 mt-4 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-amber-900 dark:text-amber-200 flex items-center gap-3 text-sm">
+                <ShieldAlert className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span className="flex-1">
+                  Blocked {countTrackersInHtml(sentMail.htmlBody)} tracking image
+                  {countTrackersInHtml(sentMail.htmlBody) === 1 ? '' : 's'} in this email.
+                  You can disable this from Privacy Settings.
+                </span>
+                <Link
+                  to="/settings"
+                  className="shrink-0 inline-flex items-center gap-1 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
+                >
+                  Open Settings
+                </Link>
+              </div>
+            )}
+
             {/* Email Body */}
             <div className="p-6">
               {sentMail.htmlBody ? (
@@ -993,6 +1034,24 @@ const EmailPage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Tracker-blocked banner for inbox-flow mail */}
+          {blockTrackers && email.content && /<[a-z][\s\S]*>/i.test(email.content) && countTrackersInHtml(email.content) > 0 && (
+            <div className="mx-6 mt-4 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-amber-900 dark:text-amber-200 flex items-center gap-3 text-sm">
+              <ShieldAlert className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span className="flex-1">
+                Blocked {countTrackersInHtml(email.content)} tracking image
+                {countTrackersInHtml(email.content) === 1 ? '' : 's'} in this email.
+                You can disable this from Privacy Settings.
+              </span>
+              <Link
+                to="/settings"
+                className="shrink-0 inline-flex items-center gap-1 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
+              >
+                Open Settings
+              </Link>
+            </div>
+          )}
 
           {/* Email Body */}
           <div className="p-6">

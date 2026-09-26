@@ -233,14 +233,20 @@ export const getInboxAccounts = async (req: Request, res: Response, next: NextFu
  * GET /api/inbox/settings
  * Get user settings relevant to inbox (cache limit etc).
  */
+const BLOCK_TRACKERS_SETTING_KEY = 'block_trackers';
+
 export const getSettings = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const user = getUser(req);
     const inboxCacheLimit = await inboxService.getUserInboxCacheLimit(user.id);
+    const blockTrackersRaw = await inboxService.getUserSetting(user.id, BLOCK_TRACKERS_SETTING_KEY, '1');
 
     res.json({
       success: true,
-      data: { inboxCacheLimit },
+      data: {
+        inboxCacheLimit,
+        blockTrackers: blockTrackersRaw !== '0',
+      },
     });
   } catch (error) {
     next(error);
@@ -274,20 +280,30 @@ export const previewEviction = async (req: Request, res: Response, next: NextFun
 
 /**
  * PUT /api/inbox/settings
- * Update user inbox settings.
- * Body: { inboxCacheLimit: number }
+ * Accepts { inboxCacheLimit?: number, blockTrackers?: boolean }.
+ * Returns nothing; the GET returns the new state.
  *
- * When the limit is DECREASED, the server cache is trimmed immediately:
+ * When the cache limit is DECREASED, the server cache is trimmed immediately:
  * the oldest mails beyond the new limit are evicted per account, keeping
  * the storage bound meaningful (user1=30, user2=50, user3=10 etc.).
+ * Setting blockTrackers signals connected clients via the settings-updated
+ * WS signal so the toggle propagates across tabs without a reload.
  */
 export const updateSettings = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const user = getUser(req);
-    const { inboxCacheLimit } = req.body;
+    const { inboxCacheLimit, blockTrackers } = req.body as {
+      inboxCacheLimit?: number | string | null;
+      blockTrackers?: unknown;
+    };
 
-    if (inboxCacheLimit !== undefined) {
-      const raw = parseInt(inboxCacheLimit, 10);
+    if (typeof blockTrackers === 'boolean') {
+      await inboxService.setUserSetting(user.id, BLOCK_TRACKERS_SETTING_KEY, blockTrackers ? '1' : '0');
+      signalSettingsUpdated(user.id, [BLOCK_TRACKERS_SETTING_KEY]);
+    }
+
+    if (inboxCacheLimit !== undefined && inboxCacheLimit !== null) {
+      const raw = parseInt(String(inboxCacheLimit), 10);
       const limit = clampInboxCacheLimit(Number.isFinite(raw) ? raw : INBOX_CACHE_LIMIT_DEFAULT);
 
       // Get the user's PREVIOUS limit so we know if this is a decrease.

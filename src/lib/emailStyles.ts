@@ -5,6 +5,7 @@
  */
 
 import DOMPurify from 'dompurify';
+import { stripTrackersFromHtml, readBlockTrackers } from './trackerBlocker';
 
 // Minimum height for the CKEditor in pixels
 export const EDITOR_MIN_HEIGHT_PX = 480;
@@ -1241,8 +1242,15 @@ export const attachCodeBlockEnhancements = (rootSelector = 'body') => {
 export const sanitizeEmailHtml = (html: string): string => {
   if (typeof window === 'undefined') return html;
 
+  // Optional privacy step: strip tracking pixels / open-beacon images from
+  // the markup BEFORE DOMPurify. This is reversible in Settings → Privacy.
+  // Reading the flag from localStorage keeps the call-site synchronous and
+  // matches the cached-boot pattern already used for the inbox cache limit.
+  const shouldBlock = readBlockTrackers();
+  const workingHtml = shouldBlock ? stripTrackersFromHtml(html) : html;
+
   try {
-    const sanitized = DOMPurify.sanitize(html, {
+    const sanitized = DOMPurify.sanitize(workingHtml, {
       FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'input', 'button', 'video', 'audio', 'source'],
       FORBID_ATTR: ['srcset', 'background', 'poster'],
       // Accept the URIs mail actually contains: https, http, mailto, tel,

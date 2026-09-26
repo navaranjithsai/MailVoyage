@@ -8,6 +8,7 @@
 import { apiFetch } from './apiFetch';
 import { buildCachedInboxEndpoint } from './inboxEndpoints';
 import { getStoredInboxCacheLimit, storeInboxCacheLimit, INBOX_CACHE_LIMIT_DEFAULT } from './inboxCacheConfig';
+import { writeBlockTrackers } from './trackerBlocker';
 export { buildCachedInboxEndpoint };
 import { 
   getDraftsCount as getDraftCountFromDb,
@@ -440,8 +441,8 @@ export async function fetchAllMails(
 }
 
 /**
- * Fetch inbox settings (cache limit) from the API.
- * Updates localStorage with the fetched limit.
+ * Fetch inbox settings (cache limit + tracker blocker flag) from the API.
+ * Updates localStorage with the fetched values.
  */
 export async function fetchInboxSettings(): Promise<FetchResult<SettingsResult>> {
   if (!isUserLoggedIn()) return { success: false, error: 'Not authenticated' };
@@ -452,6 +453,14 @@ export async function fetchInboxSettings(): Promise<FetchResult<SettingsResult>>
     const dataObj = resObj?.data as Record<string, unknown> | undefined;
     const limit = (dataObj?.inboxCacheLimit ?? resObj?.inboxCacheLimit ?? INBOX_CACHE_LIMIT_DEFAULT) as number;
     const safe = storeInboxCacheLimit(limit);
+
+    // Tracker-blocker flag — same endpoint, same round-trip. Cached via the
+    // dedicated localStorage slot in trackerBlocker.ts.
+    const rawBlockTrackers = dataObj?.blockTrackers ?? resObj?.blockTrackers;
+    if (typeof rawBlockTrackers === 'boolean') {
+      writeBlockTrackers(rawBlockTrackers);
+    }
+
     console.log('✅ Inbox settings fetched: cacheLimit =', safe);
     return { success: true, data: { inboxCacheLimit: safe } };
   } catch (error: unknown) {

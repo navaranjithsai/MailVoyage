@@ -27,6 +27,24 @@ Include as much of the following as possible:
 4. Proof of concept (if safe).
 5. Suggested mitigation (optional).
 
+## Content Security & Privacy Controls
+
+MailVoyage enforces a strict Content-Security-Policy both in development
+(`index.html` meta tag) and production (`nginx.conf` header). The two
+policies are identical strings so dev and deployed behavior match:
+
+- `script-src 'self'` — no remote scripts, even inside rendered mail HTML
+- `object-src 'none'`, `frame-src 'self' blob:`, `frame-ancestors 'self'` — no plugins, no cross-origin embedding
+- `base-uri 'self'`, `form-action 'self'` — no form hijack
+- `img-src`/`style-src`/`font-src`/`media-src` allow `http:`/`https:` because mail HTML is rendered in-page and legitimately contains remote images, stylesheets, and fonts
+
+On top of the CSP, an optional **email tracker blocker**
+(`src/lib/trackerBlocker.ts`) removes open-tracking pixels (1×1 beacons,
+ESP `/e/o/` and `/tr/op/` endpoints, open-log URLs) from mail HTML before
+the browser fetches them, so senders cannot confirm read-state. The
+preference is stored server-side in the `user_settings` table under the
+key `block_trackers` and defaults to ON.
+
 ## What to Report
 
 Examples relevant to this project:
@@ -37,6 +55,7 @@ Examples relevant to this project:
 4. Secret leakage in repo/logs/build output.
 5. Injection or unsafe HTML handling.
 6. Encryption/key-handling flaws.
+7. CSP bypass or tracker-blocker evasion (mail content loading that should be blocked).
 
 ## Response Expectations
 

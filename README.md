@@ -55,6 +55,7 @@ The README is the quick-start overview. The Wiki is the source for deeper and co
 - **Unified Inbox**: Manage emails from multiple providers in one place.
 - **Email Sending**: Send emails with attachments, priority settings, and advanced formatting.
 - **Offline-first Experience**: Read cached inbox data, queue actions offline, and sync when connectivity returns.
+- **Tracker Blocking**: Invisible open-tracking pixels (1×1 beacons, ESP `/e/o/` and `/tr/op/` endpoints) are stripped from incoming mail before they load — the sender never learns the mail was opened. Toggle in Settings → Privacy; a yellow notice appears above any mail where pixels were blocked.
 - **Dark Mode**: Enjoy a modern UI with light and dark theme support.
 - **Account Security**: Two-factor authentication, recovery codes, and password change in Settings.
 
@@ -240,6 +241,49 @@ All optional with safe defaults — see [`api/.env.example`](api/.env.example) a
   ```bash
   npm run dev
   ```
+
+## Running Locally
+
+### Development (hot reload)
+
+```bash
+npm run dev        # frontend (Vite, http://localhost:5173) + API (Express, http://localhost:3001) together
+# or split terminals:
+npm run dev:web    # frontend only
+npm run dev:api    # API only (includes a migrate:latest on start)
+```
+
+The Vite dev server proxies `/api` and `/ws` to `localhost:3001`, so live
+WebSocket sync works out of the box during development.
+
+### Production build, local verification
+
+Run the compiled output exactly as a server would — the closest local check
+to a real deployment short of Docker:
+
+```bash
+# 1. Build both
+npm run build:all          # frontend → dist/ ; API → api/dist/ (+ API migrations run)
+
+# 2. Start the production API (runs migrations first, then serves on :3001)
+npm run start:api
+
+# 3. Serve the built frontend with the same /api + /ws proxies (port 4173)
+npm run preview:prod
+```
+
+Open **http://localhost:4173/** — this exercises the real minified bundle,
+the production API boot path, migrations, and WebSocket sync together.
+
+### Verify the stack
+
+```bash
+curl http://localhost:3001/health   # API liveness → {"status":"UP",...}
+curl http://localhost:4173/health   # preview-served frontend (via proxy)
+```
+
+For Docker, serverless, and other production environments, see
+[DEPLOYMENT.md](DEPLOYMENT.md) and the [Deployment](#deployment) section below.
 
 ## Deployment
 
@@ -436,8 +480,8 @@ If 2FA is enabled, `POST /api/auth/login` returns a challenge payload instead of
 | `POST` | `/api/inbox/flag-updates` | Apply batched read/star updates (idempotent) |
 | `GET`  | `/api/inbox/batch-status/:batchId` | Check if a flag batch was already applied |
 | `GET`  | `/api/inbox/accounts` | List email accounts for dropdown |
-| `GET`  | `/api/inbox/settings` | Get inbox settings (cache limit) |
-| `PUT`  | `/api/inbox/settings` | Update inbox settings (lowering the limit evicts older cached mails) |
+| `GET`  | `/api/inbox/settings` | Get inbox settings (cache limit + tracker blocker flag) |
+| `PUT`  | `/api/inbox/settings` | Update inbox settings (lowering the limit evicts older cached mails; `blockTrackers` toggles email tracker blocking) |
 | `GET`  | `/api/inbox/settings/preview-eviction` | Predict how many mails a lower limit would remove |
 
 ### Sending
@@ -472,7 +516,7 @@ The following routes exist but are currently scaffold or partial implementations
 | `users` | User accounts (auto-incrementing integer ID) |
 | `email_accounts` | IMAP/POP3/SMTP configurations per user |
 | `inbox_cache` | Server-side cached inbox mails (latest N per account) |
-| `user_settings` | Per-user settings (cache limit, etc.) |
+| `user_settings` | Per-user settings (cache limit, tracker blocker flag, etc.) |
 | `smtp_accounts` | SMTP sending configurations |
 
 ### Migrations

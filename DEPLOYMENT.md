@@ -148,9 +148,23 @@ via ENABLE_MAIL_POLLER=false — users sync manually") — nothing is silent.
 
 ## Non-Docker notes
 
-- **VPS / local without Docker**: `npm run install:all`, `npm run build:all`,
-  then `npm run start:api` (which runs `migrate:latest` first) and serve the
-  frontend `dist/` with any static server proxying `/api` and `/ws`.
+### Local production verification (before deploying anywhere)
+
+```bash
+npm run build:all        # build frontend (dist/) + API (api/dist/, runs migrations)
+npm run start:api        # production API on :3001 (migrations run first)
+npm run preview:prod     # serve the built frontend on :4173 with /api + /ws proxies
+```
+
+This runs the exact minified bundle against the exact production API boot
+path — the closest thing to a real deployment on your own machine.
+
+### VPS / server without Docker
+
+`npm run install:all`, `npm run build:all`, then `npm run start:api`
+(runs `migrate:latest` first) and serve the frontend `dist/` with any static
+server proxying `/api` and `/ws` (the repo's `nginx.conf` is a ready-made
+reference for the proxy rules).
 - **Vercel / Netlify / Lambda / GCP / Azure**: the API detects serverless
   automatically and exports the app for per-request invocation — WebSocket
   and poller are skipped by design; clients fall back to manual sync. Set

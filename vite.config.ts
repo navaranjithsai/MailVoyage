@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+import { fileURLToPath } from 'node:url';
 import pkg from './package.json' with { type: 'json' };
 const appVersion = pkg.version;
 
@@ -19,11 +19,40 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      // WebSocket live-sync — without this proxy the WS client can't reach
+      // the API through the Vite dev server and silently falls back to
+      // manual sync during local development.
+      '/ws': {
+        target: 'http://localhost:3001',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
+  },
+  // Applies to `npm run preview` / `npm run preview:prod` (serves the
+  // production build). Mirrors the dev proxies so the built frontend can
+  // talk to a locally running production API — this is the local
+  // production-verification flow documented in README and DEPLOYMENT.md.
+  preview: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/ws': {
+        target: 'http://localhost:3001',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      // import.meta.url-based resolution (not the CommonJS __dirname, which
+      // Vite 8's native config loader doesn't support) and works on every
+      // Node 20 release (import.meta.dirname needs 20.11+).
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
   build: {

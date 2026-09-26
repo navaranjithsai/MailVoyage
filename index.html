@@ -20,7 +20,7 @@
       - media-src 'self' data: blob: http: https:  → mail HTML occasionally embeds
         audio/video posters/backgrounds; falls back to default-src otherwise.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' http: https:; img-src 'self' data: blob: http: https:; font-src 'self' data: http: https:; media-src 'self' data: blob: http: https:; connect-src 'self' ws: wss: https://api.dicebear.com https://api.github.com; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-src 'self' blob:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' http: https:; img-src 'self' data: blob: http: https:; font-src 'self' data: http: https:; media-src 'self' data: blob: http: https:; connect-src 'self' ws: wss: https://api.dicebear.com https://api.github.com; worker-src 'self' blob:; manifest-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-src 'self' blob:; frame-ancestors 'self'">
 
     <!-- SEO Meta Tags -->
     <title>MailVoyage - Modern & Secure Email Client</title>
