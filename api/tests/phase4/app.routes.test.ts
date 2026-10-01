@@ -1,5 +1,8 @@
+/// <reference types="vitest/globals" />
+/// <reference types="node" />
+// Test globals (describe/it/expect) are injected by Vitest via
+// `globals: true` in vitest.config.ts — no import needed.
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
 import app from '../../src/app';
 
 describe('phase4 app route isolation', () => {

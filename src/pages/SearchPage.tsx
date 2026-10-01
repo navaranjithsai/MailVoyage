@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { ArrowLeft, Search, Filter } from 'lucide-react';
 import SearchBar, { SearchFilters } from '@/components/email/SearchBar';
 import EmailList from '@/components/email/EmailList';

@@ -316,7 +316,10 @@ async function fetchMailsViaPop3(
     for (let msgNum = endMsgNum; msgNum >= startMsgNum; msgNum--) {
       try {
         // RETR returns the full message source as a string
-        const rawMessage: string = await pop3.RETR(msgNum);
+        // The default node-pop3 mode resolves RETR to text; the newer type
+        // declarations also expose the stream form used when parsing is
+        // disabled, so narrow the configured default explicitly here.
+        const rawMessage = await pop3.RETR(msgNum) as string;
         if (!rawMessage) {
           logger.warn(`[POP3] Message ${msgNum} has no content, skipping`);
           continue;
@@ -1671,6 +1674,9 @@ export async function checkMailboxStatus(
   try {
     await client.connect();
     const status = await client.status(mailbox, { uidNext: true, messages: true });
+    if (!status) {
+      return { highestUid: 0, totalOnServer: 0, protocol: 'IMAP' };
+    }
     const uidNext = typeof status.uidNext === 'number' ? status.uidNext : 0;
     const messages = typeof status.messages === 'number' ? status.messages : 0;
     return {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence, easeOut } from 'framer-motion';
+import { motion, AnimatePresence, easeOut } from 'motion/react';
 import { 
   ChevronDown,
   User, 

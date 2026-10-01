@@ -1,3 +1,4 @@
+/// <reference types="vitest/globals" />
 /**
  * Phase 3: Frontend Sync Logic Tests
  *
@@ -11,7 +12,8 @@
  * and the routing decisions.
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+// Test globals (describe/it/expect/beforeEach) are injected by Vitest via
+// `globals: true` in vitest.config.ts — no import needed.
 
 // Import the pure URL builder directly to avoid pulling in Dexie.
 import { buildCachedInboxEndpoint } from '../../src/lib/inboxEndpoints';

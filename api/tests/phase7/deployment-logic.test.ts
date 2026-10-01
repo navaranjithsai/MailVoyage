@@ -1,3 +1,5 @@
+/// <reference types="vitest/globals" />
+/// <reference types="node" />
 /**
  * Phase 7: Deployment & Scalability Logic Tests
  *
@@ -13,7 +15,8 @@
  * the phase 6 testing pattern.
  */
 
-import { describe, expect, it } from 'vitest';
+// Test globals (describe/it/expect) are injected by Vitest via
+// `globals: true` in vitest.config.ts — no import needed.
 import {
   INBOX_CACHE_LIMIT_DEFAULT,
   INBOX_CACHE_LIMIT_MIN,

@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+/// <reference types="vitest/globals" />
+// Test globals (describe/it/expect/beforeEach/afterEach/vi) are injected
+// by Vitest via `globals: true` in vitest.config.ts — no import needed.
 import { wsClient } from '../../src/lib/websocket';
 
 describe('phase2 websocket client', () => {

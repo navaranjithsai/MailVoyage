@@ -1,3 +1,4 @@
+/// <reference types="vitest/globals" />
 /**
  * Phase 6: Frontend Deployment & Cache-Config Logic Tests
  *
@@ -11,7 +12,8 @@
  * Pure logic tests — jsdom-free, storage mocked in-memory.
  */
 
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+// Test globals (describe/it/expect/beforeEach/vi) are injected by Vitest
+// via `globals: true` in vitest.config.ts — no import needed.
 
 // ============================================================================
 // In-memory localStorage mock (module-level, installed before imports)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { motion, AnimatePresence, easeOut } from 'framer-motion';
+import { motion, AnimatePresence, easeOut } from 'motion/react';
 import { 
   FileEdit, 
   Trash2, 

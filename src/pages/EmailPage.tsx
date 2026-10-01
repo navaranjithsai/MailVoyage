@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { ArrowLeft, Star, Archive, Trash2, Reply, Forward, MoreVertical, Paperclip, Clock, Send, Eye, Download, ShieldAlert } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useEmail, Email, inboxRecordToEmail } from '@/contexts/EmailContext';

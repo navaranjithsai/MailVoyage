@@ -1,3 +1,5 @@
+/// <reference types="vitest/globals" />
+/// <reference types="node" />
 /**
  * Phase 6: Inbox Service Logic Tests
  *
@@ -7,7 +9,8 @@
  * fingerprint hashing, autoconfig parsing, sync mutex).
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+// Test globals (describe/it/expect/beforeEach/vi) are injected by Vitest
+// via `globals: true` in vitest.config.ts — no import needed.
 import { pop3FingerprintToNumericUid, parsePop3StatCount } from '../../src/services/pop3-utils';
 
 // ============================================================================

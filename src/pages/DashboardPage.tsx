@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, memo, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { 
   Mail, 
   Inbox, 

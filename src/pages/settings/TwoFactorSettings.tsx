@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { KeyRound, RefreshCcw, Shield, ShieldCheck, ShieldOff, Copy, Eye, EyeOff, Download } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { apiFetch } from '@/lib/apiFetch';

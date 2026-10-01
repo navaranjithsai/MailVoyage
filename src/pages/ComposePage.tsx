@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, easeOut } from 'framer-motion';
+import { motion, easeOut } from 'motion/react';
 import { Send, Paperclip, X, Save, Eye, ChevronDown, FileEdit, Check } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { toast } from '@/lib/toast';

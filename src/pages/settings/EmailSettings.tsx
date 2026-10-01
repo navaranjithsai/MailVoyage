@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, easeOut } from 'framer-motion';
+import { motion, easeOut } from 'motion/react';
 import { Plus, RefreshCw, Eye, EyeOff, Edit, Trash2, Info, X, Play, Star, Server } from 'lucide-react';
 import Button from '../../components/ui/Button';
 import ConfirmDialog from '../../components/common/ConfirmDialog';

@@ -1,5 +1,9 @@
+/// <reference types="vitest/globals" />
+/// <reference types="node" />
+// Test globals (describe/it/expect/beforeEach/vi) are injected by Vitest
+// via `globals: true` in vitest.config.ts — no import needed. `vi` is
+// available at module scope for vi.mock hoisting.
 import request from 'supertest';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../src/services/auth.service.js', async () => {
   const actual = await vi.importActual<typeof import('../../src/services/auth.service.js')>(

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { useForm } from 'react-hook-form';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { AlertCircle, Eye, EyeOff, KeyRound, Lock, LogIn, Mail, ShieldCheck } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { OtpClassicInput, OtpPinCellsInput } from '@/components/ui/OtpCodeInput';

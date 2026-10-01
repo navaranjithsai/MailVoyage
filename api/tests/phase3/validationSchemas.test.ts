@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+/// <reference types="vitest/globals" />
+// Test globals (describe/it/expect/vi) are injected by Vitest via
+// `globals: true` in vitest.config.ts — no import needed.
 import {
   changePasswordSchema,
   emailAccountSchema,

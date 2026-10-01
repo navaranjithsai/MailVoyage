@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, memo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { Mail, MailOpen, Star, Clock, ChevronDown, Paperclip, AlertCircle } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useEmail, Email } from '@/contexts/EmailContext';
