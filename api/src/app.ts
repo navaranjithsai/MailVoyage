@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { json } from 'express';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { hostCheck } from './middlewares/hostCheck.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import apiRouter from './routes/index.js'; // Import the main API router
@@ -11,8 +12,24 @@ import morgan from 'morgan'; // HTTP request logger middleware
 
 const app = express();
 
+// Security headers (CSP, HSTS, X-Frame-Options, no-sniff, referrer policy, …).
+// Applied to every response including error responses thrown by later layers.
+app.use(helmet());
+
 // Middleware
-app.use(cors({ origin: config.corsOrigin, credentials: true })); // Add credentials: true for CORS
+// SECURITY: never combine origin '*' with credentials — the fetch spec
+// forbids credentialed requests against a wildcard origin, and security
+// scanners flag it as a misconfiguration. Map the configured CORS origin
+// (which may be '*' for local dev) to a strict, explicit list instead.
+const corsOriginList = config.corsOrigin === '*'
+  ? []
+  : config.corsOrigin.split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors({
+  // An empty allowlist rejects all cross-origin credentialed requests while
+  // keeping same-origin requests working; explicit origins are echoed back.
+  origin: corsOriginList.length === 0 ? false : corsOriginList,
+  credentials: true,
+})); // Add credentials: true for CORS
 // Increase JSON body size limit to handle base64 encoded attachments and images
 app.use(json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));

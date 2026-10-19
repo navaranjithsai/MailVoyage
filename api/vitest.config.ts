@@ -6,11 +6,13 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     environment: 'node',
     globals: true,
-    // Vitest 5 fork workers intermittently fail to start under Node 26 on
-    // Windows. Threads keep the API suite deterministic without changing
-    // test isolation semantics for this credential-free suite.
+    // API tests load shared Express, dotenv, and service modules. Serialize
+    // files so those module-level resources cannot initialize concurrently;
+    // this is deterministic across Windows, macOS, Linux, and CI runners.
+    // It affects test speed only, never the deployed API or its users.
     pool: 'threads',
     maxWorkers: 1,
+    fileParallelism: false,
     reporters: ['default'],
     coverage: {
       provider: 'v8',
