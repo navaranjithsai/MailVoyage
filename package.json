@@ -1,7 +1,7 @@
 {
   "name": "mailvoyage",
   "description": "MailVoyage - A modern email client with offline-first architecture",
-  "version": "2026.10.1",
+  "version": "2026.10.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -70,6 +70,9 @@
     "react-toastify": "^11.1.0",
     "tailwind-animate": "^0.2.10"
   },
+  "overrides": {
+    "minimatch": "^11.0.4"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.3.0",
@@ -93,5 +96,8 @@
     "typescript-eslint": "^8.71.1",
     "vite": "^8.3.2",
     "vitest": "^5.0.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }
